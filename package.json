@@ -4,6 +4,7 @@
   "private": true,
   "description": "Side-by-side PR-QA harness: boots base-vs-PR app panes against cloned data behind mirrored proxies, with a pluggable five-seam adapter interface (Provisioner, BuildConvention, Seed, EnvTransform, AuthBootstrap).",
   "type": "module",
+  "license": "MIT",
   "engines": {
     "node": ">=22"
   },
