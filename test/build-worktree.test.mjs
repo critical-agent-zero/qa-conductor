@@ -253,6 +253,26 @@ test('trustDecision: any error fails closed', () => {
   assert.equal(trustDecision(info({}), undefined).ok, false)
 })
 
+test('trustDecision: a malformed trust config fails closed; a string never spreads into one-letter logins', () => {
+  // e.g. `logins: cfg.env.QA_TRUSTED_LOGINS` left unsplit
+  const outsider = { author: 'e', authorAssociation: 'NONE', headRepo: 'e/widget', headOwner: 'e' }
+  const d = trustDecision(outsider, { repo: REPO, trust: { logins: 'alice' }, permission: null })
+  assert.equal(d.ok, false)
+  assert.match(d.reason, /trust\.logins must be an array/)
+  for (const trust of [{ associations: 'MEMBER' }, { logins: [null] }, { logins: [' '] }, { requirePush: 'false' }, { allowForks: 0 }, 'alice', ['alice']]) {
+    assert.equal(decide({}, { trust }).ok, false, JSON.stringify(trust))
+  }
+  assert.deepEqual(decide({ author: 'carol', authorAssociation: 'NONE' }, { trust: { logins: new Set(['carol']) }, permission: null }), { ok: true })
+})
+
+test("trustDecision: allowForks false refuses a head in the author's own fork", () => {
+  const trust = { ...TRUST, allowForks: false }
+  assert.deepEqual(decide({ headRepo: 'alice/widget', headOwner: 'alice' }, { trust }), {
+    ok: false, reason: 'head branch is in a fork (alice/widget) and trust.allowForks is off',
+  })
+  assert.deepEqual(decide({ headRepo: 'ACME/widget' }, { trust }), { ok: true })
+})
+
 // --- ensureBuilt: the trust gate runs before any git call --------------------
 
 async function refusedBeforeGit(opts, reason) {
@@ -282,6 +302,10 @@ test("ensureBuilt refuses a head branch in someone else's fork", async () => {
 
 test('ensureBuilt refuses a PR whose head repository was deleted', async () => {
   await refusedBeforeGit({ info: { headRepo: null, headOwner: null } }, /head repository was deleted$/)
+})
+
+test("ensureBuilt refuses the author's own fork when trust.allowForks is false", async () => {
+  await refusedBeforeGit({ info: { headRepo: 'alice/widget', headOwner: 'alice' }, trust: { allowForks: false } }, /trust\.allowForks is off$/)
 })
 
 test('ensureBuilt fails closed when prInfo errors', async () => {
@@ -710,6 +734,31 @@ test('a cloneUrl carrying credentials is rejected at construction, without echoi
     assert.doesNotThrow(() => make(url), url)
   }
   assert.throws(() => make('--upload-pack=touch /tmp/x'), /cloneUrl/)
+})
+
+test('construction validates the trust config, so a misconfigured gate fails loudly instead of open', () => {
+  const base = { repo: REPO, cacheDir: CACHE, github: fakeGithub(), servicesFor: dir => ({ app: dir }) }
+  const bad = [
+    [{ logins: 'alice' }, /trust\.logins must be an array of GitHub logins/],
+    [{ logins: 'carol,dave' }, /trust\.logins must be an array/],
+    [{ associations: 'OWNER' }, /trust\.associations must be an array of author associations/],
+    [{ logins: [null] }, /trust\.logins must be an array/],
+    [{ logins: ['alice', ''] }, /trust\.logins must be an array/],
+    [{ requirePush: 'false' }, /trust\.requirePush must be true or false/],
+    [{ allowForks: 'no' }, /trust\.allowForks must be true or false/],
+  ]
+  for (const [trust, re] of bad) assert.throws(() => createWorktreeBuild({ ...base, trust }), re, JSON.stringify(trust))
+  assert.throws(() => createWorktreeBuild({ ...base, trust: 'alice' }), /trust must be an object/)
+  assert.throws(() => createWorktreeBuild({ ...base, trust: ['alice'] }), /trust must be an object/)
+  for (const trust of [{ logins: new Set(['carol']) }, { logins: null }, {}, null]) {
+    assert.doesNotThrow(() => createWorktreeBuild({ ...base, trust }), JSON.stringify(trust))
+  }
+})
+
+test('a Set of logins is trusted like an array', async () => {
+  const w = setup({ info: { author: 'carol', authorAssociation: 'NONE' }, trust: { logins: new Set(['Carol']) } })
+  await w.build.ensureBuilt(7)
+  assert.deepEqual(worktreeAdds(w), [BASE, PR])
 })
 
 test('construction validates the repo, github, servicesFor, baseRef, keep and install', () => {
