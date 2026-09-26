@@ -57,6 +57,8 @@
   .dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; background: var(--text-faint); flex: none }
   .dot.green { background: var(--accent) } .dot.amber { background: var(--warn) } .dot.grey { background: var(--text-faint) } .dot.red { background: var(--danger) }
   .badge { display: inline-flex; align-items: center; gap: 6px; font: var(--mono); text-transform: uppercase; letter-spacing: .03em; color: var(--text-dim) }
+  /* a blocked reason is a sentence: keep its case */
+  .badge.blocked { color: var(--text-faint); text-transform: none; letter-spacing: 0 }
 
   main { flex: 1; display: flex; flex-direction: column; min-height: 0 }
   .view[hidden] { display: none }
@@ -183,10 +185,11 @@
   <section id="boot" class="view" hidden>
     <h1 id="bootHeading" tabindex="-1">Booting #<span id="bootPr"></span> <span id="bootTotal" class="chip"></span></h1>
     <ol id="bootSteps">
-      <li data-step="ensuring-image"><span class="stepLabel">Ensure PR image</span> <span class="stepSub"></span><span class="stepTime"></span></li>
-      <li data-step="cloning"><span class="stepLabel">Clone prod databases into both panes</span><span class="stepTime"></span></li>
-      <li data-step="migrating"><span class="stepLabel">Run each pane's migrations</span><span class="stepTime"></span></li>
-      <li data-step="starting"><span class="stepLabel">Start base + PR apps, sign in</span><span class="stepTime"></span></li>
+      <!-- labels are (re)set from LABELS in harness.js; ids are the session states -->
+      <li data-step="ensuring-image"><span class="stepLabel">Building</span> <span class="stepSub"></span><span class="stepTime"></span></li>
+      <li data-step="cloning"><span class="stepLabel">Preparing data</span><span class="stepTime"></span></li>
+      <li data-step="migrating"><span class="stepLabel">Migrating</span><span class="stepTime"></span></li>
+      <li data-step="starting"><span class="stepLabel">Starting</span><span class="stepTime"></span></li>
     </ol>
     <pre id="bootError" hidden></pre>
     <div id="bootActions" hidden></div>
