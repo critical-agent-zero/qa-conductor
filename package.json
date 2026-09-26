@@ -1,6 +1,6 @@
 {
   "name": "@critical-labs/qa-conductor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Side-by-side PR-QA harness: boots base-vs-PR app panes against cloned data behind mirrored proxies, with a pluggable five-seam adapter interface (Provisioner, BuildConvention, Seed, EnvTransform, AuthBootstrap).",
   "type": "module",
@@ -32,6 +32,7 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "demo": "node demo/server.mjs"
+    "demo": "node demo/server.mjs",
+    "qa": "node qa/self.mjs"
   }
 }
