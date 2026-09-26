@@ -379,3 +379,18 @@ test('an aborted boot reads no logs', async () => {
   assert.equal(made.calls.some(c => c[0] === 'logs'), false)
   assert.equal(made.calls.some(c => c[0] === 'teardown'), false)
 })
+
+test('a boot aborted while its failure log tail is being read does not tear down', async () => {
+  const ac = new AbortController()
+  const made = makeDeps({ failAt: 'launchServices' })
+  made.deps.signal = ac.signal
+  made.deps.adapters.provisioner.logs = async () => {
+    made.calls.push(['logs'])
+    await new Promise(r => setTimeout(r, 5))
+    ac.abort()
+    return 'tail'
+  }
+  await assert.rejects(() => bootSession(made.deps, 7), /fail:launchServices/)
+  assert.equal(made.calls.some(c => c[0] === 'logs'), true)
+  assert.equal(made.calls.some(c => c[0] === 'teardown'), false, 'an ABORTED boot never tears down')
+})
