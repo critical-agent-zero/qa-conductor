@@ -4,6 +4,7 @@
 // self-reference, which also proves the `exports` entry.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 
 import { createWorktreeBuild, trustDecision } from '@critical-labs/qa-conductor/adapters/build-worktree'
@@ -31,16 +32,22 @@ const flush = () => new Promise(resolve => setImmediate(resolve))
 
 // --- fakes -------------------------------------------------------------------
 
+const UID = process.getuid?.() ?? 0
+
 // A tiny in-memory filesystem with the fs.promises subset the adapter uses.
-// `fail(op, path)` returning an Error injects a failure.
+// `fail(op, path)` returning an Error injects a failure. Everything is owned
+// by UID with mode 0700/0600 unless `owners`, `modes` or `links` say otherwise.
 function memFs() {
   const files = new Map()
   const dirs = new Set(['/'])
+  const owners = new Map()
+  const modes = new Map()
+  const links = new Set()
   const calls = []
   const enoent = p => Object.assign(new Error(`ENOENT: no such file or directory, '${p}'`), { code: 'ENOENT' })
   const mkdirp = p => { for (let d = p; d !== path.dirname(d); d = path.dirname(d)) dirs.add(d) }
   const fsx = {
-    files, dirs, calls, mkdirp, fail: null,
+    files, dirs, owners, modes, links, calls, mkdirp, fail: null,
     exists: p => files.has(p) || dirs.has(p),
     async mkdir(p) { calls.push(['mkdir', p]); mkdirp(p) },
     async readFile(p) {
@@ -68,7 +75,12 @@ function memFs() {
     },
     async lstat(p) {
       if (!fsx.exists(p)) throw enoent(p)
-      return { isDirectory: () => dirs.has(p) }
+      return {
+        isDirectory: () => dirs.has(p) && !links.has(p),
+        isSymbolicLink: () => links.has(p),
+        uid: owners.get(p) ?? UID,
+        mode: modes.get(p) ?? (dirs.has(p) ? 0o40700 : 0o100600),
+      }
     },
   }
   return fsx
@@ -529,6 +541,42 @@ test('a failed rebuild under a new install shape leaves no marker for the old sh
   await back.build.ensureBuilt(7)
   assert.deepEqual(installs(back).map(c => c.opts.cwd), [WT(BASE), WT(PR)])
   assert.ok(!back.messages().includes('#7 (bbbbbbb) already built'), back.messages().join('\n'))
+})
+
+test('a cache that is a symlink, or that someone else could write to, is refused before any git call', async () => {
+  // what a local attacker would plant: a tree for the public base SHA and a
+  // marker for it (with install: null its fingerprint is a constant)
+  const plant = fs => {
+    fs.mkdirp(`${WT(BASE)}/node_modules`)
+    fs.mkdirp(`${CACHE}/built`)
+    fs.files.set(MARKER(BASE), JSON.stringify({ sha: BASE, builtAt: 1, installFingerprint: createHash('sha256').update('null').digest('hex') }))
+  }
+  const cases = [
+    [fs => fs.links.add(CACHE), /^refusing to build in \/cache\/acme-widget: it is a symlink/],
+    [fs => fs.links.add(`${CACHE}/built`), /^refusing to build in \/cache\/acme-widget\/built: it is a symlink/],
+  ]
+  if (process.getuid) {
+    cases.push(
+      [fs => fs.modes.set(CACHE, 0o40775), /^refusing to build in \/cache\/acme-widget: it is writable by group or others \(mode 775\); chmod 700 it$/],
+      [fs => fs.modes.set(`${CACHE}/built`, 0o40757), /\/built: it is writable by group or others \(mode 757\)/],
+      [fs => fs.owners.set(`${CACHE}/worktrees`, UID + 1), new RegExp(`/worktrees: it is owned by uid ${UID + 1}, not ${UID}$`)],
+    )
+  }
+  for (const [loosen, re] of cases) {
+    const fs = memFs()
+    plant(fs)
+    loosen(fs)
+    const w = setup({ fs, install: null })
+    await assert.rejects(w.build.ensureBuilt(7), { message: re }, String(re))
+    assert.equal(w.exec.calls.length, 0, String(re))
+    assert.equal(w.fs.files.has(MARKER(BASE)), true, 'nothing is touched')
+  }
+  // the same planted cache, private, is simply what it claims to be
+  const fs = memFs()
+  plant(fs)
+  const w = setup({ fs, install: null })
+  await w.build.ensureBuilt(7)
+  assert.ok(w.messages().includes('base (aaaaaaa) already built'))
 })
 
 test('install: null skips the installer but still marks the build', async () => {
