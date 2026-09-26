@@ -484,6 +484,48 @@ test("a marker whose install fingerprint doesn't match, or whose worktree is gon
   assert.deepEqual(installs(gone).map(c => c.opts.cwd), [WT(BASE)])
 })
 
+// The PR install fails (or aborts); every other install succeeds.
+const prInstallFails = ({ abort } = {}) => (args, opts) => {
+  if (opts.cwd !== WT(PR)) return { stdout: '' }
+  if (abort) {
+    abort.abort()
+    throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })
+  }
+  throw Object.assign(new Error('pnpm install: Command failed'), { code: 1 })
+}
+
+test('a rebuild drops the old marker first, so a failed or aborted reinstall of a deleted checkout never counts as built', async () => {
+  for (const aborted of [false, true]) {
+    const fs = memFs()
+    await setup({ fs }).build.ensureBuilt(7)
+    await fs.rm(WT(PR), { recursive: true, force: true }) // the checkout is gone, its marker isn't
+    const ac = new AbortController()
+    const broken = setup({ fs, onInstall: prInstallFails({ abort: aborted && ac }) })
+    await assert.rejects(broken.build.ensureBuilt(7, { signal: ac.signal }), aborted ? { name: 'AbortError' } : /install failed for #7/)
+    assert.ok(fs.exists(WT(PR)), 'the half-installed checkout is still there')
+    assert.deepEqual(markerShas(fs), [BASE])
+    assert.deepEqual(await broken.build.describePrs([{ number: 7, headSha: PR }]), [{ number: 7, status: 'none', runUrl: null }])
+
+    const retry = setup({ fs })
+    await retry.build.ensureBuilt(7)
+    assert.deepEqual(installs(retry).map(c => c.opts.cwd), [WT(PR)])
+    assert.ok(!retry.messages().includes('#7 (bbbbbbb) already built'), retry.messages().join('\n'))
+    assert.deepEqual(markerShas(fs), [BASE, PR])
+  }
+})
+
+test('a failed rebuild under a new install shape leaves no marker for the old shape', async () => {
+  const fs = memFs()
+  await setup({ fs }).build.ensureBuilt(7) // under INSTALL
+  const other = setup({ fs, install: { cmd: 'pnpm', args: ['install'] }, onInstall: prInstallFails() })
+  await assert.rejects(other.build.ensureBuilt(7), /install failed for #7/)
+
+  const back = setup({ fs }) // INSTALL again: the PR tree was half-reinstalled under the other shape
+  await back.build.ensureBuilt(7)
+  assert.deepEqual(installs(back).map(c => c.opts.cwd), [WT(BASE), WT(PR)])
+  assert.ok(!back.messages().includes('#7 (bbbbbbb) already built'), back.messages().join('\n'))
+})
+
 test('install: null skips the installer but still marks the build', async () => {
   const w = setup({ install: null })
   await w.build.ensureBuilt(7)
