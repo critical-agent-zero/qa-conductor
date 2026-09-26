@@ -439,7 +439,7 @@ test('each SHA gets a fresh worktree after a prune, then an install, then an ext
   assert.equal(marker.builtAt, 1000)
   assert.match(marker.installFingerprint, /^[0-9a-f]{64}$/)
   assert.deepEqual(markerShas(w.fs), [BASE, PR])
-  // the marker lives outside the checkout, so nothing in the PR can forge it
+  // the marker lives outside the checkout, so a PR's committed files can't supply one
   assert.equal([...w.fs.files.keys()].some(k => k.startsWith(`${WT(PR)}/`) && k.endsWith('.json')), false)
 })
 
