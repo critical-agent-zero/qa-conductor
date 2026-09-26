@@ -146,6 +146,46 @@ How it works:
   - A PR that passes the gate still runs with the reviewer's full user access. Code it runs (install scripts, a package manager it selects, the server your Provisioner launches) can rewrite this cache, including markers and other checkouts such as the base, like anything else the reviewer can write.
 - **Skip install scripts.** Install with `--ignore-scripts` (with pnpm, also `--ignore-pnpmfile`) so dependency lifecycle scripts and pnpmfiles don't run.
 
+### Built in: `adapters/provisioner-process` (process Provisioner)
+
+A Provisioner for local processes. It runs each pane's services, and optionally a per-pane database, as process groups on `127.0.0.1`, with a scrubbed env, a pidfile and a start-time-checked orphan sweep. Its launch contract is below.
+
+```js
+import { createProcessProvisioner } from '@critical-labs/qa-conductor/adapters/provisioner-process'
+
+const provisioner = createProcessProvisioner({
+  stateDir: path.join(os.homedir(), '.cache/qa-conductor/acme-widget'),  // holds pids.json
+  // `ref` is the service's entry from the BuildConvention, e.g. a checkout directory
+  command: ({ name, ref, port, env, paneRef }) => ({
+    cmd: path.join(ref, 'node_modules/.bin/tsx'),
+    args: ['packages/api/src/dev.ts'],
+    cwd: ref,
+    env: { HOST: '127.0.0.1', PORT: String(port) },
+  }),
+  database: {                                  // optional: one per pane
+    command: ({ paneRef, port }) => ({ cmd: '/usr/bin/java', args: ['-jar', 'DynamoDBLocal.jar', '-inMemory', '-port', String(port)], cwd: ddbDir }),
+    ready: ({ port, signal }) => waitForPort(port, { signal }),
+    handle: ({ paneRef, port }) => ({ dsn: `http://127.0.0.1:${port}`, db: { endpoint: `http://127.0.0.1:${port}` } }),
+  },
+  healthPath: '/ui/',                          // or (serviceName) => path; default '/'
+  healthy: status => status === 200,           // default: status < 500
+})
+```
+
+The other options are `healthTimeoutMs` (60000, per service), `host` (`127.0.0.1`: the address in reserved urls, health checks and the free-port lookup), `graceMs` (5000, from SIGTERM to SIGKILL), `logLines` (200 per pane) and `log` (`console`). Every effect is injectable: `spawnFn`, `killFn`, `freePortFn`, `fetchFn`, `fsx`, `psFn`, `pgroupFn`, `sleepFn`, `nowFn`, `onExitFn` and `baseEnv`.
+
+**Launch contract.** `command` and `database.command` must start the server binary **directly**, never through a package manager (`pnpm dev`, `pnpm exec`, `npm run`, `npx`). The child has no TTY and only `PATH` plus the env you declare, and the package manager on that `PATH` may not be the one that ran `install`: pnpm 10 and later verify dependencies before run/exec and, with no TTY, fail or reinstall. So use, for example, `{ cmd: join(dir, 'node_modules/.bin/tsx'), args: ['packages/api/src/dev.ts'], cwd: dir }` or `{ cmd: process.execPath, args: ['demo/server.mjs'], cwd: dir }`. The process you start is the server: if it exits, the pane has failed.
+
+- **Env.** A service gets exactly `{ PATH, ...env[name], ...spec.env }`: the conductor's `PATH`, the pane env from your EnvTransform, then the command's own `env`. The database gets `{ PATH, ...spec.env }`. Nothing else is inherited: no credentials, and no `HOME` unless you declare it.
+- **Ports.** `reserveServices` picks a free port per service on `host`, and never hands out a port another pane or service still holds. Nothing starts until `launchServices`. Your command must make the server listen on that port, bound to `host`.
+- **Health.** `waitHealthy` polls `<url><healthPath>` until `healthy(status)`, for up to `healthTimeoutMs`. A process that exits first fails the boot at once, with its log tail.
+- **Logs.** Each pane keeps its last `logLines` lines of stdout and stderr, prefixed `[name]`, and `logs()` returns the tail. The buffer survives teardown, and resets when the pane's next boot starts.
+- **Teardown** signals process **groups**, never bare pids, because a wrapper may exit at once while its server lives on. Services go first, then the database: SIGTERM, then SIGKILL after `graceMs`. A group that survives SIGKILL is logged and left for the next sweep.
+- **Crash cleanup.** Each process is recorded in `<stateDir>/pids.json` (directory `0700`, which must be a real directory owned by you; file `0600`) with its start time from `ps`. `sweep()`, which the conductor runs at startup, kills the groups a previous run left behind, and skips any pid that now belongs to another process. Give each conductor its own `stateDir`. A `process.on('exit')` hook SIGKILLs every live group; signals don't run it, so call the conductor's `shutdown()` from your signal handlers.
+- There's no `runMigrate`: process consumers migrate on boot.
+
+**Security.** A PR's code runs as your user, on your machine. The trust gate is the only real boundary between a PR's code and the reviewer's machine: the BuildConvention must refuse to build a PR it doesn't trust. Env scrubbing and loopback binding are defence in depth.
+
 ## Configuration
 
 `loadConfig(path, { defaults, required = [] })` reads `KEY=value` lines. File values override `defaults`, and the raw map is returned as `cfg.env` so a platform can read its own keys. `required` lists extra keys the platform insists on (homefree re-requires `QA_OPERATOR_EMAIL`); it can't waive the core's.
