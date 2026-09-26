@@ -74,10 +74,13 @@ function memFs() {
   return fsx
 }
 
+const abortErr = () => Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })
+
 // A recording execFileFn that simulates just enough git over `fs`: the bare
 // repo, fetch into refs from `remote`, rev-parse, update-ref and worktrees.
-// Anything that isn't git is the installer, answered by `onInstall`.
-function gitWorld(fs, { remote, onInstall, onFetch, fail } = {}) {
+// Anything that isn't git is the installer, answered by `onInstall`. Like
+// execFile, a call with an aborted signal fails; `before` may hold a call.
+function gitWorld(fs, { remote, onInstall, onFetch, fail, before } = {}) {
   const refs = {}
   const calls = []
   const ok = { stdout: '' }
@@ -91,6 +94,8 @@ function gitWorld(fs, { remote, onInstall, onFetch, fail } = {}) {
     calls.push({ cmd, args: [...args], opts })
     const injected = fail?.(cmd, args)
     if (injected) throw injected
+    if (opts.signal?.aborted) throw abortErr()
+    await before?.(cmd, args, opts)
     if (cmd !== 'git') return onInstall ? onInstall(args, opts) : { stdout: 'installed\n' }
     if (args[0] === 'init') {
       fs.mkdirp(args[2])
@@ -158,10 +163,10 @@ function fakeGithub({ info = {}, infos = null, permission = 'write' } = {}) {
 }
 
 function setup({
-  fs = memFs(), remote = { base: BASE, pulls: { 7: PR } }, onInstall, onFetch, fail,
+  fs = memFs(), remote = { base: BASE, pulls: { 7: PR } }, onInstall, onFetch, fail, before,
   info, infos, permission, now = { t: 1000 }, install = INSTALL, ...opts
 } = {}) {
-  const exec = gitWorld(fs, { remote, onInstall, onFetch, fail })
+  const exec = gitWorld(fs, { remote, onInstall, onFetch, fail, before })
   const github = fakeGithub({ info, infos, permission })
   const services = []
   const build = createWorktreeBuild({
@@ -934,4 +939,31 @@ test('progress messages reach the subscriber as { message }, and subscriber erro
     process.off('unhandledRejection', onUnhandled)
   }
   assert.deepEqual(unhandled, [])
+})
+
+test("progress is bound to its call: an aborted build's late messages never reach the next boot's subscriber", async () => {
+  const held = deferred()
+  const w = manyPrs({
+    keep: 0,
+    // the stale checkout's removal hangs until its build is aborted
+    before: (cmd, args, opts) => {
+      if (!(opts.signal && args.includes('remove') && args.includes(WT(S[1])))) return
+      held.resolve()
+      return new Promise((resolve, reject) => opts.signal.addEventListener('abort', () => reject(abortErr()), { once: true }))
+    },
+  })
+  await w.build.ensureBuilt(1)
+  const ac = new AbortController()
+  const stale = w.build.ensureBuilt(2, { signal: ac.signal })
+  await held.promise
+  const next = []
+  w.build.subscribeBuild(e => { next.push(e.message) }) // the next boot subscribes
+  const seen = w.events.length
+  ac.abort() // …and tears the old one down, which then fails its prune
+  await stale // prune is best-effort, so the aborted call still settles quietly
+  assert.deepEqual(next, [])
+  assert.equal(w.events.length, seen, 'an aborted call reports nothing, even to its own subscriber')
+
+  await w.build.ensureBuilt(3)
+  assert.ok(next.includes('fetching acme/widget…'), next.join('\n'))
 })
