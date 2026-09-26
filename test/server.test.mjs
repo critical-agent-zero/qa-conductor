@@ -15,7 +15,7 @@ function deferred() {
 // Fake adapter set. `ensureBuilt` for a PR listed in `hang` blocks until the
 // test releases it — modelling a boot stuck waiting on a GHCR image. Each pane
 // "app" is a real loopback server, so the pane proxies can be exercised.
-function makeWorld({ hang = {}, failAt = null, cfg: cfgOverrides = {} } = {}) {
+function makeWorld({ hang = {}, failAt = null, cfg: cfgOverrides = {}, readBaseEnv: readBaseEnvOverride = null } = {}) {
   const calls = []
   const apps = {
     base: http.createServer((req, res) => res.end('pane-base')),
@@ -68,7 +68,7 @@ function makeWorld({ hang = {}, failAt = null, cfg: cfgOverrides = {} } = {}) {
     setQaLabel: async (pr, label) => { calls.push(['label', pr, label]) },
   }
   const fsx = { readFile: async () => 'x' }
-  const readBaseEnv = async () => { calls.push(['readBaseEnv']); return { A: '1' } }
+  const readBaseEnv = readBaseEnvOverride ?? (async () => { calls.push(['readBaseEnv']); return { A: '1' } })
   const logLines = []
   const quiet = { log: (...a) => logLines.push(a.join(' ')), error: () => {} }
   const conductor = startConductor({ cfg, github, fsx, adapters, readBaseEnv, log: quiet })
@@ -332,6 +332,20 @@ test('a Host header outside the allowlist gets 421 on all three servers', async 
   } finally { c.stop() }
 })
 
+// A request target the URL parser rejects used to reject the async handler
+// before the Host check ran, crashing the conductor.
+test('an unparseable request target gets 421/400 and the harness stays up', async () => {
+  const { c } = makeWorld()
+  try {
+    const port = await harnessPort(c)
+    assert.equal((await raw(port, { path: '//x:99999', headers: { host: 'attacker.example' } })).status, 421)
+    for (const path of ['//', '//x:99999', '//a%20b']) {
+      assert.equal((await raw(port, { path })).status, 400, path)
+    }
+    assert.equal((await raw(port, { path: '/api/state' })).status, 200)
+  } finally { c.stop() }
+})
+
 test('allowed Hosts: loopback, the public host, the pane origin hosts, QA_ALLOWED_HOSTS', async () => {
   const { c, cfg } = makeWorld({ cfg: { allowedHosts: ['qa.corp.example'] } })
   try {
@@ -474,6 +488,28 @@ test('err.logTail reaches the SSE error event (pane stage and build stage)', asy
   } finally { build.c.stop() }
 })
 
+// A readBaseEnv failure leaves no role, so bootSession attaches no tail and the
+// server asks the Provisioner itself. logs() may be synchronous.
+test('the fallback log tail tolerates a synchronous logs(), returning or throwing', async () => {
+  const cases = [
+    [() => 'tail', 'tail'],
+    [() => { throw new Error('container gone') }, ''],
+    [() => ({ not: 'a string' }), ''],
+  ]
+  for (const [logs, want] of cases) {
+    const w = makeWorld({ readBaseEnv: async () => { throw new Error('x') } })
+    w.adapters.provisioner.logs = logs
+    try {
+      const port = await harnessPort(w.c)
+      await api(port, 'POST', '/api/session', { pr: 7 })
+      const events = await sseEvents(port, evs => evs.some(e => e.kind === 'error'))
+      const err = events.find(e => e.kind === 'error')
+      assert.deepEqual([err.step, err.message, err.logTail], ['migrating', 'x', want])
+      assert.equal((await api(port, 'GET', '/api/state')).status, 'error', 'the harness is still up')
+    } finally { w.c.stop() }
+  }
+})
+
 // --- 0.2.0: shutdown -------------------------------------------------------------
 
 test('shutdown() aborts the boot, tears down both panes, ends SSE and closes all three servers', async () => {
@@ -501,6 +537,48 @@ test('shutdown() aborts the boot, tears down both panes, ends SSE and closes all
     hang[9].reject(new Error('late'))
     await conductor.shutdown()
     assert.equal(calls.filter(x => x[0] === 'teardown').length, 2)
+  } finally { closeApps() }
+})
+
+// Regression: a POST accepted while shutdown() awaited the (slow) teardown
+// started a boot that nothing aborted, provisioning after the servers closed.
+test('once shutdown() begins, writes get 503 and no boot starts', async () => {
+  const { conductor, closeApps, calls, adapters } = makeWorld()
+  adapters.provisioner.teardown = async ({ paneRef }) => {
+    calls.push(['teardown', paneRef.role])
+    await new Promise(r => setTimeout(r, 100))
+  }
+  try {
+    const port = await proxyPort(conductor.servers.harness)
+    for (const s of [conductor.servers.baseProxy, conductor.servers.prProxy]) await proxyPort(s)
+    const done = conductor.shutdown()
+    await waitFor(() => calls.some(x => x[0] === 'teardown'))
+    const post = await raw(port, { method: 'POST', path: '/api/session', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pr: 7 }) })
+    assert.equal(post.status, 503)
+    assert.equal((await raw(port, { path: '/api/state' })).status, 200, 'reads still answer')
+    await done
+    await new Promise(r => setTimeout(r, 50))
+    assert.equal(calls.some(x => x[0] === 'ensureBuilt'), false, 'no boot after shutdown')
+  } finally { closeApps() }
+})
+
+test('a takeover whose teardown overlaps shutdown() starts no boot', async () => {
+  const { conductor, closeApps, calls, adapters } = makeWorld()
+  try {
+    const port = await proxyPort(conductor.servers.harness)
+    for (const s of [conductor.servers.baseProxy, conductor.servers.prProxy]) await proxyPort(s)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    adapters.provisioner.teardown = async ({ paneRef }) => {
+      calls.push(['teardown', paneRef.role])
+      await new Promise(r => setTimeout(r, 100))
+    }
+    const takeover = raw(port, { method: 'POST', path: '/api/session', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pr: 8, takeover: true }) })
+    await waitFor(() => calls.some(x => x[0] === 'teardown'))
+    await conductor.shutdown()
+    assert.equal((await takeover).status, 503)
+    await new Promise(r => setTimeout(r, 50))
+    assert.deepEqual(calls.filter(x => x[0] === 'ensureBuilt').map(x => x[1]), [7], 'the takeover never booted')
   } finally { closeApps() }
 })
 
