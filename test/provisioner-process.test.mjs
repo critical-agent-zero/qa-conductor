@@ -1,10 +1,10 @@
 // Tests for the process Provisioner. Every effect is faked: children are
-// EventEmitters, kill acts on an in-memory process-group table, ps and the
-// group listing are scripted, the filesystem is a Map, and the clock moves
-// only when the code sleeps.
+// EventEmitters, kill acts on an in-memory process-group table, ps, the group
+// listing and the boot id are scripted, the filesystem is a Map, and the clock
+// moves only when the code sleeps.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { EventEmitter } from 'node:events'
+import { EventEmitter, getEventListeners } from 'node:events'
 // Through the package's own exports map, the way a consumer imports it.
 import { createProcessProvisioner } from '@critical-labs/qa-conductor/adapters/provisioner-process'
 
@@ -12,6 +12,7 @@ const STATE_DIR = '/state'
 const PIDFILE = '/state/pids.json'
 const BASE = { role: 'base' }
 const PR = { role: 'pr' }
+const BOOT = 'boot-1'
 
 function fakeChild(pid) {
   const child = new EventEmitter()
@@ -42,31 +43,55 @@ function fakeGroups() {
   return { alive, survivesTerm, survivesKill, calls, hooks, killFn }
 }
 
+// `links` are symlinks (path -> target), which writeFile follows unless it
+// creates exclusively; `owners` overrides a file's uid.
 function memFs() {
   const files = new Map()
+  const links = new Map()
+  const owners = new Map()
   const ops = []
   const dir = { symlink: false, directory: true, uid: process.getuid(), mode: 0o40700 }
+  const enoent = path => Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
+  const stat = (kind, uid, mode) => ({
+    isSymbolicLink: () => kind === 'link', isDirectory: () => kind === 'dir', isFile: () => kind === 'file', uid, mode,
+  })
   return {
     files,
+    links,
+    owners,
     ops,
     dir,
     async mkdir(path, opts) { ops.push(['mkdir', path, opts]) },
-    async lstat() {
-      return { isSymbolicLink: () => dir.symlink, isDirectory: () => dir.directory, uid: dir.uid, mode: dir.mode }
+    async lstat(path) {
+      if (path === STATE_DIR) return dir.symlink ? stat('link', dir.uid, 0o120777) : stat(dir.directory ? 'dir' : 'file', dir.uid, dir.mode)
+      if (links.has(path)) return stat('link', process.getuid(), 0o120777)
+      if (!files.has(path)) throw enoent(path)
+      return stat('file', owners.get(path) ?? process.getuid(), 0o100600)
     },
     async chmod(path, mode) { ops.push(['chmod', path, mode]) },
     async readFile(path) {
-      if (!files.has(path)) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
-      return files.get(path)
+      const real = links.get(path) ?? path
+      if (!files.has(real)) throw enoent(path)
+      return files.get(real)
     },
     async writeFile(path, data, opts) {
       ops.push(['writeFile', path, opts])
-      files.set(path, String(data))
+      if (opts?.flag === 'wx' && (files.has(path) || links.has(path))) {
+        throw Object.assign(new Error(`EEXIST: ${path}`), { code: 'EEXIST' })
+      }
+      files.set(links.get(path) ?? path, String(data))
+    },
+    async unlink(path) {
+      ops.push(['unlink', path])
+      if (!links.delete(path) && !files.delete(path)) throw enoent(path)
+      owners.delete(path)
     },
     async rename(from, to) {
       ops.push(['rename', from, to])
       files.set(to, files.get(from))
       files.delete(from)
+      links.delete(to)
+      owners.delete(to)
     },
   }
 }
@@ -95,6 +120,7 @@ function setup({ pids = [], deps: overrides = {} } = {}) {
     fsx,
     psFn: async pid => ({ startedAt: `t${pid}` }),
     pgroupFn: async () => [],
+    bootIdFn: async () => BOOT,
     nowFn: () => now,
     // The clock moves when a sleep completes, one macrotask later, so anything
     // that has already settled wins a race against a sleep.
@@ -129,7 +155,8 @@ async function launch(p, paneRef, services = { app: '/w' }, env = {}, signal) {
 }
 
 const readPids = fsx => JSON.parse(fsx.files.get(PIDFILE) ?? '[]')
-const entry = (pid, startedAt) => ({ pid, startedAt, paneRole: 'base', kind: 'service', name: 'app', cmd: '/w/bin/app', args: [] })
+const entry = (pid, startedAt, bootId = BOOT) =>
+  ({ pid, startedAt, bootId, paneRole: 'base', kind: 'service', name: 'app', cmd: '/w/bin/app', args: [] })
 
 // --- construction ------------------------------------------------------------
 
@@ -196,7 +223,7 @@ test('each spawn is persisted to pids.json via a 0600 tmp file and a rename, in 
   const { p, fsx } = setup()
   await launch(p, BASE)
   assert.deepEqual(readPids(fsx), [{
-    pid: 1001, startedAt: 't1001', paneRole: 'base', kind: 'service', name: 'app', cmd: '/w/bin/app', args: ['--port', '4000'],
+    pid: 1001, startedAt: 't1001', bootId: BOOT, paneRole: 'base', kind: 'service', name: 'app', cmd: '/w/bin/app', args: ['--port', '4000'],
   }])
   assert.deepEqual(fsx.ops.find(o => o[0] === 'mkdir'), ['mkdir', STATE_DIR, { recursive: true, mode: 0o700 }])
   const writes = fsx.ops.filter(o => o[0] === 'writeFile')
@@ -206,8 +233,45 @@ test('each spawn is persisted to pids.json via a 0600 tmp file and a rename, in 
     assert.notEqual(path, PIDFILE)
     assert.ok(path.startsWith(`${STATE_DIR}/`))
     assert.equal(opts.mode, 0o600)
+    assert.equal(opts.flag, 'wx') // created afresh, never through something already there
   }
   assert.deepEqual(renames.map(([, from, to]) => [from, to]), writes.map(([, path]) => [path, PIDFILE]))
+})
+
+test('a file or symlink left at the tmp path is replaced, never written through', async () => {
+  const { p, fsx } = setup()
+  const tmp = `${PIDFILE}.${process.pid}.tmp`
+  fsx.files.set('/home/me/.ssh/authorized_keys', 'ssh-ed25519 AAAA me')
+  fsx.links.set(tmp, '/home/me/.ssh/authorized_keys')
+  await launch(p, BASE)
+  assert.equal(fsx.files.get('/home/me/.ssh/authorized_keys'), 'ssh-ed25519 AAAA me')
+  assert.deepEqual(readPids(fsx).map(e => e.pid), [1001])
+  assert.equal(fsx.links.has(tmp), false)
+  assert.equal(fsx.files.has(tmp), false)
+})
+
+test('a pids.json that is a symlink or owned by another uid is ignored, then replaced', async () => {
+  for (const plant of [
+    fsx => fsx.owners.set(PIDFILE, process.getuid() + 1),
+    fsx => {
+      fsx.files.set('/elsewhere/pids.json', fsx.files.get(PIDFILE))
+      fsx.files.delete(PIDFILE)
+      fsx.links.set(PIDFILE, '/elsewhere/pids.json')
+    },
+  ]) {
+    const s = setup({ deps: { psFn: async pid => ({ startedAt: pid === 501 ? 'A' : `t${pid}` }) } })
+    s.fsx.files.set(PIDFILE, JSON.stringify([entry(501, 'A')])) // the victim's own shell, say
+    plant(s.fsx)
+    s.groups.alive.add(501)
+    await s.p.sweep()
+    assert.deepEqual(s.groups.calls, [])
+    assert.match(s.warnings.join('\n'), /pids\.json is not a regular file owned by uid/)
+
+    await launch(s.p, BASE)
+    assert.deepEqual(readPids(s.fsx).map(e => e.pid), [1001])
+    assert.equal(s.fsx.links.has(PIDFILE), false)
+    if (s.fsx.files.has('/elsewhere/pids.json')) assert.match(s.fsx.files.get('/elsewhere/pids.json'), /501/)
+  }
 })
 
 test('pidfile writes are serialized, so concurrent launches keep each other\'s entries', async () => {
@@ -239,11 +303,25 @@ test('a symlinked or foreign-owned stateDir is refused before anything spawns', 
   }
 })
 
-test('a stateDir open to group or others is tightened to 0700', async () => {
+test('a stateDir readable by group or others is tightened to 0700', async () => {
   const { p, fsx } = setup()
   fsx.dir.mode = 0o40755
   await launch(p, BASE)
   assert.deepEqual(fsx.ops.find(o => o[0] === 'chmod'), ['chmod', STATE_DIR, 0o700])
+})
+
+test('a stateDir writable by group or others is refused, since its contents may be planted', async () => {
+  for (const mode of [0o40777, 0o40720, 0o40702]) {
+    const { p, fsx, spawned, groups } = setup()
+    fsx.dir.mode = mode
+    fsx.files.set(PIDFILE, JSON.stringify([entry(501, 't501')]))
+    groups.alive.add(501)
+    await assert.rejects(p.sweep(), /writable by group or others/)
+    await assert.rejects(launch(p, BASE), /writable by group or others/)
+    assert.equal(spawned.length, 0)
+    assert.deepEqual(groups.calls, [])
+    assert.equal(fsx.ops.some(o => o[0] === 'chmod'), false)
+  }
 })
 
 test('a spawn error rejects with the command and cwd, records no pid and does not crash', async () => {
@@ -342,14 +420,14 @@ test('an IPv6 host is bracketed in reserved urls', async () => {
 
 test('waitHealthy polls each service\'s health path until healthy, aborting every fetch', async () => {
   const urls = []
-  const signals = []
+  const opts = []
   const statuses = [503, 200, 200]
   const s = setup({
     deps: {
       healthPath: name => (name === 'app' ? '/ui/' : '/health'),
-      fetchFn: async (url, { signal }) => {
+      fetchFn: async (url, o) => {
         urls.push(url)
-        signals.push(signal)
+        opts.push(o)
         return { status: statuses.shift() }
       },
     },
@@ -357,7 +435,9 @@ test('waitHealthy polls each service\'s health path until healthy, aborting ever
   const reserved = await launch(s.p, BASE, { app: '/w', worker: '/w' })
   await s.p.waitHealthy({ services: reserved })
   assert.deepEqual(urls, ['http://127.0.0.1:4000/ui/', 'http://127.0.0.1:4000/ui/', 'http://127.0.0.1:4001/health'])
-  assert.ok(signals.every(sig => sig.aborted))
+  assert.ok(opts.every(o => o.signal.aborted))
+  // the service's own status: a redirect to the pane proxy would answer 503 mid-boot
+  assert.ok(opts.every(o => o.redirect === 'manual'))
 
   const d = setup({ deps: { fetchFn: async url => { urls.push(url); return { status: 200 } } } })
   await d.p.waitHealthy({ services: await launch(d.p, BASE) })
@@ -424,6 +504,23 @@ test('a hung health check stops at the deadline, with every fetch signal aborted
   assert.ok(s.now() >= 5000)
 })
 
+test('health attempts leave no listeners behind on the caller\'s signal', async () => {
+  const ac = new AbortController()
+  const seen = []
+  const statuses = [503, 503, 503, 200]
+  const s = setup({
+    deps: {
+      fetchFn: async () => {
+        seen.push(getEventListeners(ac.signal, 'abort').length)
+        return { status: statuses.shift() }
+      },
+    },
+  })
+  await s.p.waitHealthy({ services: await launch(s.p, BASE), signal: ac.signal })
+  assert.deepEqual(seen, [1, 1, 1, 1]) // one per attempt in flight, never more
+  assert.equal(getEventListeners(ac.signal, 'abort').length, 0)
+})
+
 test('an aborted signal stops waitHealthy with an AbortError', async () => {
   const ac = new AbortController()
   const s = setup({
@@ -464,7 +561,7 @@ test('provisionDatabase spawns the database with exactly PATH and its env, waits
   assert.ok(readyCalls[0].signal instanceof AbortSignal)
   assert.equal(readyCalls[0].signal.aborted, false)
   assert.deepEqual(readPids(s.fsx), [{
-    pid: 1001, startedAt: 't1001', paneRole: 'base', kind: 'database', name: 'database',
+    pid: 1001, startedAt: 't1001', bootId: BOOT, paneRole: 'base', kind: 'database', name: 'database',
     cmd: '/usr/bin/java', args: ['-jar', 'DynamoDBLocal.jar', '-port', '4000'],
   }])
 })
@@ -492,6 +589,31 @@ test('a database that exits before it is ready rejects with the log tail and abo
     return true
   })
   assert.equal(readySignal.aborted, true)
+
+  // with the caller's signal too, as the core passes it: either one aborts ready
+  const ac = new AbortController()
+  let withCaller
+  const c = setup({
+    deps: {
+      database: fakeDb({
+        ready: ({ signal }) => {
+          withCaller = signal
+          setImmediate(() => {
+            c.spawned[0].child.stderr.emit('data', 'OutOfMemoryError\n')
+            c.spawned[0].child.emit('close', null, 'SIGKILL')
+          })
+          return new Promise(() => {})
+        },
+      }),
+    },
+  })
+  await assert.rejects(c.p.provisionDatabase({ paneRef: BASE, signal: ac.signal }), err => {
+    assert.equal(err.message, 'database exited before it was ready (signal SIGKILL)')
+    assert.match(err.logTail, /\[database\] OutOfMemoryError/)
+    return true
+  })
+  assert.equal(withCaller.aborted, true)
+  assert.equal(ac.signal.aborted, false)
 })
 
 test('provisionDatabase honours an abort before spawning and while waiting for ready', async () => {
@@ -606,6 +728,137 @@ test('teardown is idempotent and never signals pid 1', async () => {
   assert.deepEqual(one.groups.calls, [])
 })
 
+// A pane whose service leader has exited, as node reports it: reaped, then
+// 'exit', then 'close'. `ps` answers from `ps.fn` once the launch is done.
+async function exitedLeader({ groupEmpty, deps } = {}) {
+  const ps = { fn: pid => ({ startedAt: `t${pid}` }) }
+  const s = setup({ deps: { psFn: async pid => ps.fn(pid), ...deps } })
+  await launch(s.p, BASE)
+  const { child } = s.spawned[0]
+  if (groupEmpty) s.groups.alive.delete(1001)
+  child.emit('exit', 1, null)
+  child.emit('close', 1, null)
+  return { ...s, ps }
+}
+
+const signalsTo = (s, pid) => s.groups.calls.filter(([p, sig]) => p === -pid && sig !== 0)
+
+test('a crashed service\'s reissued pid gets no signal from teardown or the exit hook', async () => {
+  const s = await exitedLeader({ groupEmpty: true })
+  // the group was empty when its leader was reaped, so the pid went back to the pool
+  s.groups.alive.add(1001)
+  s.ps.fn = () => ({ startedAt: 'someone else' })
+  s.exitHooks[0]()
+  await s.p.teardown({ paneRef: BASE })
+  assert.deepEqual(signalsTo(s, 1001), [])
+  assert.ok(s.groups.alive.has(1001))
+  assert.deepEqual(readPids(s.fsx), [])
+})
+
+test('a wrapper\'s orphans are still stopped after the wrapper exits', async () => {
+  for (const run of ['teardown', 'exit hook']) {
+    const s = await exitedLeader({ deps: { graceMs: 300 } })
+    s.ps.fn = () => null
+    s.groups.survivesTerm.add(1001)
+    if (run === 'teardown') {
+      await s.p.teardown({ paneRef: BASE })
+      assert.deepEqual(signalsTo(s, 1001), [[-1001, 'SIGTERM'], [-1001, 'SIGKILL']])
+      assert.deepEqual(readPids(s.fsx), [])
+    } else {
+      s.exitHooks[0]()
+      assert.deepEqual(signalsTo(s, 1001), [[-1001, 'SIGKILL']])
+    }
+  }
+
+  // a wrapper gone before ps even saw it: no start time was recorded
+  const unknown = setup({ deps: { psFn: async () => null } })
+  await launch(unknown.p, BASE)
+  unknown.spawned[0].child.emit('exit', 0, null)
+  unknown.spawned[0].child.emit('close', 0, null)
+  await unknown.p.teardown({ paneRef: BASE })
+  assert.deepEqual(signalsTo(unknown, 1001)[0], [-1001, 'SIGTERM'])
+  assert.match(unknown.warnings.join('\n'), /could not read the start time of pid 1001/)
+})
+
+test('once a wrapper\'s orphans are gone, its reissued pid gets no signal from teardown', async () => {
+  const s = await exitedLeader()
+  s.groups.alive.delete(1001) // the orphans exit...
+  s.groups.alive.add(1001) // ...and the pid is reissued
+  s.ps.fn = () => ({ startedAt: 'someone else' })
+  await s.p.teardown({ paneRef: BASE })
+  assert.deepEqual(signalsTo(s, 1001), [])
+  assert.deepEqual(readPids(s.fsx), [])
+})
+
+test('a group that ends between teardown\'s probes is not signalled again, though its pid is reissued', async () => {
+  const s = setup({ deps: { graceMs: 1000 } })
+  await launch(s.p, BASE)
+  const { child } = s.spawned[0]
+  s.groups.survivesTerm.add(1001)
+  let probes = 0
+  s.groups.hooks.onSignal = (pgid, sig) => {
+    if (sig !== 0 || ++probes !== 3) return
+    s.groups.alive.delete(1001) // the group ends and its leader is reaped...
+    child.emit('exit', null, 'SIGTERM')
+    s.groups.alive.add(1001) // ...and the pid goes to someone else's group
+  }
+  await s.p.teardown({ paneRef: BASE })
+  assert.deepEqual(signalsTo(s, 1001), [[-1001, 'SIGTERM']])
+  assert.deepEqual(readPids(s.fsx), [])
+})
+
+test('when ps fails for an exited leader, teardown leaves it unsignalled and kept, and stops the rest', async () => {
+  const ps = { fn: pid => ({ startedAt: `t${pid}` }) }
+  const s = setup({ deps: { psFn: async pid => ps.fn(pid) } })
+  await launch(s.p, BASE, { app: '/w', worker: '/w' }) // 1001, 1002
+  s.spawned[0].child.emit('exit', 1, null)
+  s.spawned[0].child.emit('close', 1, null)
+  ps.fn = pid => {
+    if (pid === 1001) throw new Error('ps: fork failed')
+    return { startedAt: `t${pid}` }
+  }
+  await s.p.teardown({ paneRef: BASE })
+  assert.deepEqual(signalsTo(s, 1001), [])
+  assert.deepEqual(signalsTo(s, 1002), [[-1002, 'SIGTERM']])
+  assert.deepEqual(readPids(s.fsx).map(e => e.pid), [1001])
+  assert.match(s.warnings.join('\n'), /could not check whether pid 1001 is still ours/)
+
+  // the next teardown retries it
+  ps.fn = () => null
+  await s.p.teardown({ paneRef: BASE })
+  assert.deepEqual(signalsTo(s, 1001), [[-1001, 'SIGTERM']])
+  assert.deepEqual(readPids(s.fsx), [])
+})
+
+test('a teardown while ps is still running leaves no pidfile entry behind', async () => {
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const s = setup({ deps: { psFn: async pid => { await gate; return { startedAt: `t${pid}` } } } })
+  const services = { app: '/w' }
+  const reserved = await s.p.reserveServices({ paneRef: BASE, services })
+  const launching = s.p.launchServices({ paneRef: BASE, services, reserved })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(s.spawned.length, 1) // spawned, its ps still pending
+  await s.p.teardown({ paneRef: BASE })
+  assert.deepEqual(s.groups.calls[0], [-1001, 'SIGTERM'])
+  release()
+  await launching
+  assert.deepEqual(readPids(s.fsx), [])
+})
+
+test('an error on a child\'s output stream is contained', async () => {
+  const s = setup()
+  const reserved = await launch(s.p, BASE)
+  const { child } = s.spawned[0]
+  assert.doesNotThrow(() => {
+    child.stdout.emit('error', new Error('EPIPE'))
+    child.stderr.emit('error', new Error('EPIPE'))
+  })
+  await s.p.waitHealthy({ services: reserved })
+  await s.p.teardown({ paneRef: BASE })
+  assert.deepEqual(readPids(s.fsx), [])
+})
+
 // --- sweep ------------------------------------------------------------------------------
 
 test('sweep kills our orphaned groups by start time, skips reused pids and finds leaderless groups', async () => {
@@ -626,14 +879,53 @@ test('sweep kills our orphaned groups by start time, skips reused pids and finds
     entry(503, 'C'), // leader gone, group still has members
     entry(504, 'D'), // leader and group gone
     entry(1, 'E'), // never a pid we would signal
+    entry(505, null), // no start time to check against
   ]))
-  for (const pid of [501, 502, 503]) s.groups.alive.add(pid)
+  for (const pid of [501, 502, 503, 505]) s.groups.alive.add(pid)
   await s.p.sweep()
   assert.deepEqual([...new Set(s.groups.calls.map(([pid]) => pid))], [-501, -503])
   assert.deepEqual(s.groups.calls.filter(([, sig]) => sig === 'SIGTERM'), [[-501, 'SIGTERM'], [-503, 'SIGTERM']])
   assert.deepEqual(pgroupCalls, [503, 504])
-  assert.deepEqual(readPids(s.fsx), [])
+  // entries it couldn't process stay, for a later sweep after a reboot to clear
+  assert.deepEqual(readPids(s.fsx), [entry(1, 'E'), entry(505, null)])
   assert.ok(s.groups.alive.has(502))
+})
+
+test('sweep drops entries from an earlier boot without signalling anything', async () => {
+  const psCalls = []
+  const s = setup({
+    deps: {
+      psFn: async pid => { psCalls.push(pid); return { startedAt: 'A' } },
+      pgroupFn: async () => [7001],
+    },
+  })
+  const { bootId, ...legacy } = entry(503, 'A')
+  s.fsx.files.set(PIDFILE, JSON.stringify([entry(501, 'A', 'boot-0'), entry(502, null, 'boot-0'), legacy]))
+  for (const pid of [501, 502, 503]) s.groups.alive.add(pid)
+  await s.p.sweep()
+  assert.deepEqual(s.groups.calls, [])
+  assert.deepEqual(psCalls, [])
+  assert.deepEqual(readPids(s.fsx), [])
+})
+
+test('with no boot id, sweep still acts on start times and leaderless groups', async () => {
+  const s = setup({
+    deps: {
+      bootIdFn: async () => { throw new Error('sysctl: unknown oid') },
+      psFn: async pid => (pid === 501 ? { startedAt: 'A' } : null),
+      pgroupFn: async pgid => (pgid === 502 ? [7001] : []),
+    },
+  })
+  s.fsx.files.set(PIDFILE, JSON.stringify([entry(501, 'A', 'boot-0'), entry(502, 'B', null)]))
+  s.groups.alive.add(501)
+  s.groups.alive.add(502)
+  await s.p.sweep()
+  assert.deepEqual(s.groups.calls.filter(([, sig]) => sig === 'SIGTERM'), [[-501, 'SIGTERM'], [-502, 'SIGTERM']])
+  assert.deepEqual(readPids(s.fsx), [])
+  assert.match(s.warnings.join('\n'), /no boot id/)
+
+  await launch(s.p, BASE)
+  assert.equal(readPids(s.fsx)[0].bootId, null)
 })
 
 test('sweep removes only the entries it processed, keeping new ones and survivors', async () => {
