@@ -130,21 +130,28 @@ function harnessOriginFromHash(hash) {
 
   // Harness origin arrives via the URL fragment (#qa=<origin>) on the pane's
   // first load; keep it in sessionStorage so SPA navigation (which may rewrite
-  // the hash) cannot lose it.
+  // the hash) cannot lose it. Anyone can write a fragment, so it is trusted
+  // only inside a frame: the proxy's frame-ancestors policy limits who can
+  // frame a pane, and a top-level window (e.g. window.open) never mirrors.
+  const framed = window.parent !== window
   let harnessOrigin = null
-  try {
-    harnessOrigin = harnessOriginFromHash(window.location.hash)
-    if (harnessOrigin) window.sessionStorage.setItem('qaHarnessOrigin', harnessOrigin)
-    else harnessOrigin = window.sessionStorage.getItem('qaHarnessOrigin')
-  } catch (err) {
-    // sessionStorage unavailable — fragment-only config still covers this load
+  if (framed) {
+    try {
+      harnessOrigin = harnessOriginFromHash(window.location.hash)
+      if (harnessOrigin) window.sessionStorage.setItem('qaHarnessOrigin', harnessOrigin)
+      else harnessOrigin = window.sessionStorage.getItem('qaHarnessOrigin')
+    } catch (err) {
+      // sessionStorage unavailable — fragment-only config still covers this load
+    }
   }
 
   function send(msg) {
+    if (!framed || !harnessOrigin) return
     try {
-      window.parent.postMessage(msg, '*')
+      // targetOrigin, not '*': captured values and paths go to the harness only
+      window.parent.postMessage(msg, harnessOrigin)
     } catch (err) {
-      // parent gone (pane opened outside the harness) — nothing to mirror to
+      // parent gone, or a malformed origin (SyntaxError) — nothing to mirror to
     }
   }
 
@@ -284,7 +291,7 @@ function harnessOriginFromHash(hash) {
   }
 
   window.addEventListener('message', function (event) {
-    if (!harnessOrigin || event.origin !== harnessOrigin) return
+    if (!framed || !harnessOrigin || event.origin !== harnessOrigin || event.source !== window.parent) return
     const data = event.data
     if (!data || data.qa !== 1 || data.kind !== 'replay') return
     window.__qaReplaying = true

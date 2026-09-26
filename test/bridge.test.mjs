@@ -242,3 +242,78 @@ test('harnessOriginFromHash: absent, empty or malformed gives null', () => {
     assert.equal(harnessOriginFromHash(hash), null, String(hash))
   }
 })
+
+// --- runtime trust: the IIFE against a stub window ----------------------------
+// The fragment is attacker-writable (any page can frame or open a pane URL), so
+// the bridge trusts it only inside a frame and only talks to that frame's
+// parent, at the qa= origin.
+
+function runBridge({ framed = true, hash = `#qa=${ENC}`, stored = null, parentPost = null } = {}) {
+  const listeners = {}
+  const posted = []
+  const clicks = []
+  const store = stored ? { qaHarnessOrigin: stored } : {}
+  const button = { tagName: 'BUTTON', click: () => clicks.push('go') }
+  const doc = {
+    addEventListener() {},
+    querySelector: sel => (sel === '[id="go"]' ? button : null),
+  }
+  const parent = { postMessage: parentPost ?? ((msg, target) => posted.push({ msg, target, to: 'parent' })) }
+  const win = {
+    location: { hash, pathname: '/p', search: '' },
+    sessionStorage: { getItem: k => store[k] ?? null, setItem: (k, v) => { store[k] = v } },
+    addEventListener: (type, fn) => { (listeners[type] ??= []).push(fn) },
+    history: { pushState() {}, replaceState() {} },
+    postMessage: (msg, target) => posted.push({ msg, target, to: 'self' }),
+  }
+  win.parent = framed ? parent : win
+  const mod = { exports: {} }
+  new Function('module', 'exports', 'window', 'document', 'setInterval', 'requestAnimationFrame', source)(
+    mod, mod.exports, win, doc, () => 0, () => 0,
+  )
+  const message = ev => { for (const fn of listeners.message ?? []) fn(ev) }
+  const replay = { qa: 1, kind: 'replay', type: 'click', selector: { t: 'id', v: 'go' } }
+  return { posted, clicks, message, parent, win, store, replay }
+}
+
+test('framed: posts to the parent at the qa= origin, never "*"', () => {
+  const b = runBridge()
+  assert.deepEqual(b.posted, [{ msg: { qa: 1, kind: 'nav', href: '/p' }, target: ORIGIN, to: 'parent' }])
+  assert.equal(b.store.qaHarnessOrigin, ORIGIN)
+})
+
+test('framed: a replay is applied only from the parent at the qa= origin', () => {
+  const b = runBridge()
+  b.message({ origin: ORIGIN, source: {}, data: b.replay })
+  assert.deepEqual(b.clicks, [], 'another window at the harness origin')
+  b.message({ origin: 'https://evil.example', source: b.parent, data: b.replay })
+  assert.deepEqual(b.clicks, [], 'the parent at another origin')
+  b.message({ origin: ORIGIN, source: b.parent, data: b.replay })
+  assert.deepEqual(b.clicks, ['go'])
+})
+
+test('not framed (e.g. window.open with #qa=): no trust, no mirroring', () => {
+  const b = runBridge({ framed: false })
+  b.message({ origin: ORIGIN, source: b.win, data: b.replay })
+  b.message({ origin: ORIGIN, source: {}, data: b.replay })
+  assert.deepEqual(b.clicks, [])
+  assert.deepEqual(b.posted, [])
+  assert.equal(b.store.qaHarnessOrigin, undefined, 'the fragment is not remembered either')
+
+  const stale = runBridge({ framed: false, hash: '', stored: ORIGIN })
+  stale.message({ origin: ORIGIN, source: stale.win, data: stale.replay })
+  assert.deepEqual([stale.clicks, stale.posted], [[], []], 'nor is a remembered origin used')
+})
+
+test('framed without a qa= origin: nothing is posted; a remembered origin still works', () => {
+  assert.deepEqual(runBridge({ hash: '#key=K' }).posted, [])
+  const later = runBridge({ hash: '', stored: ORIGIN })
+  assert.deepEqual(later.posted.map(p => p.target), [ORIGIN])
+})
+
+test('a malformed qa= origin (postMessage throws SyntaxError) does not break install', () => {
+  assert.doesNotThrow(() => runBridge({
+    hash: '#qa=not%20an%20origin',
+    parentPost: () => { throw new SyntaxError('Invalid target origin') },
+  }))
+})
