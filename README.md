@@ -99,3 +99,7 @@ npm test
 ```
 
 The suite runs on `node:test` with injected effects, so it needs no Docker, network or GitHub.
+
+## License
+
+[MIT](LICENSE)
