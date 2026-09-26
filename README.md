@@ -223,6 +223,20 @@ A platform that builds `cfg` in code instead can leave out `host` (loopback is t
 
 Every path also answers under a `/qa` prefix. POSTs must be same-origin and `application/json` (`403` / `415`), and a request to any of the three ports with an unrecognised `Host` gets `421`. A request target the harness can't parse as a URL gets `400`, and once `shutdown()` has begun every harness write gets `503`. While no session is ready, the pane proxies answer `503`.
 
+## Demo
+
+```sh
+npm run demo            # then open http://127.0.0.1:4100/
+```
+
+Demo mode runs the real conductor with fixture PRs and fake adapters, so you can try the whole harness with no GitHub, containers or databases. Everything listens on `127.0.0.1`: the harness on `PORT` (default `4100`), and the pane proxies and the two in-process pane apps on free ports. `QA_DEMO_SPEED` scales the fake build and boot delays (default `1`; `0` makes them instant). Ctrl-C (or SIGTERM/SIGHUP) stops it.
+
+- **#101, #102** are built and open in seconds. **#103** is mid-build. **#104** builds, then its app crashes at *starting*, with a log tail. **#105** is refused by the trust gate (its head is in someone else's fork).
+- The PR pane is visibly different from the base: a new heading, a purple accent and an extra sort control on *Products*. Both panes have several pages, forms and long pages, for trying mirroring.
+- Verdicts go to an in-memory GitHub fake and are printed to the console. Nothing leaves the machine.
+
+`demo/` is not published with the package. From code, `startDemo({ port, speed, log })` in `demo/index.mjs` returns `{ stop(), ports }`.
+
 ## Develop
 
 ```sh
