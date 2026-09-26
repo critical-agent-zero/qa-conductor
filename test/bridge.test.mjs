@@ -125,6 +125,29 @@ test('rung 4: text of a button spans its descendants', () => {
   assert.equal(resolveSelector(desc, page), button)
 })
 
+test('rung 4 is skipped when the text repeats: a list of identical buttons falls to the path', () => {
+  // Found by qa-conductor QA-ing itself: five "Open QA" buttons, one per PR.
+  // A text descriptor would match all five in the peer pane (a non-match by
+  // design), so the click was never mirrored.
+  const page = () => {
+    const rows = [1, 2, 3].map(n => h('li', {}, [h('span', { text: `#10${n}` }), h('button', { text: 'Open QA' })]))
+    const doc = new StubDocument(h('body', {}, [h('ul', {}, rows)]))
+    return { doc, second: rows[1].children[1] }
+  }
+  const a = page()
+  const b = page()
+  const desc = buildSelector(a.second)
+  assert.deepEqual(desc, { t: 'path', v: 'UL:nth-of-type(1)>LI:nth-of-type(2)>BUTTON:nth-of-type(1)' })
+  assert.equal(resolveSelector(desc, b.doc), b.second)
+})
+
+test('rung 4 still applies when the text is unique among same-tag elements', () => {
+  const save = h('button', { text: 'Save' })
+  const doc = new StubDocument(h('body', {}, [h('button', { text: 'Cancel' }), save, h('a', { text: 'Save' })]))
+  assert.deepEqual(buildSelector(save), { t: 'text', tag: 'BUTTON', v: 'Save' })
+  assert.equal(resolveSelector(buildSelector(save), doc), save)
+})
+
 test('rung 5: structural path for anonymous elements', () => {
   const a = makePage()
   const b = makePage()

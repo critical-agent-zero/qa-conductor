@@ -46,9 +46,23 @@ function buildSelector(el) {
   if (aria) return { t: 'aria', v: aria }
   if (el.tagName === 'BUTTON' || el.tagName === 'A') {
     const text = (el.textContent || '').trim()
-    if (text.length >= 1 && text.length <= 60) return { t: 'text', tag: el.tagName, v: text }
+    if (text.length >= 1 && text.length <= 60 && textIsUnique(el, text)) return { t: 'text', tag: el.tagName, v: text }
   }
   return { t: 'path', v: structuralPath(el) }
+}
+
+// Text only identifies an element when no other same-tag element on the page
+// carries it: the peer resolves an ambiguous text match to nothing, so a
+// repeated label ("Open", "Edit", one per row) must fall through to the path.
+function textIsUnique(el, text) {
+  let root = el
+  while (root.parentNode) root = root.parentNode
+  const same = collectByTag(root, el.tagName, [])
+  let count = 0
+  for (let i = 0; i < same.length; i++) {
+    if ((same[i].textContent || '').trim() === text) count += 1
+  }
+  return count === 1
 }
 
 function collectByTag(root, tag, out) {
