@@ -572,11 +572,15 @@ test('an install failure names the tree and exit code, with the last 40 lines of
 
 test('the logTail is capped at 8 KB, and falls back to the message for errors without output (pre-U1 exec)', async () => {
   const long = Array.from({ length: 40 }, (_, i) => `${i}:${'é'.repeat(300)}`)
-  const capped = setup({ onInstall: () => { throw Object.assign(new Error('x'), { code: 2, stdout: long.join('\n'), stderr: '' }) } })
+  const stdout = `${long.join('\n')}x` // one byte more, so the 8 KB cut lands inside an 'é'
+  const raw = Buffer.from(stdout)
+  assert.equal(raw[raw.length - 8192] & 0xc0, 0x80, 'the fixture must cut mid-character')
+  const capped = setup({ onInstall: () => { throw Object.assign(new Error('x'), { code: 2, stdout, stderr: '' }) } })
   await assert.rejects(capped.build.ensureBuilt(7), err => {
     assert.ok(Buffer.byteLength(err.logTail) <= 8192, `${Buffer.byteLength(err.logTail)} bytes`)
-    assert.ok(err.logTail.endsWith(long.at(-1)))
+    assert.ok(err.logTail.endsWith(`${long.at(-1)}x`))
     assert.ok(!err.logTail.includes('�'))
+    assert.ok(err.logTail.startsWith('é'))
     return true
   })
 
@@ -592,6 +596,19 @@ test('the logTail is capped at 8 KB, and falls back to the message for errors wi
     assert.equal(err.logTail, 'pnpm install: Command failed: pnpm install\nERR_PNPM_OUTDATED_LOCKFILE')
     return true
   })
+})
+
+test('the logTail stays fast on huge output with long runs of whitespace', async () => {
+  // A /\s+$/ trim took ~10 s on the 100k-space run: quadratic backtracking.
+  const stdout = `start${' '.repeat(100_000)}middle${'\n'.repeat(40_000)}end\n`
+  const stderr = `${'x'.repeat(4_000_000)}\n\n`
+  for (const [output, logTail] of [[{ stdout }, `${'\n'.repeat(39)}end`], [{ stdout, stderr }, 'x'.repeat(8192)]]) {
+    const w = setup({ onInstall: () => { throw Object.assign(new Error('x'), { code: 1, ...output }) } })
+    const t0 = performance.now()
+    await assert.rejects(w.build.ensureBuilt(7), err => err.logTail === logTail)
+    const ms = performance.now() - t0
+    assert.ok(ms < 1000, `${Math.round(ms)} ms`)
+  }
 })
 
 // --- ensureBuilt: the one-build-at-a-time lock and abort ----------------------
