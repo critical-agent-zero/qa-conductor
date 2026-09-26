@@ -2,9 +2,9 @@
 // proxy via <script src="/__qa/bridge.js">. Plain browser script: no ESM, no
 // dependencies, zero app changes.
 //
-// The pure selector helpers (buildSelector / resolveSelector) live at top
-// level and are exported through the CommonJS guard at the bottom so
-// `node --test` can exercise them; the runtime IIFE is inert outside a
+// The pure helpers (buildSelector / resolveSelector, harnessOriginFromHash)
+// live at top level and are exported through the CommonJS guard at the bottom
+// so `node --test` can exercise them; the runtime IIFE is inert outside a
 // browser.
 
 // --- pure selector helpers -------------------------------------------------
@@ -103,6 +103,24 @@ function resolveSelector(desc, doc) {
   return null
 }
 
+// The harness origin from a pane URL's fragment (#…&qa=<encoded origin>&…),
+// as harness.js withQaFragment writes it. Fragments are &-separated key=value
+// pairs, so `qa=` inside another param's value is not a match. null when
+// absent, empty or malformed.
+function harnessOriginFromHash(hash) {
+  const pairs = String(hash || '').replace(/^#/, '').split('&')
+  for (let i = 0; i < pairs.length; i++) {
+    const eq = pairs[i].indexOf('=')
+    if (eq === -1 || pairs[i].slice(0, eq) !== 'qa') continue
+    try {
+      return decodeURIComponent(pairs[i].slice(eq + 1)) || null
+    } catch (err) {
+      return null
+    }
+  }
+  return null
+}
+
 // --- browser runtime -------------------------------------------------------
 
 ;(function () {
@@ -115,8 +133,7 @@ function resolveSelector(desc, doc) {
   // the hash) cannot lose it.
   let harnessOrigin = null
   try {
-    const m = /qa=([^&]+)/.exec(window.location.hash || '')
-    if (m) harnessOrigin = decodeURIComponent(m[1])
+    harnessOrigin = harnessOriginFromHash(window.location.hash)
     if (harnessOrigin) window.sessionStorage.setItem('qaHarnessOrigin', harnessOrigin)
     else harnessOrigin = window.sessionStorage.getItem('qaHarnessOrigin')
   } catch (err) {
@@ -304,5 +321,5 @@ function resolveSelector(desc, doc) {
 // --- test exports (node --test evaluates this file through a CJS wrapper) ---
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { buildSelector, resolveSelector }
+  module.exports = { buildSelector, resolveSelector, harnessOriginFromHash }
 }

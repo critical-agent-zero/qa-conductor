@@ -14,7 +14,7 @@ const bridgePath = join(dirname(fileURLToPath(import.meta.url)), '..', 'public',
 const source = readFileSync(bridgePath, 'utf8')
 const cjsModule = { exports: {} }
 new Function('module', 'exports', source)(cjsModule, cjsModule.exports)
-const { buildSelector, resolveSelector } = cjsModule.exports
+const { buildSelector, resolveSelector, harnessOriginFromHash } = cjsModule.exports
 
 // --- minimal DOM stub (no jsdom) ------------------------------------------
 // Supports only what the bridge helpers use: querySelector (attribute-equals
@@ -213,8 +213,32 @@ test('selector for body itself round-trips as an empty path', () => {
 // dormant here (window is undefined). Guard that adding it left the pure-helper
 // exports intact so the harness can still build and resolve selectors.
 
-test('the CJS guard still exports both pure selector helpers', () => {
+test('the CJS guard still exports the pure helpers', () => {
   assert.equal(typeof buildSelector, 'function')
   assert.equal(typeof resolveSelector, 'function')
-  assert.deepEqual(Object.keys(cjsModule.exports).sort(), ['buildSelector', 'resolveSelector'])
+  assert.equal(typeof harnessOriginFromHash, 'function')
+  assert.deepEqual(Object.keys(cjsModule.exports).sort(), ['buildSelector', 'harnessOriginFromHash', 'resolveSelector'])
+})
+
+// --- the #qa= mirroring contract (reader side of harness.js withQaFragment) --
+
+const ORIGIN = 'https://qa.example.ts.net'
+const ENC = encodeURIComponent(ORIGIN)
+
+test('harnessOriginFromHash reads the qa param of an &-separated fragment', () => {
+  assert.equal(harnessOriginFromHash(`#qa=${ENC}`), ORIGIN)
+  assert.equal(harnessOriginFromHash(`#key=K&qa=${ENC}`), ORIGIN)
+  assert.equal(harnessOriginFromHash(`qa=${ENC}&x=1`), ORIGIN, 'leading # optional')
+})
+
+test('harnessOriginFromHash ignores qa= inside another param\'s value', () => {
+  assert.equal(harnessOriginFromHash(`#next=/a?qa=1&qa=${ENC}`), ORIGIN)
+  assert.equal(harnessOriginFromHash(`#token=abcqa==&qa=${ENC}`), ORIGIN)
+  assert.equal(harnessOriginFromHash('#token=abcqa=1'), null)
+})
+
+test('harnessOriginFromHash: absent, empty or malformed gives null', () => {
+  for (const hash of ['', '#', '#key=K', '#qa=', '#qa', '#qa=%E0%A4%A', undefined, null]) {
+    assert.equal(harnessOriginFromHash(hash), null, String(hash))
+  }
 })
