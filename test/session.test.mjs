@@ -245,3 +245,137 @@ test('bootSession: a failure after abort skips teardown; a non-aborted failure t
   await assert.rejects(() => bootSession(live.deps, 7), /fail:launchServices/)
   assert.deepEqual(live.calls.filter(c => c[0] === 'teardown').map(c => c[1].paneRef.role), ['base', 'pr'])
 })
+
+// --- display label ------------------------------------------------------------
+
+test('bootSession: a resolve* label overrides the primary service ref as the tag', async () => {
+  const { deps } = makeDeps({ migrationStrategy: 'on-boot' })
+  // a process consumer whose service refs are local paths
+  deps.adapters.build.resolveBaseImages = async () => ({ services: { app: '/cache/worktrees/aaa' }, migrate: null, label: 'main@aaaaaaa' })
+  deps.adapters.build.resolvePrImages = async () => ({ services: { app: '/cache/worktrees/bbb' }, migrate: null, label: '#7@bbbbbbb' })
+  const out = await bootSession(deps, 7)
+  assert.equal(out.baseTag, 'main@aaaaaaa')
+  assert.equal(out.prTag, '#7@bbbbbbb')
+})
+
+test('bootSession: without a label the tag falls back to the primary service ref', async () => {
+  const { deps } = makeDeps()
+  deps.adapters.build.resolveBaseImages = async () => ({ services: { app: BASE_IMG }, migrate: null, label: 'rc-38' })
+  // PR side has no label
+  const out = await bootSession(deps, 7)
+  assert.equal(out.baseTag, 'rc-38')
+  assert.equal(out.prTag, PR_IMG)
+})
+
+// --- cancellation reaches the Provisioner ------------------------------------
+
+test('bootSession passes signal to every Provisioner call', async () => {
+  const ac = new AbortController()
+  const { deps, calls } = makeDeps()
+  deps.signal = ac.signal
+  await bootSession(deps, 7)
+  for (const name of ['provisionDatabase', 'reserveServices', 'runMigrate', 'launchServices', 'waitHealthy']) {
+    const made = calls.filter(c => c[0] === name)
+    assert.equal(made.length, 2, `${name} runs once per pane`)
+    for (const c of made) assert.equal(c[1].signal, ac.signal, `${name} receives the boot signal`)
+  }
+})
+
+test('bootSession checks for an abort between panes while provisioning', async () => {
+  const ac = new AbortController()
+  const { deps, calls } = makeDeps()
+  deps.signal = ac.signal
+  const reserve = deps.adapters.provisioner.reserveServices
+  deps.adapters.provisioner.reserveServices = async args => {
+    const out = await reserve(args)
+    if (args.paneRef.role === 'base') ac.abort() // teardown lands while base is provisioning
+    return out
+  }
+  await assert.rejects(() => bootSession(deps, 7), err => err.name === 'AbortError')
+  assert.deepEqual(calls.filter(c => c[0] === 'provisionDatabase').map(c => c[1].paneRef.role), ['base'], 'pr pane never provisioned')
+  assert.equal(calls.some(c => c[0] === 'teardown'), false)
+})
+
+test('bootSession checks for an abort before each launch and before waiting for health', async () => {
+  const betweenLaunches = new AbortController()
+  const a = makeDeps()
+  a.deps.signal = betweenLaunches.signal
+  a.deps.adapters.provisioner.launchServices = async args => { a.calls.push(['launchServices', args]); betweenLaunches.abort() }
+  await assert.rejects(() => bootSession(a.deps, 7), err => err.name === 'AbortError')
+  assert.deepEqual(a.calls.filter(c => c[0] === 'launchServices').map(c => c[1].paneRef.role), ['base'], 'pr pane never launched')
+
+  const afterLaunches = new AbortController()
+  const b = makeDeps()
+  b.deps.signal = afterLaunches.signal
+  b.deps.adapters.provisioner.launchServices = async args => {
+    b.calls.push(['launchServices', args])
+    if (args.paneRef.role === 'pr') afterLaunches.abort()
+  }
+  await assert.rejects(() => bootSession(b.deps, 7), err => err.name === 'AbortError')
+  assert.equal(b.calls.filter(c => c[0] === 'launchServices').length, 2)
+  assert.equal(b.calls.some(c => c[0] === 'waitHealthy'), false, 'no health wait after abort')
+})
+
+// --- failure log tails are read before teardown ------------------------------
+
+function withLogs(made, tail = 'last lines') {
+  made.deps.adapters.provisioner.logs = async args => { made.calls.push(['logs', args]); return tail }
+  return made
+}
+
+test('a failed pane stage reads the failing pane\'s log tail BEFORE tearing down', async () => {
+  const made = withLogs(makeDeps({ failAt: 'waitHealthy' }), 'app crashed: EADDRINUSE')
+  const err = await bootSession(made.deps, 7).then(() => assert.fail('should reject'), e => e)
+  assert.match(err.message, /fail:waitHealthy/)
+  assert.equal(err.logTail, 'app crashed: EADDRINUSE')
+  assert.equal(err.failedRole, 'base')
+  const seq = made.calls.map(c => c[0])
+  assert.ok(seq.indexOf('logs') !== -1 && seq.indexOf('logs') < seq.indexOf('teardown'), 'logs read before teardown')
+  assert.deepEqual(made.calls.find(c => c[0] === 'logs')[1], { paneRef: { role: 'base' }, stage: 'starting', lines: 40 })
+})
+
+test('the failing role and stage are tracked per pane', async () => {
+  const made = withLogs(makeDeps())
+  const reserve = made.deps.adapters.provisioner.reserveServices
+  made.deps.adapters.provisioner.reserveServices = async args => {
+    if (args.paneRef.role === 'pr') throw new Error('no free port')
+    return reserve(args)
+  }
+  const err = await bootSession(made.deps, 7).then(() => assert.fail('should reject'), e => e)
+  assert.equal(err.failedRole, 'pr')
+  assert.deepEqual(made.calls.find(c => c[0] === 'logs')[1], { paneRef: { role: 'pr' }, stage: 'cloning', lines: 40 })
+})
+
+test('a build failure reads no pane logs and keeps a BuildConvention\'s own logTail', async () => {
+  const made = withLogs(makeDeps())
+  made.deps.adapters.build.ensureBuilt = async () => { throw Object.assign(new Error('install failed'), { logTail: 'npm ERR! 404' }) }
+  const err = await bootSession(made.deps, 7).then(() => assert.fail('should reject'), e => e)
+  assert.equal(err.logTail, 'npm ERR! 404')
+  assert.equal(err.failedRole, null)
+  assert.equal(made.calls.some(c => c[0] === 'logs'), false)
+  assert.deepEqual(made.calls.filter(c => c[0] === 'teardown').map(c => c[1].paneRef.role), ['base', 'pr'])
+})
+
+test('log tail: an error that already carries one keeps it; a failing logs() is tolerated', async () => {
+  const own = withLogs(makeDeps())
+  own.deps.adapters.provisioner.launchServices = async () => { throw Object.assign(new Error('boom'), { logTail: 'own tail' }) }
+  const e1 = await bootSession(own.deps, 7).then(() => assert.fail('should reject'), e => e)
+  assert.equal(e1.logTail, 'own tail')
+
+  const broken = makeDeps({ failAt: 'launchServices' })
+  broken.deps.adapters.provisioner.logs = async () => { throw new Error('container gone') }
+  const e2 = await bootSession(broken.deps, 7).then(() => assert.fail('should reject'), e => e)
+  assert.match(e2.message, /fail:launchServices/, 'the boot error is not masked')
+  assert.equal(e2.logTail, undefined)
+  assert.deepEqual(broken.calls.filter(c => c[0] === 'teardown').map(c => c[1].paneRef.role), ['base', 'pr'])
+})
+
+test('an aborted boot reads no logs', async () => {
+  const ac = new AbortController()
+  const made = withLogs(makeDeps())
+  made.deps.signal = ac.signal
+  made.deps.adapters.provisioner.launchServices = async () => { ac.abort(); throw new Error('boom') }
+  await assert.rejects(() => bootSession(made.deps, 7), /boom/)
+  assert.equal(made.calls.some(c => c[0] === 'logs'), false)
+  assert.equal(made.calls.some(c => c[0] === 'teardown'), false)
+})

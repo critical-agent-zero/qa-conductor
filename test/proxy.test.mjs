@@ -4,7 +4,7 @@ import http from 'node:http'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createPaneProxy, parseSetCookie } from '../lib/proxy.mjs'
+import { createPaneProxy, parseSetCookie, requestHostname, isAllowedHost } from '../lib/proxy.mjs'
 
 const BRIDGE_TAG = '<script src="/__qa/bridge.js"></script>'
 
@@ -292,6 +292,63 @@ test('upstreamPort may be a function, resolved per request', async (t) => {
   assert.equal((await request(proxyPort, '/')).body.toString(), 'A')
   current = portB
   assert.equal((await request(proxyPort, '/')).body.toString(), 'B')
+})
+
+// --- Host allowlist (DNS-rebinding defence) ----------------------------------
+
+test('requestHostname drops the port and IPv6 brackets, lowercased', () => {
+  assert.equal(requestHostname('Example.COM:8443'), 'example.com')
+  assert.equal(requestHostname('127.0.0.1'), '127.0.0.1')
+  assert.equal(requestHostname('[::1]:3101'), '::1')
+  assert.equal(requestHostname('[::1]'), '::1')
+  assert.equal(requestHostname(undefined), '')
+  assert.equal(requestHostname('[::1'), '')
+})
+
+test('isAllowedHost: loopback names always, plus the given hostnames', () => {
+  for (const ok of ['127.0.0.1:3101', 'localhost:3101', 'LOCALHOST', '[::1]:3101']) assert.equal(isAllowedHost(ok, []), true, ok)
+  assert.equal(isAllowedHost('qa.example.com:443', ['qa.example.com']), true)
+  assert.equal(isAllowedHost('QA.example.com', [' qa.EXAMPLE.com ']), true)
+  assert.equal(isAllowedHost('[fe80::1]:80', ['[fe80::1]']), true)
+  for (const bad of ['attacker.example:3101', '127.0.0.1.attacker.example', '', undefined, 'localhost.evil']) {
+    assert.equal(isAllowedHost(bad, ['qa.example.com']), false, String(bad))
+  }
+})
+
+test('a request whose Host is not allowed gets 421 before anything else runs', async (t) => {
+  let upstreamHits = 0
+  let activity = 0
+  const upstream = http.createServer((req, res) => { upstreamHits += 1; res.end('app') })
+  const upstreamPort = await listen(upstream)
+  const proxy = http.createServer(createPaneProxy({
+    upstreamPort, bridgePath: '/nonexistent', onActivity: () => { activity += 1 }, httpMod: http, allowedHosts: ['pane.example.ts.net'],
+  }))
+  const proxyPort = await listen(proxy)
+  t.after(async () => { for (const s of [upstream, proxy]) await new Promise(r => s.close(r)) })
+
+  const rebound = await request(proxyPort, '/', { headers: { host: `attacker.example:${proxyPort}` } })
+  assert.equal(rebound.status, 421)
+  const bridge = await request(proxyPort, '/__qa/bridge.js', { headers: { host: 'attacker.example' } })
+  assert.equal(bridge.status, 421, 'checked before routing, bridge route included')
+  assert.equal(upstreamHits, 0)
+  assert.equal(activity, 0, 'a rejected request is not activity')
+
+  assert.equal((await request(proxyPort, '/', { headers: { host: 'pane.example.ts.net:8443' } })).body.toString(), 'app')
+  assert.equal((await request(proxyPort, '/')).body.toString(), 'app', 'loopback Host is always allowed')
+})
+
+test('allowedHosts may be a function, resolved per request; default is loopback only', async (t) => {
+  let hosts = []
+  const lazy = http.createServer(createPaneProxy({ upstreamPort: () => null, bridgePath: '/nonexistent', httpMod: http, allowedHosts: () => hosts }))
+  const plain = http.createServer(createPaneProxy({ upstreamPort: () => null, bridgePath: '/nonexistent', httpMod: http }))
+  const lazyPort = await listen(lazy)
+  const plainPort = await listen(plain)
+  t.after(async () => { for (const s of [lazy, plain]) await new Promise(r => s.close(r)) })
+  assert.equal((await request(lazyPort, '/', { headers: { host: 'late.example' } })).status, 421)
+  hosts = ['late.example']
+  assert.equal((await request(lazyPort, '/', { headers: { host: 'late.example' } })).status, 503)
+  assert.equal((await request(plainPort, '/', { headers: { host: 'late.example' } })).status, 421)
+  assert.equal((await request(plainPort, '/')).status, 503)
 })
 
 test('no upstream (no session) yields a 503, not a connection attempt', async (t) => {

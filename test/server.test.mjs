@@ -15,7 +15,7 @@ function deferred() {
 // Fake adapter set. `ensureBuilt` for a PR listed in `hang` blocks until the
 // test releases it — modelling a boot stuck waiting on a GHCR image. Each pane
 // "app" is a real loopback server, so the pane proxies can be exercised.
-function makeWorld({ hang = {}, failAt = null } = {}) {
+function makeWorld({ hang = {}, failAt = null, cfg: cfgOverrides = {} } = {}) {
   const calls = []
   const apps = {
     base: http.createServer((req, res) => res.end('pane-base')),
@@ -59,6 +59,7 @@ function makeWorld({ hang = {}, failAt = null } = {}) {
     ports: { harness: 0, base: 0, pr: 0 },
     paneOrigins: { base: 'https://h:8443', pr: 'https://h:10000' },
     verdictLabels: { accept: 'ok', reject: 'nope' },
+    ...cfgOverrides,
   }
   const github = {
     listOpenPrs: async () => [{ number: 7, title: 't', headRef: 'r', author: 'a', headSha: 'abc' }],
@@ -68,10 +69,12 @@ function makeWorld({ hang = {}, failAt = null } = {}) {
   }
   const fsx = { readFile: async () => 'x' }
   const readBaseEnv = async () => { calls.push(['readBaseEnv']); return { A: '1' } }
-  const quiet = { log: () => {}, error: () => {} }
+  const logLines = []
+  const quiet = { log: (...a) => logLines.push(a.join(' ')), error: () => {} }
   const conductor = startConductor({ cfg, github, fsx, adapters, readBaseEnv, log: quiet })
-  const c = { ...conductor, stop() { conductor.stop(); for (const s of Object.values(apps)) s.close() } }
-  return { c, calls, adapters }
+  const closeApps = () => { for (const s of Object.values(apps)) s.close() }
+  const c = { ...conductor, stop() { conductor.stop(); closeApps() } }
+  return { c, conductor, closeApps, calls, adapters, github, cfg, logLines }
 }
 
 async function proxyPort(server) {
@@ -80,15 +83,58 @@ async function proxyPort(server) {
 }
 
 async function harnessPort(c) {
-  if (!c.servers.harness.listening) await new Promise(r => c.servers.harness.once('listening', r))
-  return c.servers.harness.address().port
+  return proxyPort(c.servers.harness)
 }
 
+// POSTs always carry a JSON content type (the harness requires it).
 async function api(port, method, path, body) {
+  const post = method === 'POST'
   const res = await fetch(`http://127.0.0.1:${port}${path}`, {
-    method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined,
+    method, headers: post ? { 'content-type': 'application/json' } : {}, body: post ? JSON.stringify(body ?? {}) : undefined,
   })
   return res.json()
+}
+
+// A request with full control over the headers (fetch cannot set Host).
+function raw(port, { method = 'GET', path = '/', headers = {}, body = null } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method, path, headers, agent: false }, res => {
+      const chunks = []
+      res.on('data', c => chunks.push(c))
+      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString() }))
+    })
+    req.on('error', reject)
+    if (body != null) req.write(body)
+    req.end()
+  })
+}
+
+// Collect server-sent events until `until(events)` holds.
+async function sseEvents(port, until, ms = 3000) {
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), ms)
+  const events = []
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/progress`, { signal: ac.signal })
+    const reader = res.body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) throw new Error('stream ended')
+      buf += dec.decode(value, { stream: true })
+      let i
+      while ((i = buf.indexOf('\n\n')) !== -1) {
+        const chunk = buf.slice(0, i)
+        buf = buf.slice(i + 2)
+        if (chunk.startsWith('data: ')) events.push(JSON.parse(chunk.slice(6)))
+      }
+      if (until(events)) return events
+    }
+  } finally {
+    clearTimeout(timer)
+    ac.abort()
+  }
 }
 
 async function waitFor(fn, ms = 3000) {
@@ -205,6 +251,7 @@ test('/api/build-status asks describePrs about the PR head', async () => {
     let seen = null
     adapters.build.describePrs = async prs => { seen = prs; return [{ number: 7, status: 'built', runUrl: null }] }
     assert.deepEqual(await api(port, 'GET', '/api/build-status?pr=7'), { pr: 7, status: 'built', exists: true, runUrl: null })
+    // no github.prInfo: the prHead fallback
     assert.deepEqual(seen, [{ number: 7, headSha: 'abc' }])
   } finally { c.stop() }
 })
@@ -241,7 +288,7 @@ test('pane origins come from config; verdict uses the configured labels', async 
   } finally { c.stop() }
 })
 
-test('a failed boot surfaces provisioner.logs for the failing pane stage', async () => {
+test('a failed boot surfaces provisioner.logs for the failing pane, read before teardown', async () => {
   const { c, calls } = makeWorld({ failAt: 'launchServices' })
   try {
     const port = await harnessPort(c)
@@ -249,6 +296,219 @@ test('a failed boot surfaces provisioner.logs for the failing pane stage', async
     const st = await waitFor(async () => { const s = await api(port, 'GET', '/api/state'); return s.status === 'error' && s })
     assert.equal(st.error.step, 'starting')
     await waitFor(() => calls.some(x => x[0] === 'logs'))
-    assert.deepEqual(calls.find(x => x[0] === 'logs'), ['logs', 'pr', 'starting', 40])
+    // the base pane launches first, so it is the one that failed
+    assert.deepEqual(calls.find(x => x[0] === 'logs'), ['logs', 'base', 'starting', 40])
+    const seq = calls.map(x => x[0])
+    assert.ok(seq.indexOf('logs') < seq.indexOf('teardown'), 'the tail is read while the pane still exists')
+    assert.equal(calls.filter(x => x[0] === 'logs').length, 1, 'no second read after teardown')
   } finally { c.stop() }
+})
+
+// --- 0.2.0: listen host ---------------------------------------------------------
+
+test('all three servers bind 127.0.0.1 by default and log host:port', async () => {
+  const { c, logLines } = makeWorld()
+  try {
+    for (const name of ['harness', 'baseProxy', 'prProxy']) {
+      const port = await proxyPort(c.servers[name])
+      assert.equal(c.servers[name].address().address, '127.0.0.1', name)
+      assert.ok(logLines.some(l => l.includes(`127.0.0.1:${port}`)), `${name} log line names host:port`)
+    }
+  } finally { c.stop() }
+})
+
+// --- 0.2.0: browser-request hardening ------------------------------------------
+
+test('a Host header outside the allowlist gets 421 on all three servers', async () => {
+  const { c } = makeWorld()
+  try {
+    for (const name of ['harness', 'baseProxy', 'prProxy']) {
+      const port = await proxyPort(c.servers[name])
+      const res = await raw(port, { path: '/', headers: { host: `rebound.attacker.example:${port}` } })
+      assert.equal(res.status, 421, name)
+    }
+    const port = await harnessPort(c)
+    assert.equal((await raw(port, { method: 'POST', path: '/api/teardown', headers: { host: 'attacker.example', 'content-type': 'application/json' }, body: '{}' })).status, 421)
+  } finally { c.stop() }
+})
+
+test('allowed Hosts: loopback, the public host, the pane origin hosts, QA_ALLOWED_HOSTS', async () => {
+  const { c, cfg } = makeWorld({ cfg: { allowedHosts: ['qa.corp.example'] } })
+  try {
+    const port = await harnessPort(c)
+    for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`, 'h.ts.net', 'H.TS.NET:443', 'h:8443', 'qa.corp.example']) {
+      assert.equal((await raw(port, { path: '/api/state', headers: { host } })).status, 200, host)
+    }
+    // pane origins are read per request (a platform may assign them after start)
+    assert.equal((await raw(port, { path: '/api/state', headers: { host: 'late.example' } })).status, 421)
+    cfg.paneOrigins = { base: 'http://late.example:4101', pr: 'http://127.0.0.1:4102' }
+    assert.equal((await raw(port, { path: '/api/state', headers: { host: 'late.example' } })).status, 200)
+    const base = await proxyPort(c.servers.baseProxy)
+    assert.equal((await raw(base, { path: '/', headers: { host: 'late.example:4101' } })).status, 503, 'proxies share the allowlist')
+  } finally { c.stop() }
+})
+
+test('a cross-site POST to the API gets 403; same-origin and non-browser POSTs pass', async () => {
+  const { c, calls } = makeWorld()
+  try {
+    const port = await harnessPort(c)
+    const host = `127.0.0.1:${port}`
+    const json = { 'content-type': 'application/json' }
+    const post = (path, headers) => raw(port, { method: 'POST', path, headers: { host, ...json, ...headers }, body: '{}' })
+    for (const headers of [
+      { 'sec-fetch-site': 'cross-site' },
+      { 'sec-fetch-site': 'same-site' },
+      // sec-fetch-site wins over a matching origin
+      { 'sec-fetch-site': 'cross-site', origin: `http://${host}` },
+      { origin: 'http://attacker.example' },
+      { origin: `http://127.0.0.1:${port + 1}` },
+      { origin: 'null' },
+    ]) {
+      assert.equal((await post('/api/teardown', headers)).status, 403, JSON.stringify(headers))
+      assert.equal((await post('/qa/api/teardown', headers)).status, 403, `/qa prefix: ${JSON.stringify(headers)}`)
+    }
+    assert.equal(calls.some(x => x[0] === 'teardown'), false, 'a refused request does nothing')
+    // the check covers every non-GET/HEAD /api/* request, routed or not
+    assert.equal((await post('/api/nope', { origin: 'http://attacker.example' })).status, 403)
+
+    assert.equal((await post('/api/teardown', { 'sec-fetch-site': 'same-origin' })).status, 200)
+    assert.equal((await post('/api/teardown', { 'sec-fetch-site': 'none' })).status, 200)
+    assert.equal((await post('/api/teardown', { origin: `http://${host}` })).status, 200)
+    assert.equal((await post('/api/teardown', {})).status, 200, 'no browser headers: a non-browser client')
+    // reads are not checked
+    assert.equal((await raw(port, { path: '/api/state', headers: { host, 'sec-fetch-site': 'cross-site' } })).status, 200)
+  } finally { c.stop() }
+})
+
+test('POST /api/session, /api/verdict and /api/teardown require application/json (else 415)', async () => {
+  const { c, calls } = makeWorld()
+  try {
+    const port = await harnessPort(c)
+    const post = (path, contentType, body = '{}') => raw(port, { method: 'POST', path, headers: contentType ? { 'content-type': contentType } : {}, body })
+    for (const path of ['/api/session', '/api/verdict', '/api/teardown', '/qa/api/teardown']) {
+      for (const type of [null, 'text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data; boundary=x', 'application/jsonp']) {
+        assert.equal((await post(path, type)).status, 415, `${path} ${type}`)
+      }
+    }
+    assert.equal(calls.some(x => x[0] === 'teardown' || x[0] === 'ensureBuilt'), false)
+    assert.equal((await post('/api/teardown', 'Application/JSON; charset=utf-8')).status, 200)
+    assert.equal((await post('/api/session', 'application/json', JSON.stringify({ pr: 7 }))).status, 202)
+  } finally { c.stop() }
+})
+
+// --- 0.2.0: generic build progress ----------------------------------------------
+
+test('a build progress message reaches SSE and /api/state', async () => {
+  const hang = { 7: deferred() }
+  const { c, adapters } = makeWorld({ hang })
+  let notify = null
+  adapters.build.subscribeBuild = cb => { notify = cb }
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(() => notify)
+    notify({ message: 'installing dependencies for #7 (abc1234)…' })
+    const events = await sseEvents(port, evs => evs.some(e => e.kind === 'build'))
+    const ev = events.find(e => e.kind === 'build')
+    assert.deepEqual({ ...ev, at: undefined }, { at: undefined, kind: 'build', runUrl: null, runStatus: null, message: 'installing dependencies for #7 (abc1234)…' })
+    assert.deepEqual((await api(port, 'GET', '/api/state')).buildRun, { url: null, status: null, message: 'installing dependencies for #7 (abc1234)…' })
+
+    notify({ runUrl: 'https://github.com/acme/widget/actions/runs/1', runStatus: 'in_progress' })
+    assert.deepEqual((await api(port, 'GET', '/api/state')).buildRun, { url: 'https://github.com/acme/widget/actions/runs/1', status: 'in_progress', message: null })
+  } finally { c.stop() }
+})
+
+// --- 0.2.0: blocked readiness ---------------------------------------------------
+
+test('/api/prs passes a blocked reason through', async () => {
+  const { c, adapters } = makeWorld()
+  try {
+    const port = await harnessPort(c)
+    adapters.build.describePrs = async prs => prs.map(p => ({ number: p.number, status: 'blocked', reason: "head branch is in @eve's fork (eve/widget), not the author's", runUrl: null }))
+    const row = (await api(port, 'GET', '/api/prs')).prs[0]
+    assert.equal(row.imageStatus, 'blocked')
+    assert.equal(row.reason, "head branch is in @eve's fork (eve/widget), not the author's")
+  } finally { c.stop() }
+})
+
+test('/api/build-status uses github.prInfo when available and adds reason only when blocked', async () => {
+  const { c, adapters, github } = makeWorld()
+  github.prInfo = async num => ({
+    number: num, headSha: 'abc', author: 'eve', authorAssociation: 'CONTRIBUTOR', isDraft: false, headRepo: 'eve/widget', headOwner: 'eve',
+  })
+  try {
+    const port = await harnessPort(c)
+    let seen = null
+    adapters.build.describePrs = async prs => { seen = prs; return [{ number: 7, status: 'blocked', reason: 'not trusted', runUrl: null }] }
+    assert.deepEqual(await api(port, 'GET', '/api/build-status?pr=7'), { pr: 7, status: 'blocked', exists: false, runUrl: null, reason: 'not trusted' })
+    assert.deepEqual(seen, [{ number: 7, headSha: 'abc', author: 'eve', authorAssociation: 'CONTRIBUTOR', headRepo: 'eve/widget', headOwner: 'eve' }])
+
+    adapters.build.describePrs = async () => [{ number: 7, status: 'built', reason: 'ignored', runUrl: null }]
+    assert.deepEqual(await api(port, 'GET', '/api/build-status?pr=7'), { pr: 7, status: 'built', exists: true, runUrl: null })
+  } finally { c.stop() }
+})
+
+// --- 0.2.0: failure log tails ---------------------------------------------------
+
+test('err.logTail reaches the SSE error event (pane stage and build stage)', async () => {
+  const pane = makeWorld({ failAt: 'launchServices' })
+  try {
+    const port = await harnessPort(pane.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const events = await sseEvents(port, evs => evs.some(e => e.kind === 'error'))
+    const err = events.find(e => e.kind === 'error')
+    assert.deepEqual([err.step, err.message, err.logTail], ['starting', 'launch failed', 'tail-lines'])
+  } finally { pane.c.stop() }
+
+  const build = makeWorld()
+  build.adapters.build.ensureBuilt = async () => {
+    throw Object.assign(new Error('install failed for #7 (abc1234): pnpm exited 1'), { logTail: 'ERR_PNPM_FETCH_404' })
+  }
+  try {
+    const port = await harnessPort(build.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const events = await sseEvents(port, evs => evs.some(e => e.kind === 'error'))
+    const err = events.find(e => e.kind === 'error')
+    assert.deepEqual([err.step, err.logTail], ['ensuring-image', 'ERR_PNPM_FETCH_404'])
+    assert.equal(build.calls.some(x => x[0] === 'logs'), false)
+  } finally { build.c.stop() }
+})
+
+// --- 0.2.0: shutdown -------------------------------------------------------------
+
+test('shutdown() aborts the boot, tears down both panes, ends SSE and closes all three servers', async () => {
+  const hang = { 9: deferred() }
+  const { conductor, closeApps, calls } = makeWorld({ hang })
+  try {
+    const port = await proxyPort(conductor.servers.harness)
+    for (const s of [conductor.servers.baseProxy, conductor.servers.prProxy]) await proxyPort(s)
+    await api(port, 'POST', '/api/session', { pr: 9 })
+    await waitFor(() => calls.some(x => x[0] === 'ensureBuilt' && x[1] === 9))
+
+    // an open SSE client must not hold the harness open
+    const res = await fetch(`http://127.0.0.1:${port}/api/progress`)
+    const reader = res.body.getReader()
+    await reader.read()
+
+    await conductor.shutdown()
+    assert.deepEqual(calls.filter(x => x[0] === 'teardown').map(x => x[1]), ['base', 'pr'])
+    for (const name of ['harness', 'baseProxy', 'prProxy']) assert.equal(conductor.servers[name].listening, false, name)
+    for (;;) {
+      const ended = await reader.read().then(r => r.done, () => true)
+      if (ended) break
+    }
+    // the aborted boot's late failure is ignored; a second shutdown is a no-op
+    hang[9].reject(new Error('late'))
+    await conductor.shutdown()
+    assert.equal(calls.filter(x => x[0] === 'teardown').length, 2)
+  } finally { closeApps() }
+})
+
+test('shutdown() right after start still closes every server', async () => {
+  const { conductor, closeApps } = makeWorld()
+  try {
+    await conductor.shutdown()
+    await new Promise(r => setTimeout(r, 20))
+    for (const name of ['harness', 'baseProxy', 'prProxy']) assert.equal(conductor.servers[name].listening, false, name)
+  } finally { closeApps() }
 })
