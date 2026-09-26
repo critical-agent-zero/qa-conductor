@@ -4,7 +4,9 @@ import http from 'node:http'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createPaneProxy, parseSetCookie, requestHostname, isAllowedHost } from '../lib/proxy.mjs'
+import {
+  createPaneProxy, parseSetCookie, requestHostname, isAllowedHost, isCrossSite, frameAncestors,
+} from '../lib/proxy.mjs'
 
 const BRIDGE_TAG = '<script src="/__qa/bridge.js"></script>'
 
@@ -20,7 +22,7 @@ function request(port, path, { method = 'GET', headers = {}, body = null } = {})
       const chunks = []
       res.on('data', (c) => chunks.push(c))
       res.on('end', () =>
-        resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }),
+        resolve({ status: res.statusCode, headers: res.headers, rawHeaders: res.rawHeaders, body: Buffer.concat(chunks) }),
       )
     })
     req.on('error', reject)
@@ -29,7 +31,7 @@ function request(port, path, { method = 'GET', headers = {}, body = null } = {})
   })
 }
 
-async function setup(t, upstreamHandler) {
+async function setup(t, upstreamHandler, { allowedHosts = [] } = {}) {
   const upstream = http.createServer(upstreamHandler)
   const upstreamPort = await listen(upstream)
   const dir = await mkdtemp(join(tmpdir(), 'qa-proxy-'))
@@ -43,6 +45,7 @@ async function setup(t, upstreamHandler) {
       activity.count += 1
     },
     httpMod: http,
+    allowedHosts,
   })
   const proxy = http.createServer(handler)
   const proxyPort = await listen(proxy)
@@ -57,12 +60,21 @@ async function setup(t, upstreamHandler) {
 // --- parseSetCookie -------------------------------------------------------
 
 test('parseSetCookie: plain name=value', () => {
-  assert.deepEqual(parseSetCookie('sid=abc123'), { name: 'sid', value: 'abc123', remove: false })
+  assert.deepEqual(parseSetCookie('sid=abc123'), { name: 'sid', value: 'abc123', remove: false, sameSite: 'lax' })
 })
 
-test('parseSetCookie: ignores attributes, keeps value with embedded =', () => {
-  const parsed = parseSetCookie('sid=a=b=c; Path=/; HttpOnly; SameSite=Lax; Max-Age=3600')
-  assert.deepEqual(parsed, { name: 'sid', value: 'a=b=c', remove: false })
+test('parseSetCookie: ignores other attributes, keeps value with embedded =', () => {
+  const parsed = parseSetCookie('sid=a=b=c; Path=/; HttpOnly; SameSite=Strict; Max-Age=3600')
+  assert.deepEqual(parsed, { name: 'sid', value: 'a=b=c', remove: false, sameSite: 'strict' })
+})
+
+test('parseSetCookie: SameSite defaults to lax; None needs Secure', () => {
+  assert.equal(parseSetCookie('a=1').sameSite, 'lax')
+  assert.equal(parseSetCookie('a=1; samesite=LAX').sameSite, 'lax')
+  assert.equal(parseSetCookie('a=1; SameSite=Strict').sameSite, 'strict')
+  assert.equal(parseSetCookie('a=1; SameSite=None; Secure').sameSite, 'none')
+  assert.equal(parseSetCookie('a=1; SameSite=None').sameSite, 'lax', 'browsers reject None without Secure')
+  assert.equal(parseSetCookie('a=1; SameSite=bogus').sameSite, 'lax')
 })
 
 test('parseSetCookie: Max-Age=0 removes', () => {
@@ -358,4 +370,100 @@ test('no upstream (no session) yields a 503, not a connection attempt', async (t
   const res = await request(proxyPort, '/dashboard')
   assert.equal(res.status, 503)
   assert.match(res.body.toString(), /no QA session/)
+})
+
+// --- SameSite for the jar (cross-site request defence) ------------------------
+
+test('isCrossSite: sec-fetch-site wins, else the Origin host against the allowlist', () => {
+  const r = headers => ({ headers })
+  assert.equal(isCrossSite(r({ 'sec-fetch-site': 'cross-site' })), true)
+  for (const site of ['same-origin', 'same-site', 'none']) {
+    assert.equal(isCrossSite(r({ 'sec-fetch-site': site, origin: 'https://evil.example' })), false, site)
+  }
+  assert.equal(isCrossSite(r({})), false, 'no browser headers: a non-browser client')
+  assert.equal(isCrossSite(r({ origin: 'https://evil.example' })), true)
+  assert.equal(isCrossSite(r({ origin: 'null' })), true)
+  assert.equal(isCrossSite(r({ origin: 'not a url' })), true)
+  assert.equal(isCrossSite(r({ origin: 'http://127.0.0.1:3100' })), false, 'loopback is always allowed')
+  assert.equal(isCrossSite(r({ origin: 'https://qa.example.ts.net' }), ['qa.example.ts.net']), false)
+  assert.equal(isCrossSite(r({ origin: 'https://qa.example.ts.net' }), []), true)
+})
+
+test('a cross-site request gets only the jar cookies a browser would have sent', async (t) => {
+  const { proxyPort } = await setup(t, (req, res) => {
+    if (req.url === '/login') {
+      res.setHeader('set-cookie', ['lax=1; SameSite=Lax', 'strict=1; SameSite=Strict; HttpOnly', 'none=1; SameSite=None; Secure'])
+    }
+    res.end(req.headers.cookie ?? '')
+  }, { allowedHosts: ['qa.example.ts.net'] })
+  await request(proxyPort, '/login')
+  const seen = async (method, headers) => (await request(proxyPort, '/echo', { method, headers })).body.toString()
+  const form = { 'content-type': 'application/x-www-form-urlencoded' }
+  const nav = { 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' }
+
+  // cross-site writes: no Lax/Strict jar cookie, however it is detected
+  assert.equal(await seen('POST', { ...form, ...nav, 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' }), 'none=1')
+  assert.equal(await seen('POST', { ...form, origin: 'https://evil.example' }), 'none=1')
+  assert.equal(await seen('POST', { ...form, origin: 'null' }), 'none=1')
+  // cross-site reads: Lax only on a top-level navigation
+  assert.equal(await seen('GET', { ...nav, 'sec-fetch-site': 'cross-site' }), 'lax=1; none=1')
+  assert.equal(await seen('GET', { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' }), 'none=1', 'a frame is not top-level')
+  assert.equal(await seen('GET', { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'image' }), 'none=1')
+  // the browser's own cookies pass through: it already applied SameSite
+  assert.equal(await seen('POST', { ...form, 'sec-fetch-site': 'cross-site', cookie: 'mine=1' }), 'mine=1; none=1')
+
+  const all = 'lax=1; strict=1; none=1'
+  for (const site of ['same-origin', 'same-site', 'none']) {
+    assert.equal(await seen('POST', { ...form, 'sec-fetch-site': site }), all, site)
+  }
+  assert.equal(await seen('POST', form), all, 'no browser headers')
+  assert.equal(await seen('POST', { ...form, origin: 'https://qa.example.ts.net' }), all, 'an allowed-host Origin')
+})
+
+// --- frame lock ----------------------------------------------------------------
+
+// Each Content-Security-Policy header as sent (res.headers would join them).
+function cspValues(res) {
+  const out = []
+  for (let i = 0; i < res.rawHeaders.length; i += 2) {
+    if (res.rawHeaders[i].toLowerCase() === 'content-security-policy') out.push(res.rawHeaders[i + 1])
+  }
+  return out
+}
+
+test('frameAncestors: loopback plus the allowed hosts; IPv6 literals and non-hostnames left out', () => {
+  const fa = frameAncestors([' QA.example.ts.net ', '[fe80::1]', '::1', "evil.example 'unsafe-inline'; script-src *", '*.evil.example', 'localhost'])
+  assert.equal(fa, "frame-ancestors 'self' http://127.0.0.1:* https://127.0.0.1:* http://localhost:* https://localhost:* http://qa.example.ts.net:* https://qa.example.ts.net:*")
+  assert.equal(frameAncestors(), "frame-ancestors 'self' http://127.0.0.1:* https://127.0.0.1:* http://localhost:* https://localhost:*")
+})
+
+test('every proxied response carries the frame-ancestors policy; an upstream CSP is kept', async (t) => {
+  let hosts = ['qa.example.ts.net']
+  const upstream = http.createServer((req, res) => {
+    if (req.url === '/page') {
+      res.setHeader('content-type', 'text/html')
+      res.setHeader('content-security-policy', "default-src 'self'")
+      return res.end('<html><head></head><body>x</body></html>')
+    }
+    if (req.url === '/redirect') {
+      res.statusCode = 302
+      res.setHeader('location', '/page')
+      return res.end()
+    }
+    res.setHeader('content-type', 'application/json')
+    res.end('{}')
+  })
+  const upstreamPort = await listen(upstream)
+  const proxy = http.createServer(createPaneProxy({ upstreamPort, bridgePath: '/nonexistent', httpMod: http, allowedHosts: () => hosts }))
+  const proxyPort = await listen(proxy)
+  t.after(async () => { for (const s of [upstream, proxy]) await new Promise(r => s.close(r)) })
+
+  const page = await request(proxyPort, '/page')
+  assert.deepEqual(cspValues(page), ["default-src 'self'", frameAncestors(hosts)], 'HTML: both policies, as separate headers')
+  assert.match(frameAncestors(hosts), /https:\/\/qa\.example\.ts\.net:\*/)
+  assert.deepEqual(cspValues(await request(proxyPort, '/data')), [frameAncestors(hosts)], 'piped responses too')
+  assert.deepEqual(cspValues(await request(proxyPort, '/redirect')), [frameAncestors(hosts)], 'and redirects')
+  // the hosts are read per request, like the Host allowlist
+  hosts = ['late.example']
+  assert.deepEqual(cspValues(await request(proxyPort, '/data')), [frameAncestors(['late.example'])])
 })
