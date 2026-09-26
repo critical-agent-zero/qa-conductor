@@ -205,6 +205,9 @@ const installs = w => w.exec.calls.filter(c => c.cmd !== 'git')
 const worktreeAdds = w => w.exec.calls.filter(c => c.args.includes('add')).map(c => c.args.at(-1))
 const updateRefs = w => w.exec.calls.filter(c => c.args.includes('update-ref')).map(c => c.args.slice(-2))
 const markerShas = fs => [...fs.files.keys()].filter(k => k.startsWith(`${CACHE}/built/`)).map(k => path.basename(k, '.json')).sort()
+const assertSignalled = (w, signal) => {
+  for (const c of w.exec.calls) assert.equal(c.opts.signal, signal, `${c.cmd} ${c.args.join(' ')}`)
+}
 const trusted = over => ({ author: 'alice', authorAssociation: 'MEMBER', headRepo: REPO, headOwner: 'acme', ...over })
 
 // --- trustDecision (pure) ----------------------------------------------------
@@ -461,7 +464,8 @@ test('a partially built directory is cleaned with worktree remove -f -f and rm -
   fs.mkdirp(`${WT(PR)}/node_modules`)
   fs.files.set(`${WT(PR)}/node_modules/half-written`, 'x')
   const w = setup({ fs, fail: (cmd, args) => (args.includes('remove') ? new Error('fatal: not a working tree') : null) })
-  await w.build.ensureBuilt(7)
+  const ac = new AbortController()
+  await w.build.ensureBuilt(7, { signal: ac.signal })
   const ops = gitOps(w)
   const at = ops.indexOf(`worktree remove -f -f ${WT(PR)}`)
   assert.ok(at > 0, ops.join('\n'))
@@ -471,6 +475,7 @@ test('a partially built directory is cleaned with worktree remove -f -f and rm -
     'worktree prune',
     `worktree add -f -f --detach ${WT(PR)} ${PR}`,
   ])
+  assertSignalled(w, ac.signal)
   assert.deepEqual(fs.calls.find(c => c[0] === 'rm' && c[1] === WT(PR)), ['rm', WT(PR), { recursive: true, force: true }])
   assert.equal(fs.files.has(`${WT(PR)}/node_modules/half-written`), false)
   assert.deepEqual(markerShas(fs), [BASE, PR])
@@ -747,10 +752,12 @@ test('prune keeps the newest `keep` markers plus the SHAs just built, and clears
   const w = manyPrs({ keep: 2 })
   w.fs.mkdirp(`${WT(sha('9'))}/node_modules`) // a checkout whose install never finished
   w.fs.mkdirp(`${CACHE}/worktrees/not-a-sha`)
+  const ac = new AbortController()
   for (const n of [1, 2, 3, 4]) {
-    await w.build.ensureBuilt(n)
+    await w.build.ensureBuilt(n, { signal: ac.signal })
     w.now.t += 1000
   }
+  assertSignalled(w, ac.signal)
   // BASE was built first (the oldest marker) but is current, so it stays
   assert.deepEqual(markerShas(w.fs), [S[3], S[4], BASE].sort())
   assert.ok(w.fs.exists(WT(BASE)) && w.fs.exists(WT(S[3])) && w.fs.exists(WT(S[4])))
@@ -763,10 +770,13 @@ test('prune keeps the newest `keep` markers plus the SHAs just built, and clears
 
 test('prune with keep 0 retains only the SHAs just built', async () => {
   const w = manyPrs({ keep: 0 })
-  await w.build.ensureBuilt(1)
+  const ac = new AbortController()
+  await w.build.ensureBuilt(1, { signal: ac.signal })
   w.now.t += 1000
-  await w.build.ensureBuilt(2)
+  await w.build.ensureBuilt(2, { signal: ac.signal })
   assert.deepEqual(markerShas(w.fs), [S[2], BASE].sort())
+  assert.ok(gitOps(w).includes(`worktree remove -f -f ${WT(S[1])}`))
+  assertSignalled(w, ac.signal)
 })
 
 test('prune failures are reported as progress and never fail ensureBuilt', async () => {
@@ -779,9 +789,12 @@ test('prune failures are reported as progress and never fail ensureBuilt', async
       return null
     },
   })
-  await w.build.ensureBuilt(1)
+  const ac = new AbortController()
+  await w.build.ensureBuilt(1, { signal: ac.signal })
   w.fs.fail = (op, p) => (p === WT(S[1]) ? new Error('EACCES: permission denied') : null)
-  await w.build.ensureBuilt(2) // resolves despite every removal step failing
+  await w.build.ensureBuilt(2, { signal: ac.signal }) // resolves despite every removal step failing
+  assert.ok(removeTried)
+  assertSignalled(w, ac.signal)
   assert.ok(w.messages().some(m => /^could not prune 1111111: EACCES/.test(m)), w.messages().join('\n'))
   assert.ok(w.messages().some(m => /^could not prune stale worktrees: fatal: prune broke/.test(m)), w.messages().join('\n'))
   // the marker went first, so a half-removed tree can never count as built…
