@@ -95,6 +95,57 @@ The one exception: a build that declares `one-shot-image` migrations with a Prov
 
 **Reference consumer:** homefree's platform adapters (Docker + GHCR + `pg_dump` from the prod database + a magic-link login).
 
+### Built in: `adapters/build-worktree` (git-worktree BuildConvention)
+
+A BuildConvention for apps that run a PR from its source rather than from CI-built images. It fetches the base branch and the PR head into a bare repository, checks each SHA out into its own git worktree, optionally installs dependencies, and hands each worktree directory to your Provisioner through `servicesFor`.
+
+```js
+import os from 'node:os'
+import path from 'node:path'
+import { createWorktreeBuild } from '@critical-labs/qa-conductor/adapters/build-worktree'
+
+const build = createWorktreeBuild({
+  repo: 'acme/widget',
+  cacheDir: path.join(os.homedir(), '.cache/qa-conductor/acme-widget'),
+  github,                                          // needs prInfo(num) and authorPermission(login)
+  servicesFor: (dir, { role, sha }) => ({ app: dir }),
+  install: { cmd: 'pnpm', args: ['install', '--frozen-lockfile', '--ignore-scripts', '--ignore-pnpmfile'] },
+})
+```
+
+| Option | Default | |
+|---|---|---|
+| `cloneUrl` | `https://github.com/<repo>.git` | must not contain credentials (construction throws); for a private repo, configure a git credential helper |
+| `install` | `null` (no install) | `{ cmd, args, env? }`, run in the worktree |
+| `baseRef` | `'main'` | the branch the base pane runs |
+| `trust` | `{ logins: [], associations: ['OWNER', 'MEMBER', 'COLLABORATOR'], requirePush: true, allowForks: true }` | see below; omitted keys keep their defaults. `logins` and `associations` must be arrays of strings (split a comma-separated env value first); anything else throws at construction |
+| `keep` | `6` | the newest `keep` builds survive pruning; the two SHAs just built are never removed, even when they fall outside that number |
+| `migrationStrategy` | `'on-boot'` | |
+
+How it works:
+- **Layout under `cacheDir`.** The bare repository is `repo.git`, created on first use, and each checkout is `worktrees/<sha>`. Markers live at `built/<sha>.json`, outside the checkouts, so a PR's committed files can't supply one. A marker records a fingerprint of the install command, args and env keys. If it doesn't match, or the checkout is gone, the marker is dropped and the SHA is rebuilt from a clean checkout.
+- **The cache must be yours alone.** `cacheDir`, `built/` and `worktrees/` are created `0700`. Each build refuses to run unless each of them is a real directory (not a symlink), owned by the current user, and not writable by group or others: anyone who can write there can plant a marker and a tree for the base SHA.
+- **One build at a time** per instance. A second caller waits, then runs its own build, re-checking the markers.
+- **Progress** goes to `subscribeBuild` as `{ message }` (`fetching acme/widget…`, `installing dependencies for #12 (1a2b3c4)…`, `#12 (1a2b3c4) already built`). Each `ensureBuilt` reports to the subscriber that was current when it was called, and says nothing more once its signal aborts. An install failure's error carries a `logTail`: the last 40 lines of its output, at most 8 KB.
+- **`resolvePrImages` / `resolveBaseImages`** return `servicesFor(dir, …)`, `migrate: null`, and a `label` such as `#12@1a2b3c4` or `main@9f8e7d6`, which never contains a path.
+- **`describePrs`** reports `blocked` (with a reason) for a PR that fails the trust gate, then `building`, `built` or `none`.
+- **Pruning** runs after each build and is best-effort. The newest `keep` builds are kept, and the two SHAs just built are never removed, even when they fall outside that number. Every other checkout is removed, including ones whose build never finished.
+
+**Security.** This adapter checks out and installs a PR's code on the reviewer's machine, as the reviewer, and your Provisioner then runs it. **The trust gate is the only real boundary between a PR's code and the reviewer's machine. Env scrubbing and loopback binding are defence in depth.**
+- **The trust gate.** `ensureBuilt` refuses a PR, before any git call, unless all of these hold:
+  - its author is in `trust.logins`, or has an association in `trust.associations` **and**, when `requirePush` is set (the default), `write` or `admin` permission on the repo;
+  - its head repository still exists;
+  - its head branch is in the repo itself or in the author's own fork, not in someone else's fork. With `allowForks: false`, only the repo itself.
+- **Association isn't access.** `author_association` alone is not an access check. `COLLABORATOR` includes read-only outside collaborators, and `MEMBER` includes org members with no push access. That's why `requirePush` defaults on.
+- **The gate vouches for the author, not for every commit.** It checks who opened the PR and where its head lives, not who pushed the head commit. Anyone with push access to the author's fork (collaborators they added, bots or Actions with write access to it) can move the head, and the moved head passes as the author's. Set `allowForks: false` to require heads in the repo itself, where everyone who can push has write access to the repo.
+- **Only the gated SHA runs.** Only the exact SHA that passed the gate is ever checked out or installed. If the head moves between the check and the fetch, the new SHA is gated again, or the build fails with `head moved during fetch; retry`.
+- **It fails closed.** Any error while checking (a GitHub error, a missing field) refuses the PR, and a malformed `trust` config throws at construction.
+- **Defence in depth, not a sandbox.**
+  - The installer's environment is exactly `PATH`, `HOME` and `install.env`, so credentials in environment variables (such as `GITHUB_QA_TOKEN`) don't reach it. Files under `HOME` do: it can read `~/.npmrc` tokens, `~/.config/gh`, `~/.git-credentials` and `~/.ssh`.
+  - git runs with hooks disabled and prompts off.
+  - A PR that passes the gate still runs with the reviewer's full user access. Code it runs (install scripts, a package manager it selects, the server your Provisioner launches) can rewrite this cache, including markers and other checkouts such as the base, like anything else the reviewer can write.
+- **Skip install scripts.** Install with `--ignore-scripts` (with pnpm, also `--ignore-pnpmfile`) so dependency lifecycle scripts and pnpmfiles don't run.
+
 ## Configuration
 
 `loadConfig(path, { defaults, required = [] })` reads `KEY=value` lines. File values override `defaults`, and the raw map is returned as `cfg.env` so a platform can read its own keys. `required` lists extra keys the platform insists on (homefree re-requires `QA_OPERATOR_EMAIL`); it can't waive the core's.
