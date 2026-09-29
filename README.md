@@ -9,10 +9,10 @@ The conductor owns the choreography: session state, cancellation, the harness UI
 ## Install
 
 ```sh
-npm install github:critical-labs/qa-conductor#v0.1.0
+npm install github:critical-labs/qa-conductor#v0.2.0
 ```
 
-Node ≥ 22. There are no runtime dependencies. While the repo is private, installing needs a GitHub credential that can read it.
+Node ≥ 22. There are no runtime dependencies.
 
 ## Use
 
@@ -236,6 +236,22 @@ Demo mode runs the real conductor with fixture PRs and fake adapters, so you can
 - Verdicts go to an in-memory GitHub fake and are printed to the console. Nothing leaves the machine.
 
 `demo/` is not published with the package. From code, `startDemo({ port, speed, log })` in `demo/index.mjs` returns `{ stop(), ports }`.
+
+## QA this repo's own pull requests
+
+```sh
+echo 'GITHUB_QA_TOKEN=<token>' > .env.qa   # read PRs, comment and label on this repo
+npm run qa                                  # then open http://127.0.0.1:3100/
+```
+
+qa-conductor QAs its own PRs with its own built-in adapters (`qa/self.mjs`):
+- **Panes.** Each pane is a git worktree of this repo, base (`main`) and the PR head, running demo mode (`node demo/server.mjs`). A UI change shows up side by side before it merges.
+- **Builds.** `build-worktree` checks a PR out only after the trust gate passes: the author has write access, and the head lives in this repo or the author's own fork. There is no install step, because the package has no dependencies.
+- **Processes.** `provisioner-process` runs each pane on `127.0.0.1` with only `PATH`, `PORT` and `QA_DEMO_SPEED` in its environment.
+- **Where things live.** Builds and the pidfile are under `$XDG_CACHE_HOME/qa-conductor/critical-labs-qa-conductor`, defaulting to `~/.cache/...`.
+- **Stopping.** Ctrl-C tears the panes down before exiting.
+
+`.env.qa` accepts the usual configuration keys, plus `QA_BASE_REF`, the branch the base pane runs (default `main`). `QA_ENV_FILE` points at a different file.
 
 ## Develop
 
