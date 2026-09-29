@@ -14,7 +14,7 @@ const bridgePath = join(dirname(fileURLToPath(import.meta.url)), '..', 'public',
 const source = readFileSync(bridgePath, 'utf8')
 const cjsModule = { exports: {} }
 new Function('module', 'exports', source)(cjsModule, cjsModule.exports)
-const { buildSelector, resolveSelector } = cjsModule.exports
+const { buildSelector, resolveSelector, harnessOriginFromHash } = cjsModule.exports
 
 // --- minimal DOM stub (no jsdom) ------------------------------------------
 // Supports only what the bridge helpers use: querySelector (attribute-equals
@@ -125,6 +125,29 @@ test('rung 4: text of a button spans its descendants', () => {
   assert.equal(resolveSelector(desc, page), button)
 })
 
+test('rung 4 is skipped when the text repeats: a list of identical buttons falls to the path', () => {
+  // Found by qa-conductor QA-ing itself: five "Open QA" buttons, one per PR.
+  // A text descriptor would match all five in the peer pane (a non-match by
+  // design), so the click was never mirrored.
+  const page = () => {
+    const rows = [1, 2, 3].map(n => h('li', {}, [h('span', { text: `#10${n}` }), h('button', { text: 'Open QA' })]))
+    const doc = new StubDocument(h('body', {}, [h('ul', {}, rows)]))
+    return { doc, second: rows[1].children[1] }
+  }
+  const a = page()
+  const b = page()
+  const desc = buildSelector(a.second)
+  assert.deepEqual(desc, { t: 'path', v: 'UL:nth-of-type(1)>LI:nth-of-type(2)>BUTTON:nth-of-type(1)' })
+  assert.equal(resolveSelector(desc, b.doc), b.second)
+})
+
+test('rung 4 still applies when the text is unique among same-tag elements', () => {
+  const save = h('button', { text: 'Save' })
+  const doc = new StubDocument(h('body', {}, [h('button', { text: 'Cancel' }), save, h('a', { text: 'Save' })]))
+  assert.deepEqual(buildSelector(save), { t: 'text', tag: 'BUTTON', v: 'Save' })
+  assert.equal(resolveSelector(buildSelector(save), doc), save)
+})
+
 test('rung 5: structural path for anonymous elements', () => {
   const a = makePage()
   const b = makePage()
@@ -213,8 +236,107 @@ test('selector for body itself round-trips as an empty path', () => {
 // dormant here (window is undefined). Guard that adding it left the pure-helper
 // exports intact so the harness can still build and resolve selectors.
 
-test('the CJS guard still exports both pure selector helpers', () => {
+test('the CJS guard still exports the pure helpers', () => {
   assert.equal(typeof buildSelector, 'function')
   assert.equal(typeof resolveSelector, 'function')
-  assert.deepEqual(Object.keys(cjsModule.exports).sort(), ['buildSelector', 'resolveSelector'])
+  assert.equal(typeof harnessOriginFromHash, 'function')
+  assert.deepEqual(Object.keys(cjsModule.exports).sort(), ['buildSelector', 'harnessOriginFromHash', 'resolveSelector'])
+})
+
+// --- the #qa= mirroring contract (reader side of harness.js withQaFragment) --
+
+const ORIGIN = 'https://qa.example.ts.net'
+const ENC = encodeURIComponent(ORIGIN)
+
+test('harnessOriginFromHash reads the qa param of an &-separated fragment', () => {
+  assert.equal(harnessOriginFromHash(`#qa=${ENC}`), ORIGIN)
+  assert.equal(harnessOriginFromHash(`#key=K&qa=${ENC}`), ORIGIN)
+  assert.equal(harnessOriginFromHash(`qa=${ENC}&x=1`), ORIGIN, 'leading # optional')
+})
+
+test('harnessOriginFromHash ignores qa= inside another param\'s value', () => {
+  assert.equal(harnessOriginFromHash(`#next=/a?qa=1&qa=${ENC}`), ORIGIN)
+  assert.equal(harnessOriginFromHash(`#token=abcqa==&qa=${ENC}`), ORIGIN)
+  assert.equal(harnessOriginFromHash('#token=abcqa=1'), null)
+})
+
+test('harnessOriginFromHash: absent, empty or malformed gives null', () => {
+  for (const hash of ['', '#', '#key=K', '#qa=', '#qa', '#qa=%E0%A4%A', undefined, null]) {
+    assert.equal(harnessOriginFromHash(hash), null, String(hash))
+  }
+})
+
+// --- runtime trust: the IIFE against a stub window ----------------------------
+// The fragment is attacker-writable (any page can frame or open a pane URL), so
+// the bridge trusts it only inside a frame and only talks to that frame's
+// parent, at the qa= origin.
+
+function runBridge({ framed = true, hash = `#qa=${ENC}`, stored = null, parentPost = null } = {}) {
+  const listeners = {}
+  const posted = []
+  const clicks = []
+  const store = stored ? { qaHarnessOrigin: stored } : {}
+  const button = { tagName: 'BUTTON', click: () => clicks.push('go') }
+  const doc = {
+    addEventListener() {},
+    querySelector: sel => (sel === '[id="go"]' ? button : null),
+  }
+  const parent = { postMessage: parentPost ?? ((msg, target) => posted.push({ msg, target, to: 'parent' })) }
+  const win = {
+    location: { hash, pathname: '/p', search: '' },
+    sessionStorage: { getItem: k => store[k] ?? null, setItem: (k, v) => { store[k] = v } },
+    addEventListener: (type, fn) => { (listeners[type] ??= []).push(fn) },
+    history: { pushState() {}, replaceState() {} },
+    postMessage: (msg, target) => posted.push({ msg, target, to: 'self' }),
+  }
+  win.parent = framed ? parent : win
+  const mod = { exports: {} }
+  new Function('module', 'exports', 'window', 'document', 'setInterval', 'requestAnimationFrame', source)(
+    mod, mod.exports, win, doc, () => 0, () => 0,
+  )
+  const message = ev => { for (const fn of listeners.message ?? []) fn(ev) }
+  const replay = { qa: 1, kind: 'replay', type: 'click', selector: { t: 'id', v: 'go' } }
+  return { posted, clicks, message, parent, win, store, replay }
+}
+
+test('framed: posts to the parent at the qa= origin, never "*"', () => {
+  const b = runBridge()
+  assert.deepEqual(b.posted, [{ msg: { qa: 1, kind: 'nav', href: '/p' }, target: ORIGIN, to: 'parent' }])
+  assert.equal(b.store.qaHarnessOrigin, ORIGIN)
+})
+
+test('framed: a replay is applied only from the parent at the qa= origin', () => {
+  const b = runBridge()
+  b.message({ origin: ORIGIN, source: {}, data: b.replay })
+  assert.deepEqual(b.clicks, [], 'another window at the harness origin')
+  b.message({ origin: 'https://evil.example', source: b.parent, data: b.replay })
+  assert.deepEqual(b.clicks, [], 'the parent at another origin')
+  b.message({ origin: ORIGIN, source: b.parent, data: b.replay })
+  assert.deepEqual(b.clicks, ['go'])
+})
+
+test('not framed (e.g. window.open with #qa=): no trust, no mirroring', () => {
+  const b = runBridge({ framed: false })
+  b.message({ origin: ORIGIN, source: b.win, data: b.replay })
+  b.message({ origin: ORIGIN, source: {}, data: b.replay })
+  assert.deepEqual(b.clicks, [])
+  assert.deepEqual(b.posted, [])
+  assert.equal(b.store.qaHarnessOrigin, undefined, 'the fragment is not remembered either')
+
+  const stale = runBridge({ framed: false, hash: '', stored: ORIGIN })
+  stale.message({ origin: ORIGIN, source: stale.win, data: stale.replay })
+  assert.deepEqual([stale.clicks, stale.posted], [[], []], 'nor is a remembered origin used')
+})
+
+test('framed without a qa= origin: nothing is posted; a remembered origin still works', () => {
+  assert.deepEqual(runBridge({ hash: '#key=K' }).posted, [])
+  const later = runBridge({ hash: '', stored: ORIGIN })
+  assert.deepEqual(later.posted.map(p => p.target), [ORIGIN])
+})
+
+test('a malformed qa= origin (postMessage throws SyntaxError) does not break install', () => {
+  assert.doesNotThrow(() => runBridge({
+    hash: '#qa=not%20an%20origin',
+    parentPost: () => { throw new SyntaxError('Invalid target origin') },
+  }))
 })

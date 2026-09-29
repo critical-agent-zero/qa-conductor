@@ -2,9 +2,9 @@
 // proxy via <script src="/__qa/bridge.js">. Plain browser script: no ESM, no
 // dependencies, zero app changes.
 //
-// The pure selector helpers (buildSelector / resolveSelector) live at top
-// level and are exported through the CommonJS guard at the bottom so
-// `node --test` can exercise them; the runtime IIFE is inert outside a
+// The pure helpers (buildSelector / resolveSelector, harnessOriginFromHash)
+// live at top level and are exported through the CommonJS guard at the bottom
+// so `node --test` can exercise them; the runtime IIFE is inert outside a
 // browser.
 
 // --- pure selector helpers -------------------------------------------------
@@ -46,9 +46,23 @@ function buildSelector(el) {
   if (aria) return { t: 'aria', v: aria }
   if (el.tagName === 'BUTTON' || el.tagName === 'A') {
     const text = (el.textContent || '').trim()
-    if (text.length >= 1 && text.length <= 60) return { t: 'text', tag: el.tagName, v: text }
+    if (text.length >= 1 && text.length <= 60 && textIsUnique(el, text)) return { t: 'text', tag: el.tagName, v: text }
   }
   return { t: 'path', v: structuralPath(el) }
+}
+
+// Text only identifies an element when no other same-tag element on the page
+// carries it: the peer resolves an ambiguous text match to nothing, so a
+// repeated label ("Open", "Edit", one per row) must fall through to the path.
+function textIsUnique(el, text) {
+  let root = el
+  while (root.parentNode) root = root.parentNode
+  const same = collectByTag(root, el.tagName, [])
+  let count = 0
+  for (let i = 0; i < same.length; i++) {
+    if ((same[i].textContent || '').trim() === text) count += 1
+  }
+  return count === 1
 }
 
 function collectByTag(root, tag, out) {
@@ -103,6 +117,24 @@ function resolveSelector(desc, doc) {
   return null
 }
 
+// The harness origin from a pane URL's fragment (#…&qa=<encoded origin>&…),
+// as harness.js withQaFragment writes it. Fragments are &-separated key=value
+// pairs, so `qa=` inside another param's value is not a match. null when
+// absent, empty or malformed.
+function harnessOriginFromHash(hash) {
+  const pairs = String(hash || '').replace(/^#/, '').split('&')
+  for (let i = 0; i < pairs.length; i++) {
+    const eq = pairs[i].indexOf('=')
+    if (eq === -1 || pairs[i].slice(0, eq) !== 'qa') continue
+    try {
+      return decodeURIComponent(pairs[i].slice(eq + 1)) || null
+    } catch (err) {
+      return null
+    }
+  }
+  return null
+}
+
 // --- browser runtime -------------------------------------------------------
 
 ;(function () {
@@ -112,22 +144,28 @@ function resolveSelector(desc, doc) {
 
   // Harness origin arrives via the URL fragment (#qa=<origin>) on the pane's
   // first load; keep it in sessionStorage so SPA navigation (which may rewrite
-  // the hash) cannot lose it.
+  // the hash) cannot lose it. Anyone can write a fragment, so it is trusted
+  // only inside a frame: the proxy's frame-ancestors policy limits who can
+  // frame a pane, and a top-level window (e.g. window.open) never mirrors.
+  const framed = window.parent !== window
   let harnessOrigin = null
-  try {
-    const m = /qa=([^&]+)/.exec(window.location.hash || '')
-    if (m) harnessOrigin = decodeURIComponent(m[1])
-    if (harnessOrigin) window.sessionStorage.setItem('qaHarnessOrigin', harnessOrigin)
-    else harnessOrigin = window.sessionStorage.getItem('qaHarnessOrigin')
-  } catch (err) {
-    // sessionStorage unavailable — fragment-only config still covers this load
+  if (framed) {
+    try {
+      harnessOrigin = harnessOriginFromHash(window.location.hash)
+      if (harnessOrigin) window.sessionStorage.setItem('qaHarnessOrigin', harnessOrigin)
+      else harnessOrigin = window.sessionStorage.getItem('qaHarnessOrigin')
+    } catch (err) {
+      // sessionStorage unavailable — fragment-only config still covers this load
+    }
   }
 
   function send(msg) {
+    if (!framed || !harnessOrigin) return
     try {
-      window.parent.postMessage(msg, '*')
+      // targetOrigin, not '*': captured values and paths go to the harness only
+      window.parent.postMessage(msg, harnessOrigin)
     } catch (err) {
-      // parent gone (pane opened outside the harness) — nothing to mirror to
+      // parent gone, or a malformed origin (SyntaxError) — nothing to mirror to
     }
   }
 
@@ -267,7 +305,7 @@ function resolveSelector(desc, doc) {
   }
 
   window.addEventListener('message', function (event) {
-    if (!harnessOrigin || event.origin !== harnessOrigin) return
+    if (!framed || !harnessOrigin || event.origin !== harnessOrigin || event.source !== window.parent) return
     const data = event.data
     if (!data || data.qa !== 1 || data.kind !== 'replay') return
     window.__qaReplaying = true
@@ -304,5 +342,5 @@ function resolveSelector(desc, doc) {
 // --- test exports (node --test evaluates this file through a CJS wrapper) ---
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { buildSelector, resolveSelector }
+  module.exports = { buildSelector, resolveSelector, harnessOriginFromHash }
 }

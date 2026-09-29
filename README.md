@@ -25,18 +25,38 @@ import { createGithub } from '@critical-labs/qa-conductor/github'
 const cfg = loadConfig('/path/to/.env.qa', { defaults: { QA_REPO: 'acme/widget' } })
 const github = createGithub({ token: cfg.githubToken, repo: cfg.repo, qaLabels: [cfg.verdictLabels.accept, cfg.verdictLabels.reject] })
 
-startConductor({
+const conductor = startConductor({
   cfg,
   github,
   fsx: { readFile: p => fs.promises.readFile(p) },   // serves the harness UI files
   adapters: { provisioner, build, seed, envTransform, auth },
   readBaseEnv: async () => ({ /* the env the pane env is derived from */ }),
 })
+
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => conductor.shutdown().then(() => process.exit(0)))
+}
 ```
 
-`startConductor` serves the harness on `cfg.ports.harness` and one proxy per pane on `cfg.ports.base` / `cfg.ports.pr`. It returns `{ servers, stop() }`.
+`startConductor` serves the harness on `cfg.ports.harness` and one proxy per pane on `cfg.ports.base` / `cfg.ports.pr`, all on `cfg.host` (**`127.0.0.1` by default**). It returns `{ servers, stop(), shutdown() }`:
+- `shutdown()` is the graceful exit. It stops the idle reaper, refuses harness writes from then on (`503`, so no new boot can start), tears the session down (aborting an in-flight boot and tearing down both panes), ends the progress streams, closes every connection and resolves once all three servers are closed. Call it from your signal handlers; calling it again is a no-op.
+- `stop()` only stops the reaper and asks the servers to close.
 
-Put your own TLS/auth front door in front of these ports (homefree uses `tailscale serve`). `cfg.paneOrigins` must be the URLs viewers actually reach the panes at.
+`cfg.paneOrigins` must be the URLs viewers actually reach the panes at. To reach the harness from anywhere but the machine it runs on, put your own TLS/auth front door in front of these ports (homefree uses `tailscale serve`) and read [Security](#security) first.
+
+## Security
+
+**The trust gate is the only real boundary between a PR's code and the reviewer's machine.** Booting a PR runs its code. A BuildConvention that checks out and installs PRs must refuse untrusted ones in `ensureBuilt`, before any git call. **Env scrubbing and loopback binding are defence in depth**, not a boundary.
+
+The conductor's own defences in depth:
+- **Loopback by default.** All three servers listen on `QA_BIND_HOST`, default `127.0.0.1`. Anything other than loopback exposes an unauthenticated API that returns pane login URLs and posts verdicts with `GITHUB_QA_TOKEN`. A pane proxy *is* an authenticated pane session, because the proxy holds the pane's cookie jar. Widen the bind only behind a firewall or an authenticating front door.
+- **Host allowlist.** Every server checks the `Host` header before routing (the harness does so before it even parses the request target) and answers `421` unless its hostname (port ignored, `[]` stripped) is `127.0.0.1`, `localhost`, `::1`, `QA_PUBLIC_HOST`, the hostname of either pane origin, or an entry in `QA_ALLOWED_HOSTS`. This defeats DNS rebinding. A front door must pass the viewer's `Host` through, or its hostname must be allowed.
+- **SameSite for the pane jar.** Loopback and the Host allowlist don't stop a site the reviewer visits from sending requests to a pane through the reviewer's own browser, and the proxy, not the browser, holds the pane's cookies. So the proxy applies each pane cookie's `SameSite` as a browser would. A cross-site request (by `sec-fetch-site`, else by an `Origin` outside the allowlist) gets only `SameSite=None` jar cookies, plus `Lax` ones on a top-level GET navigation. A missing `SameSite` counts as `Lax`, and `None` without `Secure` counts as `Lax`. The browser's own `Cookie` header passes through unchanged.
+- **Same-site harness and panes.** Serve the harness and the panes with the same scheme and host (ports may differ), and don't mix `localhost` with `127.0.0.1`. Otherwise the harness's load of each pane is cross-site and gets no `Lax` or `Strict` jar cookies. A magic-link `landingUrl` still signs in, because it carries its own token.
+- **Frame lock.** Every proxied pane response carries a `frame-ancestors` policy (added alongside the app's own CSP) that allows only the pane itself, loopback, `QA_PUBLIC_HOST`, the pane origin hosts and `QA_ALLOWED_HOSTS`, on any port. IPv6 literals can't be listed. The mirror bridge trusts the `qa=` origin only when the pane is framed, applies replays only from its parent at that origin, and posts only to that origin. So a page elsewhere can neither frame a signed-in pane nor drive it through the bridge. An authenticating front door must serve the harness from one of the allowed hosts.
+- **Same-origin writes.** Every harness `/api/*` request other than GET/HEAD is refused with `403` when `sec-fetch-site` is present and isn't `same-origin` or `none`, or, absent that, when `Origin` is present and its host isn't the request's `Host`. Browsers always send one of the two on a POST, so a request with neither comes from a non-browser client and is allowed.
+- **JSON bodies.** `POST /api/session`, `/api/verdict` and `/api/teardown` require `content-type: application/json` (else `415`). A cross-site form can't send that type, and a cross-site `fetch()` with it needs a CORS preflight the harness never grants.
+- **Inert rendering.** The harness UI renders PR titles, build messages, blocked reasons, errors and log tails as text, and links a build run only when its URL is `https://`.
 
 ## The five seams
 
@@ -44,8 +64,8 @@ A boot runs these seams in order: `ensureBuilt` → per pane (`provisionDatabase
 
 | Seam | Members | Owns |
 |---|---|---|
-| **Provisioner** | `provisionDatabase({paneRef, databases}) → {dsn, db}`, `reserveServices({paneRef, services}) → {name: {url, port}}`, `launchServices({paneRef, services, env, reserved})`, `waitHealthy({services})`, `teardown({paneRef})`; optional `runMigrate({paneRef, migrate, env})`, `sweep()`, `logs({paneRef, stage, lines})` | Where panes run: databases, processes or containers, ports, env at rest, cleanup |
-| **BuildConvention** | `migrationStrategy` (`'one-shot-image' \| 'on-boot' \| 'none'`), `ensureBuilt(pr, {signal})`, `resolvePrImages(pr)`, `resolveBaseImages()` → `{services: {name: ref}, migrate?}`; optional `subscribeBuild(cb)`, `describePrs(prs) → [{number, status: 'built'\|'building'\|'none', runUrl}]` | What gets run for base and PR, and whether it's ready |
+| **Provisioner** | `provisionDatabase({paneRef, databases, signal}) → {dsn, db}`, `reserveServices({paneRef, services, signal}) → {name: {url, port}}`, `launchServices({paneRef, services, env, reserved, signal})`, `waitHealthy({services, signal})`, `teardown({paneRef})`; optional `runMigrate({paneRef, migrate, env, signal})`, `sweep()`, `logs({paneRef, stage, lines}) → string` (or a promise of one) | Where panes run: databases, processes or containers, ports, env at rest, cleanup |
+| **BuildConvention** | `migrationStrategy` (`'one-shot-image' \| 'on-boot' \| 'none'`), `ensureBuilt(pr, {signal})`, `resolvePrImages(pr)`, `resolveBaseImages()` → `{services: {name: ref}, migrate?, label?}`; optional `subscribeBuild(cb)` with `cb({runUrl?, runStatus?, message?})`, `describePrs(prs) → [{number, status: 'built'\|'building'\|'none'\|'blocked', runUrl, reason?}]` | What gets run for base and PR, whether it's ready, and whether it may run at all |
 | **Seed** | `databases`, `seedPane({paneRef, db, databases})` | Where each pane's data comes from and how it moves |
 | **EnvTransform** | `derivePaneEnv({prodEnv, pane}) → {service: env}` (pure) | Pointing a pane at its own DB and origin, and neutralizing side effects (email, payments, storage) |
 | **AuthBootstrap** | `requiresDb`, `establishSession({pane, operator, db?}) → {landingUrl, cookies?, replay?}`; optional `envContributions()` | Getting the reviewer logged in to each pane |
@@ -57,40 +77,60 @@ The optional members degrade gracefully when absent:
 
 The one exception: a build that declares `one-shot-image` migrations with a Provisioner that can't `runMigrate` fails the boot with a clear error.
 
+### Contracts between the seams
+
+- **`db` is opaque to the core.** Whatever `provisionDatabase` returns as `db` is passed unchanged to `seedPane` and (when `requiresDb`) to `establishSession`. Its shape is a contract among a consumer's own adapters.
+- **Cancellation (`signal`).** Teardown and takeover abort the in-flight boot. The core checks the signal between stages, at the top of each pane's provisioning, before each `launchServices` and before the `waitHealthy` loop. It also passes the signal to `ensureBuilt` and to every Provisioner call above, so a long wait can stop early. Provisioners may ignore it (the Docker one does). An aborted boot never tears anything down, even when the abort lands while its failure log tail is being read: whoever aborted it already did.
+- **Build progress.** `subscribeBuild(cb)` payloads are `{runUrl?, runStatus?, message?}`. The harness shows `message` (plain text, e.g. `installing dependencies for #12 (abc1234)…`) under the first boot step, else a summary of the run's status, and links the run when `runUrl` is `https://`. `/api/state` returns the latest as `buildRun: {url, status, message}`.
+- **`blocked`.** `describePrs` may report a PR as `blocked`, with a plain-text `reason` (for example, an untrusted author or a head branch in someone else's fork). The picker shows it as `can't boot: <reason>`. Opening the PR is still allowed, because `ensureBuilt` is the real gate. `describePrs` receives `listOpenPrs()` items, or for `/api/build-status` an item built from `github.prInfo(pr)` (`{number, headSha, author, authorAssociation, headRepo, headOwner}`), falling back to `{number, headSha}` from `prHead` when `github` has no `prInfo`.
+- **Display `label`.** `resolveBaseImages` / `resolvePrImages` may return a `label` string, used as the pane's tag instead of the primary service's ref (`app`, else the first service). The label appears in the harness header and in the **public** verdict comment. Consumers whose service refs are local paths or objects must set one, so no path or object leaks into the PR. It must not contain `:`.
+- **Failure log tails.** When a boot fails at a pane stage (`cloning`, `migrating`, `starting`), the core calls `logs({paneRef: {role}, stage, lines: 40})` for the failing pane *before* tearing the panes down, and attaches the result to the error as `err.logTail` (with the pane's role as `err.failedRole`). An error that already carries a string `logTail` keeps it, so a BuildConvention can attach its own tail to an `ensuring-image` failure (for example, installer output). The harness shows the tail under the error.
+- **The `#qa=` fragment (AuthBootstrap).** The harness appends `qa=<encoded harness origin>` to each `landingUrl`'s fragment before loading it in a pane: `#qa=…` when there's no fragment, `&qa=…` after an existing one, and nothing when the fragment already has a `qa` param. The pane's mirror bridge reads it, only while the pane is framed, to know which window to talk to. So adapter fragments must be `&`-separated `key=value` pairs, and the app must keep the hash through redirects until its first HTML load.
+
 **Built in:** `adapters/provisioner-docker` is a Provisioner for docker-sibling deployments. It creates the pane postgres containers, one app container per pane, `0600` env files under `workDir`, registry login and a labelled-orphan sweep. The `docker`, `github` and `exec` modules are the effect wrappers it and the reference adapters use.
+
+**Effect wrappers:**
+- `github`: `listOpenPrs()` items are `{number, title, headSha, headRef, author, authorAssociation, headRepo, headOwner}`. `prInfo(num)` returns `{number, headSha, author, authorAssociation, isDraft, headRepo, headOwner}`, where `headRepo` (`owner/name`) and `headOwner` are `null` when the head repository was deleted. `authorPermission(login)` returns the login's `admin|write|read|none` permission on the repo and throws on a non-2xx response. `author_association` alone is no access check: `COLLABORATOR` includes read-only outside collaborators.
+- `exec`: `makeExecFileFn()` resolves `{stdout}` and rejects with an Error whose message is unchanged and which also carries `stdout`, `stderr` and the exit `code`.
 
 **Reference consumer:** homefree's platform adapters (Docker + GHCR + `pg_dump` from the prod database + a magic-link login).
 
 ## Configuration
 
-`loadConfig(path, { defaults })` reads `KEY=value` lines. File values override `defaults`, and the raw map is returned as `cfg.env` so a platform can read its own keys.
+`loadConfig(path, { defaults, required = [] })` reads `KEY=value` lines. File values override `defaults`, and the raw map is returned as `cfg.env` so a platform can read its own keys. `required` lists extra keys the platform insists on (homefree re-requires `QA_OPERATOR_EMAIL`); it can't waive the core's.
 
 | Key | Default | |
 |---|---|---|
-| `GITHUB_QA_TOKEN` | *(required)* | PR list, head lookups, verdict comment + label |
-| `QA_OPERATOR_EMAIL` | *(required)* | the reviewer, passed to `establishSession` |
+| `GITHUB_QA_TOKEN` | *(required)* | PR list, head and trust lookups, verdict comment + label |
 | `QA_REPO` | *(required)* | `owner/name` |
-| `QA_PUBLIC_HOST` | *(required)* | default host for the pane origins |
+| `QA_OPERATOR_EMAIL` | `null` | the reviewer, passed to `establishSession` |
+| `QA_PUBLIC_HOST` | *(required unless both pane origins are set)*, else `null` | default host for the pane origins; always an allowed `Host` |
+| `QA_BIND_HOST` | `127.0.0.1` | the address all three servers listen on (see [Security](#security)) |
+| `QA_ALLOWED_HOSTS` | *(none)* | extra comma-separated hostnames (no ports) the servers answer to |
 | `QA_HARNESS_PORT` / `QA_BASE_PROXY_PORT` / `QA_PR_PROXY_PORT` | `3100` / `3101` / `3102` | listen ports |
 | `QA_BASE_ORIGIN` / `QA_PR_ORIGIN` | `https://<host>:8443` / `:10000` | public pane origins |
 | `QA_LABEL_ACCEPT` / `QA_LABEL_REJECT` | `qa-approved` / `qa-changes-requested` | verdict label pair |
 | `QA_IDLE_MINUTES` | `30` | idle sessions are torn down |
+
+A platform that builds `cfg` in code instead can leave out `host` (loopback is the default) and `allowedHosts`. The core reads `cfg.paneOrigins` per request, so it may be assigned once the proxies are listening.
+
+**Migrating homefree to the package:** its RC app reaches the harness over the Docker bridge, so it will need `QA_BIND_HOST=0.0.0.0`, plus the hostname it uses for the host (for example `host.docker.internal`) in `QA_ALLOWED_HOSTS`.
 
 ## HTTP API (harness port)
 
 | | |
 |---|---|
 | `GET /` | harness UI |
-| `GET /api/state` | session status, tags, pane login URLs + origins |
-| `GET /api/prs` | open PRs with build readiness |
-| `GET /api/build-status?pr=N` | `{pr, status, exists, runUrl}` |
-| `GET /api/progress` | server-sent boot progress |
+| `GET /api/state` | session status, tags, `buildRun: {url, status, message}`, pane login URLs + origins |
+| `GET /api/prs` | open PRs with build readiness (`imageStatus`, `runUrl`, `reason`) |
+| `GET /api/build-status?pr=N` | `{pr, status, exists, runUrl}`, plus `reason` when `status` is `blocked` |
+| `GET /api/progress` | server-sent boot progress (`step`, `build`, `ready`, `error` with `logTail`, `torn-down`) |
 | `POST /api/session` `{pr, takeover?}` | boot a session (one at a time; `takeover` replaces the current one) |
 | `GET /api/verdict/preview?verdict=accept\|reject&notes=` | the comment + labels that would be posted |
 | `POST /api/verdict` `{verdict, notes}` | post the verdict comment and set the label |
-| `POST /api/teardown` | tear down the session (cancels an in-flight boot) |
+| `POST /api/teardown` `{}` | tear down the session (cancels an in-flight boot) |
 
-While no session is ready, the pane proxies answer `503`.
+Every path also answers under a `/qa` prefix. POSTs must be same-origin and `application/json` (`403` / `415`), and a request to any of the three ports with an unrecognised `Host` gets `421`. A request target the harness can't parse as a URL gets `400`, and once `shutdown()` has begun every harness write gets `503`. While no session is ready, the pane proxies answer `503`.
 
 ## Develop
 

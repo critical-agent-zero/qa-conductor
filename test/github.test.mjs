@@ -40,11 +40,19 @@ function version(id, tags, updatedAt) {
   return { id, updated_at: updatedAt, metadata: { container: { tags } } }
 }
 
-test('listOpenPrs fetches open PRs and maps the fields', async () => {
+test('listOpenPrs fetches open PRs and maps the fields, including the trust data', async () => {
   const { calls, fetchFn } = makeFetch(() =>
     response(200, [
-      { number: 41, title: 'Add widgets', head: { sha: 'abc123', ref: 'feat/widgets' }, user: { login: 'alice' } },
-      { number: 42, title: 'Fix bug', head: { sha: 'def456', ref: 'fix/bug' }, user: { login: 'bob' } },
+      {
+        number: 41, title: 'Add widgets', author_association: 'MEMBER', user: { login: 'alice' },
+        head: { sha: 'abc123', ref: 'feat/widgets', repo: { full_name: 'acme/widget', owner: { login: 'acme' } } },
+      },
+      {
+        number: 42, title: 'Fix bug', author_association: 'CONTRIBUTOR', user: { login: 'bob' },
+        head: { sha: 'def456', ref: 'fix/bug', repo: { full_name: 'bob/widget', owner: { login: 'bob' } } },
+      },
+      // a PR whose head repository was deleted: GitHub sends head.repo = null
+      { number: 43, title: 'Orphan', author_association: 'NONE', user: { login: 'eve' }, head: { sha: 'fed789', ref: 'x', repo: null } },
     ]),
   )
   const gh = createGithub({ token: TOKEN, repo: REPO, fetchFn, packageName: PACKAGE })
@@ -54,9 +62,67 @@ test('listOpenPrs fetches open PRs and maps the fields', async () => {
   assert.equal(calls[0].options.method, 'GET')
   assertGithubHeaders(calls[0].options)
   assert.deepEqual(prs, [
-    { number: 41, title: 'Add widgets', headSha: 'abc123', headRef: 'feat/widgets', author: 'alice' },
-    { number: 42, title: 'Fix bug', headSha: 'def456', headRef: 'fix/bug', author: 'bob' },
+    { number: 41, title: 'Add widgets', headSha: 'abc123', headRef: 'feat/widgets', author: 'alice', authorAssociation: 'MEMBER', headRepo: 'acme/widget', headOwner: 'acme' },
+    { number: 42, title: 'Fix bug', headSha: 'def456', headRef: 'fix/bug', author: 'bob', authorAssociation: 'CONTRIBUTOR', headRepo: 'bob/widget', headOwner: 'bob' },
+    { number: 43, title: 'Orphan', headSha: 'fed789', headRef: 'x', author: 'eve', authorAssociation: 'NONE', headRepo: null, headOwner: null },
   ])
+})
+
+test('prInfo returns the PR trust data from GET /pulls/{num}', async () => {
+  const { calls, fetchFn } = makeFetch(() => response(200, {
+    number: 41, draft: true, author_association: 'COLLABORATOR', user: { login: 'alice' },
+    head: { sha: 'feedfacecafe0123456789abcdef0123456789ab', ref: 'feat', repo: { full_name: 'alice/widget', owner: { login: 'alice' } } },
+  }))
+  const gh = createGithub({ token: TOKEN, repo: REPO, fetchFn })
+  const info = await gh.prInfo(41)
+  assert.equal(calls[0].url, `${API}/repos/${REPO}/pulls/41`)
+  assert.equal(calls[0].options.method, 'GET')
+  assertGithubHeaders(calls[0].options)
+  assert.deepEqual(info, {
+    number: 41,
+    headSha: 'feedfacecafe0123456789abcdef0123456789ab',
+    author: 'alice',
+    authorAssociation: 'COLLABORATOR',
+    isDraft: true,
+    headRepo: 'alice/widget',
+    headOwner: 'alice',
+  })
+})
+
+test('prInfo: a deleted head repository gives null headRepo and headOwner', async () => {
+  const { fetchFn } = makeFetch(() => response(200, {
+    number: 9, draft: false, author_association: 'NONE', user: { login: 'eve' }, head: { sha: 'a'.repeat(40), ref: 'x', repo: null },
+  }))
+  const info = await createGithub({ token: TOKEN, repo: REPO, fetchFn }).prInfo(9)
+  assert.equal(info.headRepo, null)
+  assert.equal(info.headOwner, null)
+  assert.equal(info.isDraft, false)
+  assert.equal(info.author, 'eve')
+})
+
+test('prInfo throws on a non-2xx response', async () => {
+  const { fetchFn } = makeFetch(() => response(404, { message: 'Not Found' }))
+  await assert.rejects(createGithub({ token: TOKEN, repo: REPO, fetchFn }).prInfo(9), /404/)
+})
+
+test('authorPermission returns the top-level permission for a login', async () => {
+  const { calls, fetchFn } = makeFetch(() => response(200, { permission: 'write', role_name: 'maintain', user: { login: 'alice' } }))
+  const gh = createGithub({ token: TOKEN, repo: REPO, fetchFn })
+  assert.equal(await gh.authorPermission('alice'), 'write')
+  assert.equal(calls[0].url, `${API}/repos/${REPO}/collaborators/alice/permission`)
+  assert.equal(calls[0].options.method, 'GET')
+  assertGithubHeaders(calls[0].options)
+})
+
+test('authorPermission encodes the login into the path', async () => {
+  const { calls, fetchFn } = makeFetch(() => response(200, { permission: 'none' }))
+  assert.equal(await createGithub({ token: TOKEN, repo: REPO, fetchFn }).authorPermission('a/../b'), 'none')
+  assert.equal(calls[0].url, `${API}/repos/${REPO}/collaborators/a%2F..%2Fb/permission`)
+})
+
+test('authorPermission throws on a non-2xx response', async () => {
+  const { fetchFn } = makeFetch(() => response(403, { message: 'Must have push access to view collaborator permission.' }))
+  await assert.rejects(createGithub({ token: TOKEN, repo: REPO, fetchFn }).authorPermission('alice'), /403/)
 })
 
 test('non-2xx responses throw with status and body snippet', async () => {

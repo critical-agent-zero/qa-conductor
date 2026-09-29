@@ -52,8 +52,47 @@ test('platform defaults fill gaps; file values win', () => {
 })
 
 test('no app defaults: each required key is enforced', () => {
-  for (const missing of ['GITHUB_QA_TOKEN', 'QA_OPERATOR_EMAIL', 'QA_REPO', 'QA_PUBLIC_HOST']) {
+  for (const missing of ['GITHUB_QA_TOKEN', 'QA_REPO', 'QA_PUBLIC_HOST']) {
     const lines = REQUIRED.filter(l => !l.startsWith(`${missing}=`))
     assert.throws(() => loadConfig(envFile(lines)), new RegExp(missing))
   }
+})
+
+test('QA_OPERATOR_EMAIL is optional: operatorEmail is null when unset', () => {
+  const c = loadConfig(envFile(REQUIRED.filter(l => !l.startsWith('QA_OPERATOR_EMAIL='))))
+  assert.equal(c.operatorEmail, null)
+})
+
+test('QA_PUBLIC_HOST is required only when the two pane origins are not both set', () => {
+  const noHost = REQUIRED.filter(l => !l.startsWith('QA_PUBLIC_HOST='))
+  const c = loadConfig(envFile([...noHost, 'QA_BASE_ORIGIN=http://127.0.0.1:3101', 'QA_PR_ORIGIN=http://127.0.0.1:3102']))
+  assert.equal(c.publicHost, null)
+  assert.deepEqual(c.paneOrigins, { base: 'http://127.0.0.1:3101', pr: 'http://127.0.0.1:3102' })
+  // one origin alone still needs the host to derive the other
+  assert.throws(() => loadConfig(envFile([...noHost, 'QA_BASE_ORIGIN=http://127.0.0.1:3101'])), /QA_PUBLIC_HOST/)
+  assert.throws(() => loadConfig(envFile([...noHost, 'QA_PR_ORIGIN=http://127.0.0.1:3102'])), /QA_PUBLIC_HOST/)
+})
+
+test('required: a platform can re-require keys; token and repo stay required', () => {
+  const noEmail = REQUIRED.filter(l => !l.startsWith('QA_OPERATOR_EMAIL='))
+  assert.throws(() => loadConfig(envFile(noEmail), { required: ['QA_OPERATOR_EMAIL'] }), /QA_OPERATOR_EMAIL/)
+  assert.equal(loadConfig(envFile(REQUIRED), { required: ['QA_OPERATOR_EMAIL'] }).operatorEmail, 'op@homefree.local')
+  // a re-required key may come from the platform defaults
+  assert.equal(loadConfig(envFile(noEmail), { required: ['QA_OPERATOR_EMAIL'], defaults: { QA_OPERATOR_EMAIL: 'd@x' } }).operatorEmail, 'd@x')
+  // `required` adds to the core keys; it cannot waive them
+  for (const missing of ['GITHUB_QA_TOKEN', 'QA_REPO']) {
+    const lines = REQUIRED.filter(l => !l.startsWith(`${missing}=`))
+    assert.throws(() => loadConfig(envFile(lines), { required: [] }), new RegExp(missing))
+  }
+})
+
+test('QA_BIND_HOST: the listen host defaults to loopback', () => {
+  assert.equal(loadConfig(envFile(REQUIRED)).host, '127.0.0.1')
+  assert.equal(loadConfig(envFile([...REQUIRED, 'QA_BIND_HOST=0.0.0.0'])).host, '0.0.0.0')
+})
+
+test('QA_ALLOWED_HOSTS: comma-separated, trimmed, empties dropped; default none', () => {
+  assert.deepEqual(loadConfig(envFile(REQUIRED)).allowedHosts, [])
+  const c = loadConfig(envFile([...REQUIRED, 'QA_ALLOWED_HOSTS= qa.example.com ,, host.docker.internal,']))
+  assert.deepEqual(c.allowedHosts, ['qa.example.com', 'host.docker.internal'])
 })

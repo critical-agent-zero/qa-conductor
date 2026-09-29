@@ -1,15 +1,52 @@
 // PR-QA harness: hash-routed picker → boot → side-by-side session → verdict.
 // Plain browser JS, zero dependencies. Server state is authoritative on load.
+//
+// The pure helpers live at top level and are exported through the CommonJS
+// guard at the bottom (as bridge.js does) so `node --test` can exercise them;
+// the UI IIFE is inert outside a browser. Text that came from a server,
+// adapter or PR (titles, build messages, reasons, errors) is rendered with
+// textContent or esc(); links from adapters must be https.
 /* eslint-env browser */
+
+// One name per boot step, used by the step list, announcements and errors.
+// The step ids are the session states and never change.
+const LABELS = { 'ensuring-image': 'Building', cloning: 'Preparing data', migrating: 'Migrating', starting: 'Starting' }
+
+function esc(s) {
+  return String(s ?? '').replace(/[<>&"']/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]))
+}
+
+// Only https links from adapters (build runs) become anchors: no javascript:.
+function isHttpsUrl(u) {
+  return typeof u === 'string' && /^https:\/\//i.test(u)
+}
+
+// The mirroring contract: each pane's landing URL carries `qa=<harness
+// origin>` in its fragment so the bridge knows whom to talk to. Fragments are
+// &-separated key=value pairs; an existing qa param is left alone.
+function withQaFragment(url, harnessOrigin) {
+  const s = String(url)
+  const param = `qa=${encodeURIComponent(harnessOrigin)}`
+  const hash = s.indexOf('#')
+  if (hash === -1) return `${s}#${param}`
+  const fragment = s.slice(hash + 1)
+  if (fragment === '') return `${s}${param}`
+  if (fragment.split('&').some(pair => pair.split('=')[0] === 'qa')) return s
+  return `${s}&${param}`
+}
+
 ;(() => {
+  if (typeof window === 'undefined') return
   const $ = id => document.getElementById(id)
   const api = (path, opts) => fetch(`/qa/api${path}`, opts).then(async r => {
     const body = await r.json().catch(() => ({}))
     if (!r.ok) { const e = new Error(body.error || `HTTP ${r.status}`); e.status = r.status; e.body = body; throw e }
     return body
   })
+  // The harness refuses non-JSON POSTs (415), so every write goes through here.
+  const postJson = (path, body = {}) => api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const announce = (msg, assertive) => { const el = $(assertive ? 'announcerAssertive' : 'announcer'); el.textContent = ''; el.textContent = msg }
-  const esc = s => String(s ?? '').replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))
+  const stepLabel = step => LABELS[step] || step
   const tagOf = img => (img || '').split(':').pop()
   const mmss = ms => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` }
   const BOOTING = ['ensuring-image', 'cloning', 'migrating', 'starting']
@@ -112,22 +149,36 @@
       let row = rows.get(pr.number)
       if (!row) { row = document.createElement('div'); row.className = 'pr'; row.dataset.pr = pr.number; rows.set(pr.number, row); list.appendChild(row) }
       const holds = session && session.pr === pr.number && session.status !== 'idle'
-      const badge = imageBadge(pr)
+      const num = esc(pr.number)
+      // A blocked PR can still be opened: the build's ensureBuilt is the real gate.
       const action = holds
-        ? `<button class="primary" data-open="${pr.number}" data-resume="1">QA session active — Resume</button>`
-        : `<button class="primary" data-open="${pr.number}">Open QA</button>`
-      row.innerHTML = `<span class="num">#${pr.number}</span>`
+        ? `<button class="primary" data-open="${num}" data-resume="1">QA session active — Resume</button>`
+        : `<button class="primary" data-open="${num}">Open QA</button>`
+      row.innerHTML = `<span class="num">#${num}</span>`
         + `<span class="main"><span class="title">${esc(pr.title)}</span>`
-        + `<span class="submeta">${esc(pr.headRef || '')}${pr.author ? ' · ' + esc(pr.author) : ''} ${badge}</span>`
+        + `<span class="submeta">${esc(pr.headRef || '')}${pr.author ? ' · ' + esc(pr.author) : ''} </span>`
         + `<span class="rowErr" hidden></span></span>${action}`
+      row.querySelector('.submeta').appendChild(imageBadge(pr))
     }
     for (const [num, row] of rows) if (!seen.has(num)) { row.remove(); rows.delete(num) }
   }
 
+  function runLink(url, text) {
+    const a = document.createElement('a'); a.href = url; a.target = '_blank'; a.rel = 'noreferrer'; a.textContent = text
+    return a
+  }
+
   function imageBadge(pr) {
-    if (pr.imageStatus === 'built') return `<span class="badge"><span class="dot green"></span>ready — opens in seconds</span>`
-    if (pr.imageStatus === 'building') return `<span class="badge"><span class="dot amber pulse"></span>building…${pr.runUrl ? ` <a href="${esc(pr.runUrl)}" target="_blank" rel="noreferrer">run ↗</a>` : ''}</span>`
-    return `<span class="badge"><span class="dot amber"></span>needs build (~10 min)</span>`
+    const badge = document.createElement('span'); badge.className = 'badge'
+    const dot = document.createElement('span')
+    let text
+    if (pr.imageStatus === 'built') { dot.className = 'dot green'; text = 'ready — opens in seconds' }
+    else if (pr.imageStatus === 'building') { dot.className = 'dot amber pulse'; text = 'building…' }
+    else if (pr.imageStatus === 'blocked') { dot.className = 'dot grey'; badge.classList.add('blocked'); text = `can't boot: ${pr.reason || 'not allowed'}` }
+    else { dot.className = 'dot amber'; text = 'needs build (~10 min)' }
+    badge.append(dot, document.createTextNode(text))
+    if (pr.imageStatus === 'building' && isHttpsUrl(pr.runUrl)) badge.append(' ', runLink(pr.runUrl, 'run ↗'))
+    return badge
   }
 
   // delegated picker clicks — survive re-renders (#164)
@@ -153,7 +204,7 @@
   async function openSession(num, opts = {}) {
     if (picking) return; picking = true
     try {
-      await api('/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pr: num, ...opts }) })
+      await postJson('/session', { pr: num, ...opts })
       go(`#/pr/${num}/boot`)
     } finally { picking = false }
   }
@@ -161,18 +212,19 @@
   // --- boot (#163 #165 #166) ----------------------------------------------
   const stepAt = {}
   let bootPr = null
+  for (const li of $('bootSteps').querySelectorAll('li')) li.querySelector('.stepLabel').textContent = stepLabel(li.dataset.step)
 
   function renderBoot(pr, state) {
     showView('boot'); setPill(`booting #${pr}`)
     if (bootPr !== pr) { bootPr = pr; for (const k of Object.keys(stepAt)) delete stepAt[k]; resetBootUi() }
     $('bootPr').textContent = pr
-    if (state && state.buildRun) setBuildSub(state.buildRun.url, state.buildRun.status)
+    if (state && state.buildRun) setBuildSub(state.buildRun)
     attachSse()
   }
   function resetBootUi() {
     for (const li of $('bootSteps').querySelectorAll('li')) { li.classList.remove('now', 'done'); li.removeAttribute('aria-current'); li.querySelector('.stepTime').textContent = '' }
-    $('bootSteps').querySelector('[data-step="ensuring-image"] .stepSub').innerHTML = ''
-    $('bootError').hidden = true; $('bootActions').hidden = true; $('bootActions').innerHTML = ''; $('bootBar').hidden = false
+    $('bootSteps').querySelector('[data-step="ensuring-image"] .stepSub').textContent = ''
+    $('bootError').hidden = true; $('bootActions').hidden = true; $('bootActions').textContent = ''; $('bootBar').hidden = false
     $('bootTotal').textContent = ''
   }
   function stepIndex(step) { return BOOTING.indexOf(step) }
@@ -184,14 +236,15 @@
       li.classList.toggle('now', i === cur); li.classList.toggle('done', i < cur)
       if (i === cur) li.setAttribute('aria-current', 'step'); else li.removeAttribute('aria-current')
     }
-    const labels = { 'ensuring-image': 'Ensuring PR image', cloning: 'Cloning prod databases', migrating: 'Running migrations', starting: 'Starting apps' }
-    announce(`${labels[step] || step}, step ${cur + 1} of 4`)
+    announce(`${stepLabel(step)}, step ${cur + 1} of 4`)
   }
-  function setBuildSub(url, status) {
+  // Build progress under the first step: the BuildConvention's own message
+  // when it sends one, else a summary of its CI run, plus an https run link.
+  function setBuildSub({ url, status, message } = {}) {
     const sub = $('bootSteps').querySelector('[data-step="ensuring-image"] .stepSub')
-    if (!url) { sub.textContent = 'build dispatched'; return }
-    const label = status === 'completed' ? 'Image pushed, waiting for migrate image' : `Build ${status || 'in progress'}`
-    sub.innerHTML = ` — ${label} <a href="${esc(url)}" target="_blank" rel="noreferrer">view run ↗</a>`
+    const summary = message || (url || status ? (status === 'completed' ? 'Build complete' : `Build ${status || 'in progress'}`) : 'Build started')
+    sub.textContent = ` — ${summary}`
+    if (isHttpsUrl(url)) sub.append(' ', runLink(url, 'view run ↗'))
   }
   let bootTimer = null
   function tickBoot() {
@@ -214,7 +267,7 @@
     es.onmessage = ev => {
       const e = JSON.parse(ev.data)
       if (e.kind === 'step') markStep(e.step, e.at)
-      else if (e.kind === 'build') setBuildSub(e.runUrl, e.runStatus)
+      else if (e.kind === 'build') setBuildSub({ url: e.runUrl, status: e.runStatus, message: e.message })
       else if (e.kind === 'ready') { closeSse(); onReady(e) }
       else if (e.kind === 'error') showBootError(e)
       else if (e.kind === 'torn-down') { closeSse(); go('#/') }
@@ -224,20 +277,25 @@
 
   function showBootError(e) {
     const cached = stepAt['ensuring-image'] === undefined
-    if (cached) $('bootSteps').querySelector('[data-step="ensuring-image"] .stepSub').textContent = 'Image cached'
+    if (cached) $('bootSteps').querySelector('[data-step="ensuring-image"] .stepSub').textContent = 'Already built'
     $('bootBar').hidden = true
-    const pre = $('bootError'); pre.hidden = false
-    pre.innerHTML = `<span class="errline">Failed at ${esc(e.step)}: ${esc(e.message)}</span>` + (e.logTail ? esc(e.logTail) : '')
-    announce(`Boot failed at ${e.step}: ${e.message}`, true)
-    const acts = $('bootActions'); acts.hidden = false; acts.innerHTML = ''
+    showErrorText(`Failed at ${stepLabel(e.step)}: ${e.message}`, e.logTail)
+    announce(`Boot failed at ${stepLabel(e.step)}: ${e.message}`, true)
+    const acts = $('bootActions'); acts.hidden = false; acts.textContent = ''
     const retry = mkBtn('Retry boot', 'primary', () => { resetBootUi(); openSession(bootPr).catch(showOpenErr) })
     const back = mkBtn('Back to pull requests', 'ghost', () => go('#/'))
     acts.append(retry, back)
-    if (e.step === 'ensuring-image' && e.runUrl) { const a = document.createElement('a'); a.className = 'btn secondary'; a.href = e.runUrl; a.target = '_blank'; a.rel = 'noreferrer'; a.textContent = 'View build log ↗'; acts.append(a) }
+    if (e.step === 'ensuring-image' && isHttpsUrl(e.runUrl)) { const a = runLink(e.runUrl, 'View build log ↗'); a.className = 'btn secondary'; acts.append(a) }
   }
-  function showOpenErr(err) { const pre = $('bootError'); pre.hidden = false; pre.innerHTML = `<span class="errline">${esc(err.message)}</span>` }
+  function showErrorText(line, tail) {
+    const pre = $('bootError'); pre.hidden = false; pre.textContent = ''
+    const span = document.createElement('span'); span.className = 'errline'; span.textContent = line
+    pre.append(span)
+    if (tail) pre.append(tail)
+  }
+  function showOpenErr(err) { showErrorText(err.message) }
   function mkBtn(text, cls, onclick) { const b = document.createElement('button'); b.className = cls; b.textContent = text; b.onclick = onclick; return b }
-  $('cancelBoot').onclick = async () => { await api('/teardown', { method: 'POST' }).catch(() => {}); go('#/') }
+  $('cancelBoot').onclick = async () => { await postJson('/teardown').catch(() => {}); go('#/') }
 
   // --- session (#163 #170 #171 #172) --------------------------------------
   function onReady(meta) { setHashSilent(`#/pr/${meta.pr || bootPr}`); renderSession(meta) }
@@ -250,7 +308,8 @@
       S.mounted = pr; S.pr = pr; S.panes = panes; S.paneOrigins = [panes.baseOrigin, panes.prOrigin]
       S.path = { base: '', pr: '' }; S.hasNav = { base: false, pr: false }; S.lastMsg = { base: Date.now(), pr: Date.now() }
       S.unmatched = { base: 0, pr: 0 }; renderUnmatched('base'); renderUnmatched('pr')
-      $('baseFrame').src = panes.base; $('prFrame').src = panes.pr
+      // #qa=<harness origin> tells each pane's bridge whom to talk to
+      $('baseFrame').src = withQaFragment(panes.base, location.origin); $('prFrame').src = withQaFragment(panes.pr, location.origin)
       $('baseOpen').href = panes.baseOrigin; $('prOpen').href = panes.prOrigin
       setDot('base', 'amber', 'signing in…'); setDot('pr', 'amber', 'signing in…')
       $('baseUrl').textContent = 'signing in…'; $('prUrl').textContent = 'signing in…'
@@ -360,7 +419,7 @@
   }
 
   // teardown two-step (#170)
-  twoStepConfirm($('teardownBtn'), 'Confirm end? (3s)', async () => { await api('/teardown', { method: 'POST' }).catch(() => {}); go('#/') })
+  twoStepConfirm($('teardownBtn'), 'Confirm end? (3s)', async () => { await postJson('/teardown').catch(() => {}); go('#/') })
   function twoStepConfirm(btn, confirmLabel, action) {
     const orig = btn.textContent
     btn.onclick = () => {
@@ -399,7 +458,7 @@
   $('postBtn').onclick = async () => {
     const postBtn = $('postBtn'); postBtn.disabled = true; $('previewBack').disabled = true
     try {
-      const { url } = await api('/verdict', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verdict: S.pendingVerdict, notes: $('notes').value }) })
+      const { url } = await postJson('/verdict', { verdict: S.pendingVerdict, notes: $('notes').value })
       localStorage.removeItem(draftKey(S.pr))
       announce('Verdict posted')
       $('doneP').textContent = S.pr; $('doneLink').href = url
@@ -408,7 +467,7 @@
   }
 
   // verdict-done view is rendered on demand; wire once
-  $('doneEnd').onclick = async () => { await api('/teardown', { method: 'POST' }).catch(() => {}); go('#/') }
+  $('doneEnd').onclick = async () => { await postJson('/teardown').catch(() => {}); go('#/') }
   $('doneKeep').onclick = () => go(`#/pr/${S.pr}`)
   $('doneBack').onclick = () => go('#/')
 
@@ -458,3 +517,9 @@
   window.addEventListener('hashchange', () => { if (!maybeVerdictDone()) render() })
   render()
 })()
+
+// --- test exports (node --test evaluates this file through a CJS wrapper) ---
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { withQaFragment, esc, isHttpsUrl, LABELS }
+}
