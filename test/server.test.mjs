@@ -647,6 +647,28 @@ test('a failed startup sweep is logged and the boot waiting on it still reaches 
   } finally { c.stop() }
 })
 
+test('a sweep that rejects with a non-Error is logged and blocks no boot', async () => {
+  const sweepGate = deferred()
+  const { c, errorLines } = makeWorld({ provisioner: { sweep: async () => { await sweepGate.promise; throw undefined } } })
+  const settled = async port => waitFor(async () => {
+    const s = await api(port, 'GET', '/api/state')
+    return (s.status === 'ready' || s.status === 'error') && s
+  })
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    sweepGate.resolve() // the sweep now rejects, with a boot waiting on it
+    const st = await settled(port)
+    assert.deepEqual([st.status, st.error], ['ready', null])
+    assert.ok(errorLines.some(l => l.includes('startup sweep failed: undefined')))
+
+    await api(port, 'POST', '/api/teardown')
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const second = await settled(port)
+    assert.deepEqual([second.status, second.error], ['ready', null], 'later boots are not blocked either')
+  } finally { c.stop() }
+})
+
 test('a sweep that throws synchronously neither stops the conductor nor blocks boots', async () => {
   const { c, errorLines } = makeWorld({ provisioner: { sweep: () => { throw new Error('no docker socket') } } })
   try {
@@ -721,6 +743,8 @@ test('the harness shows the sweep wait only while the sweep is pending', async (
     assert.deepEqual(buildMessages(first), [WAITING, 'startup cleanup done'])
     const seq = first.map(e => (e.kind === 'step' ? e.step : e.message ?? e.kind))
     assert.ok(seq.indexOf('startup cleanup done') < seq.indexOf('cloning'))
+    // one ensuring-image step: the harness times the step and the boot from it
+    assert.equal(first.filter(e => e.kind === 'step' && e.step === 'ensuring-image').length, 1)
 
     // the sweep has settled: a later boot shows no cleanup message at all
     await api(port, 'POST', '/api/teardown')
