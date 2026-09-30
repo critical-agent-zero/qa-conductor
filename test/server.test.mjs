@@ -13,9 +13,15 @@ function deferred() {
 }
 
 // Fake adapter set. `ensureBuilt` for a PR listed in `hang` blocks until the
-// test releases it — modelling a boot stuck waiting on a GHCR image. Each pane
-// "app" is a real loopback server, so the pane proxies can be exercised.
-function makeWorld({ hang = {}, failAt = null, cfg: cfgOverrides = {}, readBaseEnv: readBaseEnvOverride = null } = {}) {
+// test releases it — modelling a boot stuck waiting on a GHCR image. The
+// startup sweep blocks on `sweepGate` when given, then fails if `sweepFails`;
+// `provisioner` overrides members (`{ sweep: undefined }` removes the sweep).
+// Each pane "app" is a real loopback server, so the pane proxies can be
+// exercised.
+function makeWorld({
+  hang = {}, failAt = null, sweepGate = null, sweepFails = false, provisioner: provisionerOverrides = {},
+  cfg: cfgOverrides = {}, readBaseEnv: readBaseEnvOverride = null,
+} = {}) {
   const calls = []
   const apps = {
     base: http.createServer((req, res) => res.end('pane-base')),
@@ -24,13 +30,22 @@ function makeWorld({ hang = {}, failAt = null, cfg: cfgOverrides = {}, readBaseE
   for (const s of Object.values(apps)) s.listen(0, '127.0.0.1')
   const appPort = role => apps[role].address().port
   const provisioner = {
-    provisionDatabase: async ({ paneRef }) => ({ dsn: `dsn-${paneRef.role}`, db: { dsn: `dsn-${paneRef.role}`, query: async () => '1' } }),
+    provisionDatabase: async ({ paneRef }) => {
+      calls.push(['provisionDatabase', paneRef.role])
+      return { dsn: `dsn-${paneRef.role}`, db: { dsn: `dsn-${paneRef.role}`, query: async () => '1' } }
+    },
     reserveServices: async ({ paneRef }) => ({ app: { url: `http://127.0.0.1:${appPort(paneRef.role)}`, port: appPort(paneRef.role) } }),
     launchServices: async () => { if (failAt === 'launchServices') throw new Error('launch failed') },
     waitHealthy: async () => {},
     teardown: async ({ paneRef }) => { calls.push(['teardown', paneRef.role]) },
-    sweep: async () => { calls.push(['sweep']) },
+    sweep: async () => {
+      calls.push(['sweep'])
+      if (sweepGate) await sweepGate.promise
+      if (sweepFails) throw new Error('docker unavailable')
+      calls.push(['sweep-done'])
+    },
     logs: async ({ paneRef, stage, lines }) => { calls.push(['logs', paneRef.role, stage, lines]); return 'tail-lines' },
+    ...provisionerOverrides,
   }
   const build = {
     migrationStrategy: 'on-boot',
@@ -70,11 +85,12 @@ function makeWorld({ hang = {}, failAt = null, cfg: cfgOverrides = {}, readBaseE
   const fsx = { readFile: async () => 'x' }
   const readBaseEnv = readBaseEnvOverride ?? (async () => { calls.push(['readBaseEnv']); return { A: '1' } })
   const logLines = []
-  const quiet = { log: (...a) => logLines.push(a.join(' ')), error: () => {} }
+  const errorLines = []
+  const quiet = { log: (...a) => logLines.push(a.join(' ')), error: (...a) => errorLines.push(a.join(' ')) }
   const conductor = startConductor({ cfg, github, fsx, adapters, readBaseEnv, log: quiet })
   const closeApps = () => { for (const s of Object.values(apps)) s.close() }
   const c = { ...conductor, stop() { conductor.stop(); closeApps() } }
-  return { c, conductor, closeApps, calls, adapters, github, cfg, logLines }
+  return { c, conductor, closeApps, calls, adapters, github, cfg, logLines, errorLines }
 }
 
 async function proxyPort(server) {
@@ -589,4 +605,128 @@ test('shutdown() right after start still closes every server', async () => {
     await new Promise(r => setTimeout(r, 20))
     for (const name of ['harness', 'baseProxy', 'prProxy']) assert.equal(conductor.servers[name].listening, false, name)
   } finally { closeApps() }
+})
+
+// --- 0.2.1: boots wait for the startup sweep ------------------------------------
+
+// A restart mid-session leaves orphans, which the startup sweep removes (the
+// docker Provisioner: every labelled container, then the network). A boot that
+// raced it could have its fresh containers and network removed mid-boot.
+const WAITING = 'waiting for startup cleanup…'
+const buildMessages = events => events.filter(e => e.kind === 'build').map(e => e.message)
+
+test('a boot waits for the startup sweep before building or provisioning', async () => {
+  const sweepGate = deferred()
+  const { c, calls } = makeWorld({ sweepGate })
+  try {
+    const port = await harnessPort(c)
+    await waitFor(() => calls.some(x => x[0] === 'sweep'))
+    assert.deepEqual(await api(port, 'POST', '/api/session', { pr: 7 }), { ok: true })
+    await new Promise(r => setTimeout(r, 50))
+    assert.equal(calls.some(x => x[0] === 'ensureBuilt' || x[0] === 'provisionDatabase'), false, 'nothing runs before the sweep settles')
+    assert.equal((await api(port, 'GET', '/api/state')).status, 'ensuring-image')
+
+    sweepGate.resolve()
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    const order = calls.map(x => x[0])
+    assert.ok(order.indexOf('sweep-done') < order.indexOf('ensureBuilt'))
+    assert.ok(order.indexOf('sweep-done') < order.indexOf('provisionDatabase'))
+  } finally { c.stop() }
+})
+
+test('a failed startup sweep is logged and the boot waiting on it still reaches ready', async () => {
+  const sweepGate = deferred()
+  const { c, errorLines } = makeWorld({ sweepGate, sweepFails: true })
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    sweepGate.resolve() // the sweep now rejects
+    const st = await waitFor(async () => { const s = await api(port, 'GET', '/api/state'); return s.status === 'ready' && s })
+    assert.equal(st.error, null)
+    assert.ok(errorLines.some(l => l.includes('startup sweep failed') && l.includes('docker unavailable')))
+  } finally { c.stop() }
+})
+
+test('a sweep that throws synchronously neither stops the conductor nor blocks boots', async () => {
+  const { c, errorLines } = makeWorld({ provisioner: { sweep: () => { throw new Error('no docker socket') } } })
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    assert.ok(errorLines.some(l => l.includes('startup sweep failed') && l.includes('no docker socket')))
+  } finally { c.stop() }
+})
+
+test('a teardown while a boot waits for the sweep leaves the session idle; the boot never resumes', async () => {
+  const sweepGate = deferred()
+  const { c, calls } = makeWorld({ sweepGate })
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await api(port, 'POST', '/api/teardown')
+    assert.equal((await api(port, 'GET', '/api/state')).status, 'idle')
+
+    sweepGate.resolve()
+    await waitFor(() => calls.some(x => x[0] === 'sweep-done'))
+    await new Promise(r => setTimeout(r, 50))
+    const st = await api(port, 'GET', '/api/state')
+    assert.deepEqual([st.status, st.pr, st.error, st.buildRun], ['idle', null, null, null])
+    assert.equal(calls.some(x => x[0] === 'ensureBuilt' || x[0] === 'provisionDatabase'), false)
+    const events = await sseEvents(port, evs => evs.some(e => e.kind === 'torn-down'))
+    assert.deepEqual(buildMessages(events), [WAITING], 'no cleanup-done message for a torn-down boot')
+  } finally { c.stop() }
+})
+
+test('a takeover while a boot waits for the sweep boots only the new PR', async () => {
+  const sweepGate = deferred()
+  const { c, calls } = makeWorld({ sweepGate })
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 1 })
+    assert.deepEqual(await api(port, 'POST', '/api/session', { pr: 2, takeover: true }), { ok: true })
+    sweepGate.resolve()
+    const st = await waitFor(async () => { const s = await api(port, 'GET', '/api/state'); return s.status === 'ready' && s })
+    assert.deepEqual([st.pr, st.prTag], [2, 'img:pr-2'])
+    await new Promise(r => setTimeout(r, 50))
+    assert.deepEqual(calls.filter(x => x[0] === 'ensureBuilt').map(x => x[1]), [2], 'the taken-over boot never resumed')
+  } finally { c.stop() }
+})
+
+test('with no provisioner.sweep a boot starts at once, with no cleanup message', async () => {
+  const { c, calls, logLines } = makeWorld({ provisioner: { sweep: undefined } })
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    assert.ok(calls.some(x => x[0] === 'ensureBuilt'), 'the boot was building before POST /api/session answered')
+    const events = await sseEvents(port, evs => evs.some(e => e.kind === 'ready'))
+    assert.deepEqual(buildMessages(events), [])
+    assert.equal(logLines.some(l => l.includes('sweep')), false)
+  } finally { c.stop() }
+})
+
+test('the harness shows the sweep wait only while the sweep is pending', async () => {
+  const sweepGate = deferred()
+  const { c } = makeWorld({ sweepGate })
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const waiting = await sseEvents(port, evs => evs.some(e => e.kind === 'build'))
+    const ev = waiting.find(e => e.kind === 'build')
+    assert.deepEqual({ ...ev, at: undefined }, { at: undefined, kind: 'build', runUrl: null, runStatus: null, message: WAITING })
+    assert.deepEqual((await api(port, 'GET', '/api/state')).buildRun, { url: null, status: null, message: WAITING })
+
+    // once the sweep settles the message is replaced before the boot moves on
+    sweepGate.resolve()
+    const first = await sseEvents(port, evs => evs.some(e => e.kind === 'ready'))
+    assert.deepEqual(buildMessages(first), [WAITING, 'startup cleanup done'])
+    const seq = first.map(e => (e.kind === 'step' ? e.step : e.message ?? e.kind))
+    assert.ok(seq.indexOf('startup cleanup done') < seq.indexOf('cloning'))
+
+    // the sweep has settled: a later boot shows no cleanup message at all
+    await api(port, 'POST', '/api/teardown')
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const second = await sseEvents(port, evs => evs.some(e => e.kind === 'ready'))
+    assert.deepEqual(buildMessages(second), [])
+    assert.equal((await api(port, 'GET', '/api/state')).buildRun, null)
+  } finally { c.stop() }
 })
