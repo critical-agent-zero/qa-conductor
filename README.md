@@ -4,12 +4,12 @@ A side-by-side PR-QA harness. For a pull request it boots two copies of your app
 
 The conductor owns the choreography: session state, cancellation, the harness UI and API, the pane proxies and the verdict. Everything about *your* app and infrastructure comes from five adapters you supply.
 
-> **Status: 0.x, pre-release.** The interface may still change while a second consumer is integrated. Install from git; nothing is published to npm yet.
+> **Status: 0.x, pre-release.** The interface may still change while a second consumer is integrated. Install from git; nothing is published to npm yet. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Install
 
 ```sh
-npm install github:critical-labs/qa-conductor#v0.2.0
+npm install github:critical-labs/qa-conductor#v0.2.1
 ```
 
 Node ≥ 22. There are no runtime dependencies.
