@@ -89,7 +89,16 @@ function makeWorld({
   const quiet = { log: (...a) => logLines.push(a.join(' ')), error: (...a) => errorLines.push(a.join(' ')) }
   const conductor = startConductor({ cfg, github, fsx, adapters, readBaseEnv, log: quiet })
   const closeApps = () => { for (const s of Object.values(apps)) s.close() }
-  const c = { ...conductor, stop() { conductor.stop(); closeApps() } }
+  // stop() leaves open connections alone; an idle keep-alive socket fetch()
+  // opened would hold the test process up to its 4s idle timeout.
+  const c = {
+    ...conductor,
+    stop() {
+      conductor.stop()
+      for (const s of Object.values(conductor.servers)) s.closeAllConnections()
+      closeApps()
+    },
+  }
   return { c, conductor, closeApps, calls, adapters, github, cfg, logLines, errorLines }
 }
 
@@ -644,6 +653,11 @@ test('a failed startup sweep is logged and the boot waiting on it still reaches 
     const st = await waitFor(async () => { const s = await api(port, 'GET', '/api/state'); return s.status === 'ready' && s })
     assert.equal(st.error, null)
     assert.ok(errorLines.some(l => l.includes('startup sweep failed') && l.includes('docker unavailable')))
+
+    await api(port, 'POST', '/api/teardown')
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const second = await sseEvents(port, evs => evs.some(e => e.kind === 'ready'))
+    assert.deepEqual(buildMessages(second), [], 'a failed sweep is settled: later boots show no cleanup message')
   } finally { c.stop() }
 })
 
