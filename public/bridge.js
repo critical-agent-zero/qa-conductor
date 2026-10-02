@@ -1,11 +1,10 @@
 // QA mirror bridge — injected into each pane page by the qa-conductor pane
-// proxy via <script src="/__qa/bridge.js">. Plain browser script: no ESM, no
-// dependencies, zero app changes.
+// proxy via <script src="/__qa/bridge.js" data-harness="<harness origin>">.
+// Plain browser script: no ESM, no dependencies, zero app changes.
 //
-// The pure helpers (buildSelector / resolveSelector, harnessOriginFromHash)
-// live at top level and are exported through the CommonJS guard at the bottom
-// so `node --test` can exercise them; the runtime IIFE is inert outside a
-// browser.
+// The pure helpers (buildSelector / resolveSelector) live at top level and are
+// exported through the CommonJS guard at the bottom so `node --test` can
+// exercise them; the runtime IIFE is inert outside a browser.
 
 // --- pure selector helpers -------------------------------------------------
 
@@ -117,24 +116,6 @@ function resolveSelector(desc, doc) {
   return null
 }
 
-// The harness origin from a pane URL's fragment (#…&qa=<encoded origin>&…),
-// as harness.js withQaFragment writes it. Fragments are &-separated key=value
-// pairs, so `qa=` inside another param's value is not a match. null when
-// absent, empty or malformed.
-function harnessOriginFromHash(hash) {
-  const pairs = String(hash || '').replace(/^#/, '').split('&')
-  for (let i = 0; i < pairs.length; i++) {
-    const eq = pairs[i].indexOf('=')
-    if (eq === -1 || pairs[i].slice(0, eq) !== 'qa') continue
-    try {
-      return decodeURIComponent(pairs[i].slice(eq + 1)) || null
-    } catch (err) {
-      return null
-    }
-  }
-  return null
-}
-
 // --- browser runtime -------------------------------------------------------
 
 ;(function () {
@@ -142,27 +123,24 @@ function harnessOriginFromHash(hash) {
   if (window.__qaBridgeInstalled) return
   window.__qaBridgeInstalled = true
 
-  // Harness origin arrives via the URL fragment (#qa=<origin>) on the pane's
-  // first load; keep it in sessionStorage so SPA navigation (which may rewrite
-  // the hash) cannot lose it. Anyone can write a fragment, so it is trusted
-  // only inside a frame: the proxy's frame-ancestors policy limits who can
-  // frame a pane, and a top-level window (e.g. window.open) never mirrors.
-  const framed = window.parent !== window
-  let harnessOrigin = null
-  if (framed) {
-    try {
-      harnessOrigin = harnessOriginFromHash(window.location.hash)
-      if (harnessOrigin) window.sessionStorage.setItem('qaHarnessOrigin', harnessOrigin)
-      else harnessOrigin = window.sessionStorage.getItem('qaHarnessOrigin')
-    } catch (err) {
-      // sessionStorage unavailable — fragment-only config still covers this load
-    }
+  // The harness origin comes from the pane proxy, on the tag that loaded this
+  // script (data-harness), never from the page URL: whoever frames or opens a
+  // pane chooses its URL. Without it the bridge neither sends nor replays.
+  const script = document.currentScript
+  const harnessOrigin = (script && script.dataset && script.dataset.harness) || null
+
+  // Only the harness, as this pane's parent frame, may drive or hear it. A
+  // top-level window (the harness's "Open in new tab") never mirrors.
+  function framedByHarness() {
+    return !!harnessOrigin && window.parent !== window
   }
 
   function send(msg) {
-    if (!framed || !harnessOrigin) return
+    if (!framedByHarness()) return
     try {
-      // targetOrigin, not '*': captured values and paths go to the harness only
+      // targetOrigin, not '*': a parent on any other origin never receives
+      // it, so nav paths, captured values and unmatched replies stay with the
+      // harness
       window.parent.postMessage(msg, harnessOrigin)
     } catch (err) {
       // parent gone, or a malformed origin (SyntaxError) — nothing to mirror to
@@ -305,7 +283,7 @@ function harnessOriginFromHash(hash) {
   }
 
   window.addEventListener('message', function (event) {
-    if (!framed || !harnessOrigin || event.origin !== harnessOrigin || event.source !== window.parent) return
+    if (!framedByHarness() || event.source !== window.parent || event.origin !== harnessOrigin) return
     const data = event.data
     if (!data || data.qa !== 1 || data.kind !== 'replay') return
     window.__qaReplaying = true
@@ -342,5 +320,5 @@ function harnessOriginFromHash(hash) {
 // --- test exports (node --test evaluates this file through a CJS wrapper) ---
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { buildSelector, resolveSelector, harnessOriginFromHash }
+  module.exports = { buildSelector, resolveSelector }
 }

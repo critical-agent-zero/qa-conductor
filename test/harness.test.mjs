@@ -11,32 +11,17 @@ import { dirname, join } from 'node:path'
 const harnessPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'harness.js')
 const cjsModule = { exports: {} }
 new Function('module', 'exports', readFileSync(harnessPath, 'utf8'))(cjsModule, cjsModule.exports)
-const { withQaFragment, esc, isHttpsUrl, LABELS } = cjsModule.exports
+const { esc, isHttpsUrl, LABELS, harnessOriginNotice } = cjsModule.exports
 
-const HARNESS = 'https://qa.example.ts.net'
-const QA = `qa=${encodeURIComponent(HARNESS)}`
-
-test('withQaFragment: a URL with no fragment gets #qa=<encoded origin>', () => {
-  assert.equal(withQaFragment('https://pane:8443/login?t=1', HARNESS), `https://pane:8443/login?t=1#${QA}`)
-  // an empty fragment is no fragment
-  assert.equal(withQaFragment('https://pane:8443/#', HARNESS), `https://pane:8443/#${QA}`)
+test('the CJS guard exports the pure helpers only', () => {
+  assert.deepEqual(Object.keys(cjsModule.exports).sort(), ['LABELS', 'esc', 'harnessOriginNotice', 'isHttpsUrl'])
 })
 
-test('withQaFragment: an existing fragment gets &qa=… appended', () => {
-  assert.equal(withQaFragment('https://pane/#key=K', HARNESS), `https://pane/#key=K&${QA}`)
-  assert.equal(withQaFragment('https://pane/#a=1&b=2', HARNESS), `https://pane/#a=1&b=2&${QA}`)
-})
-
-test('withQaFragment: a fragment that already has a qa param is returned unchanged', () => {
-  const url = 'https://pane/#key=K&qa=https%3A%2F%2Fother'
-  assert.equal(withQaFragment(url, HARNESS), url)
-  assert.equal(withQaFragment('https://pane/#qa=x', HARNESS), 'https://pane/#qa=x')
-})
-
-test('withQaFragment: a value that merely contains qa= is not a qa param', () => {
-  assert.equal(withQaFragment('https://pane/#next=/a?qa=1', HARNESS), `https://pane/#next=/a?qa=1&${QA}`)
-  assert.equal(withQaFragment('https://pane/#token=abcqa=', HARNESS), `https://pane/#token=abcqa=&${QA}`)
-  assert.equal(withQaFragment('https://pane/#aqa=1', HARNESS), `https://pane/#aqa=1&${QA}`)
+test('harnessOriginNotice: null at the configured origin or with none configured, else the configured origin + /qa/', () => {
+  assert.equal(harnessOriginNotice('http://127.0.0.1:4100', 'http://127.0.0.1:4100'), null)
+  for (const unset of [null, undefined, '']) assert.equal(harnessOriginNotice(unset, 'http://localhost:4100'), null, String(unset))
+  assert.equal(harnessOriginNotice('http://127.0.0.1:4100', 'http://localhost:4100'), 'http://127.0.0.1:4100/qa/')
+  assert.equal(harnessOriginNotice('https://h.ts.net:8444', 'https://h.ts.net:8446'), 'https://h.ts.net:8444/qa/')
 })
 
 test('esc escapes markup and both quote characters', () => {

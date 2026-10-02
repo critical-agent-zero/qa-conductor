@@ -20,6 +20,10 @@
   body { margin: 0; background: var(--bg); color: var(--text); font: var(--font); display: flex; flex-direction: column }
   .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0 }
 
+  /* the harness opened at another origin */
+  #originNotice { margin: 0; padding: 8px 14px; background: rgba(217,164,65,.12); border-bottom: 1px solid var(--warn); color: var(--text) }
+  #originNotice a { color: var(--warn) }
+
   /* header */
   header { display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: var(--surface); border-bottom: 2px solid var(--accent) }
   .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; white-space: nowrap }
@@ -171,6 +175,7 @@
     <button id="teardownBtn" class="danger-ghost" title="End session (e)">End session</button>
   </div>
 </header>
+<p id="originNotice" role="alert" hidden></p>
 
 <div id="announcer" class="sr" role="status" aria-live="polite"></div>
 <div id="announcerAssertive" class="sr" role="alert" aria-live="assertive"></div>
@@ -210,7 +215,7 @@
           <button class="chip unmatched" id="baseUnmatched" hidden title="Unmatched replays — click to clear"></button>
           <button class="ghost" data-act="copy" data-pane="base" title="Copy path">⧉</button>
           <button class="ghost" data-act="reload" data-pane="base" title="Reload pane">↻</button>
-          <a class="ghost" id="baseOpen" target="_blank" rel="noreferrer" title="Open in new tab">↗</a>
+          <a class="ghost" id="baseOpen" target="_blank" rel="noopener" title="Open in new tab">↗</a>
         </div>
         <div class="paneWrap"><iframe id="baseFrame" title="base pane"></iframe></div>
       </div>
@@ -221,7 +226,7 @@
           <button class="chip unmatched" id="prUnmatched" hidden title="Unmatched replays — click to clear"></button>
           <button class="ghost" data-act="copy" data-pane="pr" title="Copy path">⧉</button>
           <button class="ghost" data-act="reload" data-pane="pr" title="Reload pane">↻</button>
-          <a class="ghost" id="prOpen" target="_blank" rel="noreferrer" title="Open in new tab">↗</a>
+          <a class="ghost" id="prOpen" target="_blank" rel="noopener" title="Open in new tab">↗</a>
         </div>
         <div class="paneWrap"><iframe id="prFrame" title="pr pane"></iframe></div>
       </div>
