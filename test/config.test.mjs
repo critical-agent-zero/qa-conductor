@@ -134,8 +134,8 @@ test('a non-loopback QA_BIND_HOST with no public host needs QA_HARNESS_ORIGIN', 
       return true
     }, extra.join())
   }
-  const c = loadConfig(envFile([...NO_HOST, ...LOOPBACK_PANES, 'QA_BIND_HOST=0.0.0.0', 'QA_HARNESS_ORIGIN=http://box.lan:3100']))
-  assert.equal(c.harnessOrigin, 'http://box.lan:3100')
+  const c = loadConfig(envFile([...NO_HOST, ...LOOPBACK_PANES, 'QA_BIND_HOST=0.0.0.0', 'QA_HARNESS_ORIGIN=https://box.lan:3100']))
+  assert.equal(c.harnessOrigin, 'https://box.lan:3100')
 })
 
 test('QA_HARNESS_ORIGIN, QA_BASE_ORIGIN and QA_PR_ORIGIN must be http(s) origins and are normalized', () => {
@@ -178,5 +178,24 @@ test('the harness and the two panes must be three different origins', () => {
   // on port 0 the panes are still compared with each other
   refuses([...NO_HOST, 'QA_HARNESS_PORT=0', 'QA_BASE_ORIGIN=http://127.0.0.1:3101', 'QA_PR_ORIGIN=http://127.0.0.1:3101/'], /base and pr/)
   // another port, scheme or host is another origin
-  assert.ok(loadConfig(envFile([...REQUIRED, 'QA_HARNESS_ORIGIN=http://w.ts.net:8443'])))
+  assert.ok(loadConfig(envFile([...NO_HOST, ...LOOPBACK_PANES, 'QA_HARNESS_ORIGIN=https://127.0.0.1:3101'])))
+})
+
+// Browsers send Fetch Metadata only to https and loopback origins. Without it,
+// another page's <img> or <iframe> GET carries neither Sec-Fetch-Site nor
+// Origin, and the guards take it for curl.
+test('an http origin must be loopback: browsers send no Sec-Fetch-* headers to plain http anywhere else', () => {
+  for (const [key, guard] of [['QA_HARNESS_ORIGIN', 'harness API guard'], ['QA_BASE_ORIGIN', 'pane request guard'], ['QA_PR_ORIGIN', 'pane request guard']]) {
+    for (const value of ['http://box.lan:3100', 'http://192.168.1.5:3100', 'http://h.tail1.ts.net:3100', 'http://0.0.0.0:3100']) {
+      assert.throws(() => loadConfig(envFile([...REQUIRED, `${key}=${value}/`])), err => {
+        assert.equal(err.message, `${key} ${value}: browsers send no Sec-Fetch-* headers to a plain-http origin off loopback, so the ${guard} can't tell other pages apart; use https or a loopback address`)
+        return true
+      }, `${key}=${value}`)
+    }
+  }
+  // https anywhere; http on 127.0.0.0/8, ::1 and localhost
+  const c = loadConfig(envFile([...NO_HOST, 'QA_BIND_HOST=0.0.0.0',
+    'QA_HARNESS_ORIGIN=https://box.lan:3100', 'QA_BASE_ORIGIN=http://localhost:3101', 'QA_PR_ORIGIN=http://[::1]:3102']))
+  assert.deepEqual([c.harnessOrigin, c.paneOrigins], ['https://box.lan:3100', { base: 'http://localhost:3101', pr: 'http://[::1]:3102' }])
+  assert.equal(loadConfig(envFile([...NO_HOST, ...LOOPBACK_PANES, 'QA_HARNESS_ORIGIN=http://127.0.0.2:3100'])).harnessOrigin, 'http://127.0.0.2:3100')
 })

@@ -690,6 +690,25 @@ test('startConductor refuses a cfg.harnessOrigin or cfg.frameAncestors entry tha
   assert.throws(() => startOnly({ publicHost: 'h.ts.net;x' }), /must be an origin/)
 })
 
+// Browsers send Fetch Metadata only to https and loopback origins. Without it,
+// another page's <img> or <iframe> GET carries neither Sec-Fetch-Site nor
+// Origin, and the guards take it for curl.
+test('startConductor refuses a plain-http harness or pane origin off loopback', async () => {
+  assert.throws(() => startOnly({ harnessOrigin: 'http://box.lan:3100' }), /^Error: cfg\.harnessOrigin http:\/\/box\.lan:3100: browsers send no Sec-Fetch-\* headers .*the harness API guard/)
+  assert.throws(() => startOnly({ paneOrigins: { base: 'http://box.lan:3101', pr: 'https://h:10000' } }), /^Error: cfg\.paneOrigins\.base http:\/\/box\.lan:3101: .*the pane request guard/)
+  assert.throws(() => startOnly({ paneOrigins: { base: 'https://h:8443', pr: 'http://192.168.1.5:3102/' } }), /^Error: cfg\.paneOrigins\.pr http:\/\/192\.168\.1\.5:3102: /)
+  // https anywhere, and http on loopback, start
+  for (const cfg of [
+    { harnessOrigin: 'https://box.lan:3100', paneOrigins: { base: 'https://box.lan:3101', pr: 'https://box.lan:3102' } },
+    { publicHost: null, harnessOrigin: 'http://localhost:3100', paneOrigins: { base: 'http://127.0.0.1:3101', pr: 'http://[::1]:3102' } },
+  ]) {
+    const { c } = makeWorld({ cfg })
+    try {
+      assert.equal((await api(await harnessPort(c), 'GET', '/api/state')).status, 'idle', JSON.stringify(cfg))
+    } finally { c.stop() }
+  }
+})
+
 test('startConductor refuses a harness origin, explicit or derived from publicHost, equal to a pane origin; equal pane placeholders start', async () => {
   assert.throws(() => startOnly({ harnessOrigin: 'https://H:8443/qa/' }), /harness origin https:\/\/h:8443 is also the base pane's origin/)
   assert.throws(() => startOnly({ paneOrigins: { base: 'https://h:8443', pr: 'https://h.ts.net:8444/' } }), /harness origin https:\/\/h\.ts\.net:8444 is also the pr pane's origin/)
