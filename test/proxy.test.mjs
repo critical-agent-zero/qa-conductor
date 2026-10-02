@@ -5,10 +5,13 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  createPaneProxy, parseSetCookie, requestHostname, isAllowedHost, isCrossSite, frameAncestors,
+  createPaneProxy, parseSetCookie, requestHostname, isAllowedHost, panePolicy,
 } from '../lib/proxy.mjs'
 
 const BRIDGE_TAG = '<script src="/__qa/bridge.js"></script>'
+const HARNESS = 'https://h.ts.net:8444'
+// The tag the proxy injects: plain without a harness origin, else carrying it.
+const tagFor = harnessOrigin => (harnessOrigin ? `<script src="/__qa/bridge.js" data-harness="${harnessOrigin}"></script>` : BRIDGE_TAG)
 
 function listen(server) {
   return new Promise((resolve) => {
@@ -31,7 +34,7 @@ function request(port, path, { method = 'GET', headers = {}, body = null } = {})
   })
 }
 
-async function setup(t, upstreamHandler, { allowedHosts = [] } = {}) {
+async function setup(t, upstreamHandler, { allowedHosts = [], harnessOrigin, frameAncestors } = {}) {
   const upstream = http.createServer(upstreamHandler)
   const upstreamPort = await listen(upstream)
   const dir = await mkdtemp(join(tmpdir(), 'qa-proxy-'))
@@ -46,6 +49,8 @@ async function setup(t, upstreamHandler, { allowedHosts = [] } = {}) {
     },
     httpMod: http,
     allowedHosts,
+    harnessOrigin,
+    frameAncestors,
   })
   const proxy = http.createServer(handler)
   const proxyPort = await listen(proxy)
@@ -60,21 +65,12 @@ async function setup(t, upstreamHandler, { allowedHosts = [] } = {}) {
 // --- parseSetCookie -------------------------------------------------------
 
 test('parseSetCookie: plain name=value', () => {
-  assert.deepEqual(parseSetCookie('sid=abc123'), { name: 'sid', value: 'abc123', remove: false, sameSite: 'lax' })
+  assert.deepEqual(parseSetCookie('sid=abc123'), { name: 'sid', value: 'abc123', remove: false })
 })
 
-test('parseSetCookie: ignores other attributes, keeps value with embedded =', () => {
+test('parseSetCookie: ignores attributes, keeps value with embedded =', () => {
   const parsed = parseSetCookie('sid=a=b=c; Path=/; HttpOnly; SameSite=Strict; Max-Age=3600')
-  assert.deepEqual(parsed, { name: 'sid', value: 'a=b=c', remove: false, sameSite: 'strict' })
-})
-
-test('parseSetCookie: SameSite defaults to lax; None needs Secure', () => {
-  assert.equal(parseSetCookie('a=1').sameSite, 'lax')
-  assert.equal(parseSetCookie('a=1; samesite=LAX').sameSite, 'lax')
-  assert.equal(parseSetCookie('a=1; SameSite=Strict').sameSite, 'strict')
-  assert.equal(parseSetCookie('a=1; SameSite=None; Secure').sameSite, 'none')
-  assert.equal(parseSetCookie('a=1; SameSite=None').sameSite, 'lax', 'browsers reject None without Secure')
-  assert.equal(parseSetCookie('a=1; SameSite=bogus').sameSite, 'lax')
+  assert.deepEqual(parsed, { name: 'sid', value: 'a=b=c', remove: false })
 })
 
 test('parseSetCookie: Max-Age=0 removes', () => {
@@ -168,40 +164,49 @@ test('merges client cookies with the jar, jar wins on conflicts', async (t) => {
 
 // --- HTML injection -------------------------------------------------------
 
+// Each runs without a harness origin (the plain tag) and with one (the tag
+// carries it as data-harness).
 test('injects the bridge script before </head> (case-insensitive) and fixes Content-Length', async (t) => {
   const page = '<html><HEAD><title>x</title></HEAD><body>hi</body></html>'
-  const { proxyPort } = await setup(t, (req, res) => {
-    res.setHeader('content-type', 'text/html; charset=utf-8')
-    res.end(page)
-  })
-  const res = await request(proxyPort, '/')
-  const html = res.body.toString()
-  assert.ok(html.includes(`${BRIDGE_TAG}</HEAD>`), 'script goes immediately before </head>')
-  assert.equal(html.split(BRIDGE_TAG).length - 1, 1, 'injected exactly once')
-  assert.equal(Number(res.headers['content-length']), res.body.length)
+  for (const harnessOrigin of [undefined, HARNESS]) {
+    const { proxyPort } = await setup(t, (req, res) => {
+      res.setHeader('content-type', 'text/html; charset=utf-8')
+      res.end(page)
+    }, { harnessOrigin })
+    const res = await request(proxyPort, '/')
+    const html = res.body.toString()
+    const tag = tagFor(harnessOrigin)
+    assert.ok(html.includes(`${tag}</HEAD>`), `script goes immediately before </head>: ${html}`)
+    assert.equal(html.split('/__qa/bridge.js').length - 1, 1, 'injected exactly once')
+    assert.equal(Number(res.headers['content-length']), res.body.length)
+  }
 })
 
 test('HTML without </head> gets the script prepended to the body start', async (t) => {
-  const { proxyPort } = await setup(t, (req, res) => {
-    res.setHeader('content-type', 'text/html')
-    res.end('<p>bare fragment</p>')
-  })
-  const res = await request(proxyPort, '/')
-  const html = res.body.toString()
-  assert.ok(html.startsWith(BRIDGE_TAG))
-  assert.ok(html.endsWith('<p>bare fragment</p>'))
-  assert.equal(Number(res.headers['content-length']), res.body.length)
+  for (const harnessOrigin of [undefined, HARNESS]) {
+    const { proxyPort } = await setup(t, (req, res) => {
+      res.setHeader('content-type', 'text/html')
+      res.end('<p>bare fragment</p>')
+    }, { harnessOrigin })
+    const res = await request(proxyPort, '/')
+    const html = res.body.toString()
+    assert.ok(html.startsWith(tagFor(harnessOrigin)), html)
+    assert.ok(html.endsWith('<p>bare fragment</p>'))
+    assert.equal(Number(res.headers['content-length']), res.body.length)
+  }
 })
 
 test('injects into HTML responses of any status', async (t) => {
-  const { proxyPort } = await setup(t, (req, res) => {
-    res.statusCode = 404
-    res.setHeader('content-type', 'text/html')
-    res.end('<html><head></head><body>not found</body></html>')
-  })
-  const res = await request(proxyPort, '/missing')
-  assert.equal(res.status, 404)
-  assert.ok(res.body.toString().includes(`${BRIDGE_TAG}</head>`))
+  for (const harnessOrigin of [undefined, HARNESS]) {
+    const { proxyPort } = await setup(t, (req, res) => {
+      res.statusCode = 404
+      res.setHeader('content-type', 'text/html')
+      res.end('<html><head></head><body>not found</body></html>')
+    }, { harnessOrigin })
+    const res = await request(proxyPort, '/missing')
+    assert.equal(res.status, 404)
+    assert.ok(res.body.toString().includes(`${tagFor(harnessOrigin)}</head>`))
+  }
 })
 
 test('streams non-HTML responses untouched (binary-safe)', async (t) => {
@@ -340,6 +345,7 @@ test('a request whose Host is not allowed gets 421 before anything else runs', a
 
   const rebound = await request(proxyPort, '/', { headers: { host: `attacker.example:${proxyPort}` } })
   assert.equal(rebound.status, 421)
+  assert.equal(rebound.headers['content-security-policy'], "frame-ancestors 'self'", 'the 421 carries the pane policy too')
   const bridge = await request(proxyPort, '/__qa/bridge.js', { headers: { host: 'attacker.example' } })
   assert.equal(bridge.status, 421, 'checked before routing, bridge route included')
   assert.equal(upstreamHits, 0)
@@ -372,98 +378,310 @@ test('no upstream (no session) yields a 503, not a connection attempt', async (t
   assert.match(res.body.toString(), /no QA session/)
 })
 
-// --- SameSite for the jar (cross-site request defence) ------------------------
 
-test('isCrossSite: sec-fetch-site wins, else the Origin host against the allowlist', () => {
-  const r = headers => ({ headers })
-  assert.equal(isCrossSite(r({ 'sec-fetch-site': 'cross-site' })), true)
-  for (const site of ['same-origin', 'same-site', 'none']) {
-    assert.equal(isCrossSite(r({ 'sec-fetch-site': site, origin: 'https://evil.example' })), false, site)
-  }
-  assert.equal(isCrossSite(r({})), false, 'no browser headers: a non-browser client')
-  assert.equal(isCrossSite(r({ origin: 'https://evil.example' })), true)
-  assert.equal(isCrossSite(r({ origin: 'null' })), true)
-  assert.equal(isCrossSite(r({ origin: 'not a url' })), true)
-  assert.equal(isCrossSite(r({ origin: 'http://127.0.0.1:3100' })), false, 'loopback is always allowed')
-  assert.equal(isCrossSite(r({ origin: 'https://qa.example.ts.net' }), ['qa.example.ts.net']), false)
-  assert.equal(isCrossSite(r({ origin: 'https://qa.example.ts.net' }), []), true)
-})
+// --- other pages (from homefree #329) -------------------------------------------
+// The jar signs every request in as the operator, and a front door that
+// authenticates the device vouches for any page in the operator's browser, so
+// the app's SameSite cookies protect nothing here. ts.net is on the Public
+// Suffix List, and loopback ignores ports: every other host or port is
+// same-site, so same-site is refused like cross-site.
 
-test('a cross-site request gets only the jar cookies a browser would have sent', async (t) => {
-  const { proxyPort } = await setup(t, (req, res) => {
-    if (req.url === '/login') {
-      res.setHeader('set-cookie', ['lax=1; SameSite=Lax', 'strict=1; SameSite=Strict; HttpOnly', 'none=1; SameSite=None; Secure'])
+const FRAME_ANCESTORS = `frame-ancestors 'self' ${HARNESS}`
+const PANE_HOST = { host: 'h.ts.net:10000' }
+const MALLORY = 'https://mallory.tail05ae64.ts.net'
+// The pane's own hostname must pass the Host allowlist.
+const GUARDED = { harnessOrigin: HARNESS, allowedHosts: ['h.ts.net'] }
+
+test('writes from another page never reach the app; the pane itself and curl still write', async (t) => {
+  const seen = []
+  const { proxyPort, activity } = await setup(t, (req, res) => { seen.push(req.method); res.end('ok') }, GUARDED)
+  for (const headers of [
+    { 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' },
+    { 'sec-fetch-site': 'same-site', origin: MALLORY },
+    { 'sec-fetch-site': 'same-site', origin: HARNESS },
+    { origin: MALLORY },
+    { origin: 'null' },
+  ]) {
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      const res = await request(proxyPort, '/api/x', { method, headers: { ...PANE_HOST, 'content-type': 'text/plain', ...headers }, body: 'x' })
+      assert.equal(res.status, 403, `${method} ${JSON.stringify(headers)}`)
+      assert.match(res.body.toString(), /cross-site request refused/)
+      assert.equal(res.headers['content-security-policy'], FRAME_ANCESTORS)
+      assert.equal(res.headers['x-content-type-options'], 'nosniff')
+      assert.equal(res.headers['cache-control'], 'no-store')
     }
-    res.end(req.headers.cookie ?? '')
-  }, { allowedHosts: ['qa.example.ts.net'] })
-  await request(proxyPort, '/login')
-  const seen = async (method, headers) => (await request(proxyPort, '/echo', { method, headers })).body.toString()
-  const form = { 'content-type': 'application/x-www-form-urlencoded' }
-  const nav = { 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' }
-
-  // cross-site writes: no Lax/Strict jar cookie, however it is detected
-  assert.equal(await seen('POST', { ...form, ...nav, 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' }), 'none=1')
-  assert.equal(await seen('POST', { ...form, origin: 'https://evil.example' }), 'none=1')
-  assert.equal(await seen('POST', { ...form, origin: 'null' }), 'none=1')
-  // cross-site reads: Lax only on a top-level navigation
-  assert.equal(await seen('GET', { ...nav, 'sec-fetch-site': 'cross-site' }), 'lax=1; none=1')
-  assert.equal(await seen('GET', { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' }), 'none=1', 'a frame is not top-level')
-  assert.equal(await seen('GET', { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'image' }), 'none=1')
-  // the browser's own cookies pass through: it already applied SameSite
-  assert.equal(await seen('POST', { ...form, 'sec-fetch-site': 'cross-site', cookie: 'mine=1' }), 'mine=1; none=1')
-
-  const all = 'lax=1; strict=1; none=1'
-  for (const site of ['same-origin', 'same-site', 'none']) {
-    assert.equal(await seen('POST', { ...form, 'sec-fetch-site': site }), all, site)
   }
-  assert.equal(await seen('POST', form), all, 'no browser headers')
-  assert.equal(await seen('POST', { ...form, origin: 'https://qa.example.ts.net' }), all, 'an allowed-host Origin')
+  assert.deepEqual(seen, [])
+  assert.equal(activity.count, 0, 'refused requests are not activity')
+  for (const headers of [
+    { 'sec-fetch-site': 'same-origin', origin: 'https://h.ts.net:10000' },
+    { origin: 'https://h.ts.net:10000' },
+    { 'sec-fetch-site': 'none' },
+    {},
+  ]) {
+    const res = await request(proxyPort, '/api/x', { method: 'POST', headers: { ...PANE_HOST, ...headers }, body: 'x' })
+    assert.equal(res.status, 200, JSON.stringify(headers))
+  }
+  assert.deepEqual(seen, ['POST', 'POST', 'POST', 'POST'])
 })
 
-// --- frame lock ----------------------------------------------------------------
-
-// Each Content-Security-Policy header as sent (res.headers would join them).
-function cspValues(res) {
-  const out = []
-  for (let i = 0; i < res.rawHeaders.length; i += 2) {
-    if (res.rawHeaders[i].toLowerCase() === 'content-security-policy') out.push(res.rawHeaders[i + 1])
+test('CORS preflights, CORS reads and WebSockets from another origin are refused', async (t) => {
+  const seen = []
+  const { proxyPort } = await setup(t, (req, res) => { seen.push(req.method); res.end('ok') }, GUARDED)
+  for (const [method, headers] of [
+    ['OPTIONS', { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'cors', origin: MALLORY, 'access-control-request-method': 'POST' }],
+    ['OPTIONS', { origin: 'https://evil.example', 'access-control-request-method': 'DELETE' }],
+    ['GET', { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'cors', origin: MALLORY }],
+    ['GET', { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors', origin: 'https://evil.example' }],
+    ['GET', { origin: 'https://evil.example' }],
+    ['GET', { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'websocket', origin: MALLORY }],
+  ]) {
+    const res = await request(proxyPort, '/api/me', { method, headers: { ...PANE_HOST, ...headers } })
+    assert.equal(res.status, 403, `${method} ${JSON.stringify(headers)}`)
   }
-  return out
-}
-
-test('frameAncestors: loopback plus the allowed hosts; IPv6 literals and non-hostnames left out', () => {
-  const fa = frameAncestors([' QA.example.ts.net ', '[fe80::1]', '::1', "evil.example 'unsafe-inline'; script-src *", '*.evil.example', 'localhost'])
-  assert.equal(fa, "frame-ancestors 'self' http://127.0.0.1:* https://127.0.0.1:* http://localhost:* https://localhost:* http://qa.example.ts.net:* https://qa.example.ts.net:*")
-  assert.equal(frameAncestors(), "frame-ancestors 'self' http://127.0.0.1:* https://127.0.0.1:* http://localhost:* https://localhost:*")
+  assert.deepEqual(seen, [])
+  // the pane's own fetches, and a preflight-shaped request from curl
+  assert.equal((await request(proxyPort, '/api/me', { headers: { ...PANE_HOST, 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors' } })).status, 200)
+  assert.equal((await request(proxyPort, '/api/me', { method: 'OPTIONS', headers: PANE_HOST })).status, 200)
 })
 
-test('every proxied response carries the frame-ancestors policy; an upstream CSP is kept', async (t) => {
-  let hosts = ['qa.example.ts.net']
-  const upstream = http.createServer((req, res) => {
+// The browser sends the harness origin as the Referer when the harness loads
+// a pane in its iframe, or opens it in a new tab (same-site: another port of
+// the same host).
+const FROM_HARNESS = { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'navigate', referer: `${HARNESS}/` }
+
+test('another site may not load a pane in a frame; the harness may, and the pane itself', async (t) => {
+  const seen = []
+  const { proxyPort, activity } = await setup(t, (req, res) => { seen.push(req.url); res.end('ok') }, GUARDED)
+  for (const dest of ['iframe', 'frame', 'embed', 'object']) {
+    for (const headers of [
+      { 'sec-fetch-site': 'cross-site', referer: 'https://evil.example/' },
+      { 'sec-fetch-site': 'same-site', referer: `${MALLORY}/` },
+      // no Referer (rel=noreferrer, or a no-referrer policy) proves nothing
+      { 'sec-fetch-site': 'same-site' },
+      { 'sec-fetch-site': 'same-site', referer: 'not a url' },
+      { 'sec-fetch-site': 'same-site', referer: 'https://h.ts.net:8445/' },
+    ]) {
+      const res = await request(proxyPort, '/settings', { headers: { ...PANE_HOST, 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': dest, ...headers } })
+      assert.equal(res.status, 403, `${dest} ${JSON.stringify(headers)}`)
+      assert.match(res.body.toString(), /cross-site framing refused/)
+      assert.equal(res.headers['content-security-policy'], FRAME_ANCESTORS)
+    }
+  }
+  assert.deepEqual(seen, [])
+  assert.equal(activity.count, 0)
+  for (const headers of [
+    // the harness's iframe, the reload button and resync, and an older browser's nested-navigate
+    { ...FROM_HARNESS, 'sec-fetch-dest': 'iframe' },
+    { ...FROM_HARNESS, 'sec-fetch-dest': 'iframe', referer: `${HARNESS}/qa` },
+    { ...FROM_HARNESS, 'sec-fetch-mode': 'nested-navigate', 'sec-fetch-dest': 'iframe' },
+    // the pane's own links and forms inside the frame
+    { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' },
+  ]) {
+    assert.equal((await request(proxyPort, '/x', { headers: { ...PANE_HOST, ...headers } })).status, 200, JSON.stringify(headers))
+  }
+})
+
+test('another site may not open a pane top-level; the harness\'s new tab and the operator\'s own are served', async (t) => {
+  const seen = []
+  const { proxyPort } = await setup(t, (req, res) => { seen.push(req.url); res.end('ok') }, GUARDED)
+  for (const headers of [
+    // a link, a redirect or window.open on another site or tailnet host
+    { 'sec-fetch-site': 'cross-site', referer: 'https://evil.example/' },
+    { 'sec-fetch-site': 'cross-site' },
+    { 'sec-fetch-site': 'same-site', referer: `${MALLORY}/` },
+    { 'sec-fetch-site': 'same-site' },
+  ]) {
+    const res = await request(proxyPort, '/account/delete?confirm=1', {
+      headers: { ...PANE_HOST, 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document', ...headers },
+    })
+    assert.equal(res.status, 403, JSON.stringify(headers))
+    assert.match(res.body.toString(), /cross-site navigation refused/)
+  }
+  assert.deepEqual(seen, [])
+  for (const headers of [
+    // the harness's "Open in new tab"
+    { ...FROM_HARNESS, 'sec-fetch-dest': 'document' },
+    // typed, bookmarked or reloaded by the operator
+    { 'sec-fetch-site': 'none', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' },
+    { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' },
+    // curl, or a browser that sends no Sec-Fetch-* headers
+    {},
+  ]) {
+    assert.equal((await request(proxyPort, '/x', { headers: { ...PANE_HOST, ...headers } })).status, 200, JSON.stringify(headers))
+  }
+})
+
+// The other page can't read these, but the app handles each one as the
+// operator: a GET that changes state, or a probe that times the operator's
+// pane session.
+test('subresource loads from another page never reach the app; the pane\'s own are served', async (t) => {
+  const seen = []
+  const { proxyPort, activity } = await setup(t, (req, res) => { seen.push(req.url); res.end('ok') }, GUARDED)
+  for (const site of ['cross-site', 'same-site']) {
+    for (const [mode, dest] of [
+      ['no-cors', 'image'], ['no-cors', 'script'], ['no-cors', 'style'], ['no-cors', 'font'],
+      ['no-cors', 'empty'], ['no-cors', 'audio'], ['no-cors', 'video'], ['no-cors', 'track'],
+      ['same-origin', 'empty'],
+    ]) {
+      for (const referer of [undefined, `${HARNESS}/`]) {
+        const headers = { ...PANE_HOST, 'sec-fetch-site': site, 'sec-fetch-mode': mode, 'sec-fetch-dest': dest, ...(referer ? { referer } : {}) }
+        const res = await request(proxyPort, '/api/delete-everything', { headers })
+        assert.equal(res.status, 403, JSON.stringify(headers))
+        assert.match(res.body.toString(), /cross-site request refused/)
+      }
+    }
+  }
+  assert.deepEqual(seen, [])
+  assert.equal(activity.count, 0)
+  for (const [mode, dest] of [['no-cors', 'image'], ['no-cors', 'script'], ['no-cors', 'style'], ['cors', 'empty']]) {
+    const res = await request(proxyPort, '/asset', { headers: { ...PANE_HOST, 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': mode, 'sec-fetch-dest': dest } })
+    assert.equal(res.status, 200, `${mode} ${dest}`)
+  }
+})
+
+test('without a harness origin nothing from another site gets in, and the operator\'s own navigations still do', async (t) => {
+  const { proxyPort } = await setup(t, (req, res) => res.end('ok'), { allowedHosts: ['h.ts.net'] })
+  for (const dest of ['iframe', 'document']) {
+    assert.equal((await request(proxyPort, '/x', { headers: { ...PANE_HOST, ...FROM_HARNESS, 'sec-fetch-dest': dest } })).status, 403, dest)
+  }
+  assert.equal((await request(proxyPort, '/x', { headers: { ...PANE_HOST, 'sec-fetch-site': 'none', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' } })).status, 200)
+})
+
+test('every response lets only the pane and the harness frame it, replacing upstream framing rules', async (t) => {
+  const bytes = Buffer.from([0, 1, 2, 255])
+  const { proxyPort } = await setup(t, (req, res) => {
     if (req.url === '/page') {
       res.setHeader('content-type', 'text/html')
-      res.setHeader('content-security-policy', "default-src 'self'")
-      return res.end('<html><head></head><body>x</body></html>')
-    }
-    if (req.url === '/redirect') {
+      res.setHeader('x-frame-options', 'DENY')
+      res.setHeader('content-security-policy', "default-src 'self'; frame-ancestors 'none'; img-src *")
+      res.end('<html><head></head><body>hi</body></html>')
+    } else if (req.url === '/two') {
+      // two policies in two headers: each keeps its other directives
+      res.setHeader('content-type', 'text/plain')
+      res.setHeader('content-security-policy', ["frame-ancestors 'none'", "script-src 'self'; FRAME-ANCESTORS https://evil.example"])
+      res.end('two')
+    } else if (req.url === '/redirect') {
       res.statusCode = 302
       res.setHeader('location', '/page')
-      return res.end()
+      res.setHeader('x-frame-options', 'DENY')
+      res.end()
+    } else {
+      res.setHeader('content-type', 'application/octet-stream')
+      res.setHeader('x-frame-options', 'SAMEORIGIN')
+      res.end(bytes)
     }
-    res.setHeader('content-type', 'application/json')
-    res.end('{}')
-  })
-  const upstreamPort = await listen(upstream)
-  const proxy = http.createServer(createPaneProxy({ upstreamPort, bridgePath: '/nonexistent', httpMod: http, allowedHosts: () => hosts }))
-  const proxyPort = await listen(proxy)
-  t.after(async () => { for (const s of [upstream, proxy]) await new Promise(r => s.close(r)) })
+  }, GUARDED)
+  const get = path => request(proxyPort, path, { headers: PANE_HOST })
+  const page = await get('/page')
+  assert.equal(page.headers['x-frame-options'], undefined)
+  assert.equal(page.headers['content-security-policy'], `default-src 'self'; img-src *, ${FRAME_ANCESTORS}`)
+  const blob = await get('/blob')
+  assert.deepEqual(blob.body, bytes)
+  assert.equal(blob.headers['x-frame-options'], undefined)
+  assert.equal(blob.headers['content-security-policy'], FRAME_ANCESTORS)
+  assert.equal((await get('/two')).headers['content-security-policy'], `script-src 'self', ${FRAME_ANCESTORS}`)
+  const redirect = await get('/redirect')
+  assert.deepEqual([redirect.status, redirect.headers['x-frame-options'], redirect.headers['content-security-policy']], [302, undefined, FRAME_ANCESTORS])
+  assert.equal((await get('/__qa/bridge.js')).headers['content-security-policy'], FRAME_ANCESTORS)
+})
 
-  const page = await request(proxyPort, '/page')
-  assert.deepEqual(cspValues(page), ["default-src 'self'", frameAncestors(hosts)], 'HTML: both policies, as separate headers')
-  assert.match(frameAncestors(hosts), /https:\/\/qa\.example\.ts\.net:\*/)
-  assert.deepEqual(cspValues(await request(proxyPort, '/data')), [frameAncestors(hosts)], 'piped responses too')
-  assert.deepEqual(cspValues(await request(proxyPort, '/redirect')), [frameAncestors(hosts)], 'and redirects')
-  // the hosts are read per request, like the Host allowlist
-  hosts = ['late.example']
-  assert.deepEqual(cspValues(await request(proxyPort, '/data')), [frameAncestors(['late.example'])])
+test('the injected bridge tag carries the harness origin, normalized to an origin', async (t) => {
+  const { proxyPort } = await setup(t, (req, res) => {
+    res.setHeader('content-type', 'text/html')
+    res.end('<html><head></head><body>hi</body></html>')
+  }, { ...GUARDED, harnessOrigin: `${HARNESS}/qa/` })
+  const res = await request(proxyPort, '/', { headers: PANE_HOST })
+  assert.ok(res.body.toString().includes(`<script src="/__qa/bridge.js" data-harness="${HARNESS}"></script></head>`))
+  assert.equal(res.headers['content-security-policy'], FRAME_ANCESTORS)
+})
+
+test('without a harness origin only the pane may frame itself', async (t) => {
+  const { proxyPort } = await setup(t, (req, res) => res.end('ok'), { allowedHosts: ['h.ts.net'] })
+  assert.equal((await request(proxyPort, '/', { headers: PANE_HOST })).headers['content-security-policy'], "frame-ancestors 'self'")
+  const idle = http.createServer(createPaneProxy({ upstreamPort: () => null, bridgePath: '/nonexistent', httpMod: http, harnessOrigin: HARNESS }))
+  const idlePort = await listen(idle)
+  t.after(() => new Promise(r => idle.close(r)))
+  const res = await request(idlePort, '/')
+  assert.equal(res.status, 503)
+  assert.equal(res.headers['content-security-policy'], FRAME_ANCESTORS)
+})
+
+// --- 0.3.0: the harness origin per request, extra frame ancestors, the jar -----
+
+test('harnessOrigin and frameAncestors may be functions, resolved per request', async (t) => {
+  let origin = null
+  let extra = []
+  const { proxyPort } = await setup(t, (req, res) => {
+    res.setHeader('content-type', 'text/html')
+    res.end('<html><head></head><body>hi</body></html>')
+  }, { allowedHosts: ['h.ts.net'], harnessOrigin: () => origin, frameAncestors: () => extra })
+  const frame = { ...PANE_HOST, ...FROM_HARNESS, 'sec-fetch-dest': 'iframe' }
+
+  const before = await request(proxyPort, '/', { headers: PANE_HOST })
+  assert.equal(before.headers['content-security-policy'], "frame-ancestors 'self'")
+  assert.ok(before.body.toString().includes(`${BRIDGE_TAG}</head>`))
+  assert.equal((await request(proxyPort, '/', { headers: frame })).status, 403, 'no harness origin yet')
+
+  origin = HARNESS
+  extra = ['https://outer.ts.net:8444']
+  const after = await request(proxyPort, '/', { headers: PANE_HOST })
+  assert.equal(after.headers['content-security-policy'], `${FRAME_ANCESTORS} https://outer.ts.net:8444`)
+  assert.ok(after.body.toString().includes(`${tagFor(HARNESS)}</head>`))
+  assert.equal((await request(proxyPort, '/', { headers: frame })).status, 200)
+  // only the harness origin's Referer admits a navigation: the extra
+  // ancestors are CSP only
+  const fromOuter = { ...frame, referer: 'https://outer.ts.net:8444/' }
+  assert.equal((await request(proxyPort, '/', { headers: fromOuter })).status, 403)
+})
+
+test('extra frame ancestors follow the harness origin; a value that is not an http(s) origin is dropped, file: and data: URLs included (no "null" source, no data-harness="null")', async (t) => {
+  const junk = ['file:///x', 'data:text/html,x', '*', "'self'", 'https://a;b', 'javascript:alert(1)', 'not a url', '', null, 42]
+  assert.equal(panePolicy(HARNESS, ['https://Outer.ts.net:8444/qa/', ...junk]), `${FRAME_ANCESTORS} https://outer.ts.net:8444`)
+  assert.equal(panePolicy(`${HARNESS}/`, [HARNESS]), FRAME_ANCESTORS, 'listed once')
+  assert.equal(panePolicy(), "frame-ancestors 'self'")
+  assert.equal(panePolicy(null, 'https://outer.ts.net:8444'), "frame-ancestors 'self' https://outer.ts.net:8444", 'a single string')
+  for (const bad of ['file:///x', 'data:text/html,x']) assert.equal(panePolicy(bad, [bad]), "frame-ancestors 'self'", bad)
+  // an IPv6 literal can't be a CSP source: left out, still the bridge's target
+  assert.equal(panePolicy('http://[::1]:3100', ['http://[::1]:3200']), "frame-ancestors 'self'")
+
+  for (const harnessOrigin of ['file:///x', 'data:text/html,x', 'not an origin']) {
+    const { proxyPort } = await setup(t, (req, res) => {
+      res.setHeader('content-type', 'text/html')
+      res.end('<html><head></head><body>hi</body></html>')
+    }, { harnessOrigin, frameAncestors: ['data:text/html,x'] })
+    const res = await request(proxyPort, '/')
+    assert.equal(res.headers['content-security-policy'], "frame-ancestors 'self'", harnessOrigin)
+    assert.ok(res.body.toString().includes(`${BRIDGE_TAG}</head>`), harnessOrigin)
+    assert.doesNotMatch(res.body.toString() + res.headers['content-security-policy'], /null/)
+  }
+  const { proxyPort } = await setup(t, (req, res) => {
+    res.setHeader('content-type', 'text/html')
+    res.end('<html><head></head><body>hi</body></html>')
+  }, { harnessOrigin: 'http://[::1]:3100' })
+  assert.ok((await request(proxyPort, '/')).body.toString().includes(`${tagFor('http://[::1]:3100')}</head>`))
+})
+
+// The jar no longer filters by SameSite: after the guard, the only requests it
+// filtered were the harness's own iframe loads when the harness and the panes
+// are on different sites, and filtering those signed the pane out.
+test('a request the harness Referer admits gets the whole jar', async (t) => {
+  const harnessOrigin = 'http://localhost:4100'
+  const { proxyPort } = await setup(t, (req, res) => {
+    if (req.url === '/login') {
+      res.setHeader('set-cookie', ['lax=1; SameSite=Lax', 'strict=1; SameSite=Strict; HttpOnly', 'none=1; SameSite=None; Secure', 'plain=1'])
+    }
+    res.end(req.headers.cookie ?? '')
+  }, { harnessOrigin })
+  await request(proxyPort, '/login')
+  const all = 'lax=1; strict=1; none=1; plain=1'
+  for (const [site, dest] of [['cross-site', 'iframe'], ['cross-site', 'document'], ['same-site', 'iframe']]) {
+    const headers = { 'sec-fetch-site': site, 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': dest, referer: `${harnessOrigin}/` }
+    const res = await request(proxyPort, '/echo', { headers })
+    assert.deepEqual([res.status, res.body.toString()], [200, all], `${site} ${dest}`)
+  }
+  // and every other admitted request, as before
+  for (const headers of [{ 'sec-fetch-site': 'same-origin' }, { 'sec-fetch-site': 'none' }, {}]) {
+    assert.equal((await request(proxyPort, '/echo', { headers })).body.toString(), all, JSON.stringify(headers))
+  }
 })
