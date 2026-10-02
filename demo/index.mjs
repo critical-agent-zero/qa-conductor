@@ -6,9 +6,14 @@
 // loadConfig; the pane origins depend on the proxies' ephemeral ports, so they
 // are filled in once the proxies listen (the core reads them at session time).
 //
-// startDemo({ port = 4100, speed = 1, log = console })
+// startDemo({ port = 4100, speed = 1, log = console, harnessOrigin = null, frameAncestors = [] })
 //   => { stop(), ports: { harness, base, pr } }
 // `speed` scales the fake build and boot delays; 0 means none.
+// `harnessOrigin` is where viewers open the harness; without one the core
+// derives it from the bound port (http://127.0.0.1:<port>). `frameAncestors`
+// adds origins that may frame the panes. Self-QA runs each pane as a demo
+// whose harness is seen at the outer pane's origin, inside the outer harness,
+// and passes both.
 
 import fs from 'node:fs'
 import { once } from 'node:events'
@@ -22,7 +27,7 @@ import {
 
 export const DEMO_HOST = '127.0.0.1'
 
-function demoConfig(port) {
+function demoConfig(port, { harnessOrigin, frameAncestors }) {
   return {
     env: {},
     githubToken: null,
@@ -35,6 +40,8 @@ function demoConfig(port) {
     ports: { harness: port, base: 0, pr: 0 },
     // Placeholders until the proxies listen; startDemo fills in their ports.
     paneOrigins: { base: `http://${DEMO_HOST}`, pr: `http://${DEMO_HOST}` },
+    harnessOrigin,
+    frameAncestors,
     verdictLabels: { accept: 'qa-approved', reject: 'qa-changes-requested' },
   }
 }
@@ -71,12 +78,12 @@ function closeServers(servers) {
   }
 }
 
-export async function startDemo({ port = 4100, speed = 1, log = console } = {}) {
+export async function startDemo({ port = 4100, speed = 1, log = console, harnessOrigin = null, frameAncestors = [] } = {}) {
   checkOptions(port, speed)
   // Aborted by stop(): cancels every fake delay and blocks new pane apps.
   const life = new AbortController()
   const pause = makePause({ speed, lifetime: life.signal })
-  const cfg = demoConfig(port)
+  const cfg = demoConfig(port, { harnessOrigin, frameAncestors })
   const github = createDemoGithub({ log })
   const provisioner = createDemoProvisioner({ pause, lifetime: life.signal, host: DEMO_HOST })
   const adapters = {

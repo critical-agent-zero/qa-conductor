@@ -146,7 +146,7 @@ test('a good PR reaches ready, and both pane proxies serve distinguishable pages
     assert.match(base, /main@demo123/)
     assert.match(pr, /#101@abc1234/)
     for (const html of [base, pr]) {
-      assert.match(html, /<script src="\/__qa\/bridge\.js"><\/script>/, 'served through the pane proxy')
+      assert.ok(html.includes(`<script src="/__qa/bridge.js" data-harness="http://127.0.0.1:${demo.ports.harness}"></script>`), 'served through the pane proxy')
       for (const href of ['/products', '/guide', '/contact', '/cart']) assert.ok(html.includes(`href="${href}"`), href)
     }
 
@@ -170,6 +170,67 @@ test('a good PR reaches ready, and both pane proxies serve distinguishable pages
     const thanks = await page('pr', posted.headers.get('location'))
     assert.match(thanks, /Thanks, Ada &lt;b&gt;/)
     assert.match(thanks, /mail delivery is off/i)
+  } finally { await demo.stop() }
+})
+
+// A GET with full control over the headers (fetch won't send a Referer).
+function get(port, path, headers = {}) {
+  return new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path, headers, agent: false }, res => {
+      const chunks = []
+      res.on('data', c => chunks.push(c))
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() }))
+    }).on('error', reject)
+  })
+}
+
+const iframeFrom = referer => ({ 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe', referer })
+
+test('pane responses let only the demo harness frame them', async () => {
+  const { log } = captureLog()
+  const demo = await startDemo({ port: 0, speed: 0, log })
+  try {
+    const harness = `http://127.0.0.1:${demo.ports.harness}`
+    assert.equal((await state(demo.ports.harness)).harnessOrigin, harness, 'derived from the bound port')
+    const page = await get(demo.ports.harness, '/')
+    assert.deepEqual([page.headers['content-security-policy'], page.headers['x-frame-options']], ["frame-ancestors 'self'", 'SAMEORIGIN'])
+    await bootToReady(demo.ports.harness, 101)
+    for (const role of ['base', 'pr']) {
+      const port = demo.ports[role]
+      const other = demo.ports[role === 'base' ? 'pr' : 'base']
+      const framed = await get(port, '/', iframeFrom(`${harness}/`))
+      assert.equal(framed.status, 200, role)
+      assert.equal(framed.headers['content-security-policy'], `frame-ancestors 'self' ${harness}`)
+      assert.equal(framed.headers['x-frame-options'], undefined)
+      // the other pane, and the harness opened at localhost
+      for (const referer of [`http://127.0.0.1:${other}/`, `http://localhost:${demo.ports.harness}/`]) {
+        const res = await get(port, '/', iframeFrom(referer))
+        assert.equal(res.status, 403, `${role} ${referer}`)
+        assert.match(res.body, /cross-site framing refused/)
+        assert.equal(res.headers['content-security-policy'], `frame-ancestors 'self' ${harness}`)
+      }
+    }
+  } finally { await demo.stop() }
+})
+
+test('startDemo({ harnessOrigin, frameAncestors }) puts both in the pane policy', async () => {
+  const { log } = captureLog()
+  const harness = 'http://127.0.0.1:3102'
+  const outer = 'http://127.0.0.1:3100'
+  const demo = await startDemo({ port: 0, speed: 0, log, harnessOrigin: harness, frameAncestors: [outer] })
+  try {
+    assert.equal((await state(demo.ports.harness)).harnessOrigin, harness)
+    const idle = await get(demo.ports.base, '/')
+    assert.equal(idle.status, 503)
+    assert.equal(idle.headers['content-security-policy'], `frame-ancestors 'self' ${harness} ${outer}`)
+    await bootToReady(demo.ports.harness, 101)
+    const framed = await get(demo.ports.pr, '/', iframeFrom(`${harness}/`))
+    assert.equal(framed.status, 200)
+    assert.equal(framed.headers['content-security-policy'], `frame-ancestors 'self' ${harness} ${outer}`)
+    assert.ok(framed.body.includes(`<script src="/__qa/bridge.js" data-harness="${harness}"></script>`))
+    // the outer harness may frame the inner one's panes (CSP), but its
+    // Referer admits nothing
+    assert.equal((await get(demo.ports.pr, '/', iframeFrom(`${outer}/`))).status, 403)
   } finally { await demo.stop() }
 })
 
@@ -339,13 +400,22 @@ test('demo build: progress messages, labels, readiness, the trust block and abor
 
 // --- the CLI --------------------------------------------------------------------
 
-test('parseDemoEnv: PORT and QA_DEMO_SPEED with defaults and validation', () => {
-  assert.deepEqual(parseDemoEnv({}), { port: 4100, speed: 1 })
-  assert.deepEqual(parseDemoEnv({ PORT: '0', QA_DEMO_SPEED: '0' }), { port: 0, speed: 0 })
-  assert.deepEqual(parseDemoEnv({ PORT: '5123', QA_DEMO_SPEED: '2.5' }), { port: 5123, speed: 2.5 })
+test('parseDemoEnv: PORT, QA_DEMO_SPEED, QA_HARNESS_ORIGIN and QA_FRAME_ANCESTORS with defaults and validation', () => {
+  const none = { harnessOrigin: null, frameAncestors: [] }
+  assert.deepEqual(parseDemoEnv({}), { port: 4100, speed: 1, ...none })
+  assert.deepEqual(parseDemoEnv({ PORT: '0', QA_DEMO_SPEED: '0' }), { port: 0, speed: 0, ...none })
+  assert.deepEqual(parseDemoEnv({ PORT: '5123', QA_DEMO_SPEED: '2.5', QA_HARNESS_ORIGIN: '', QA_FRAME_ANCESTORS: '' }), { port: 5123, speed: 2.5, ...none })
   assert.throws(() => parseDemoEnv({ PORT: 'http' }), /PORT/)
   assert.throws(() => parseDemoEnv({ PORT: '70000' }), /PORT/)
   assert.throws(() => parseDemoEnv({ QA_DEMO_SPEED: '-1' }), /QA_DEMO_SPEED/)
+  // self-QA's inner demos: the outer pane's origin, and the outer harness
+  assert.deepEqual(parseDemoEnv({ QA_HARNESS_ORIGIN: 'http://127.0.0.1:3102/', QA_FRAME_ANCESTORS: ' http://127.0.0.1:3100 ,, https://Outer.ts.net:8444/qa/' }), {
+    port: 4100, speed: 1, harnessOrigin: 'http://127.0.0.1:3102', frameAncestors: ['http://127.0.0.1:3100', 'https://outer.ts.net:8444'],
+  })
+  for (const bad of ['127.0.0.1:3102', 'file:///x', '*']) {
+    assert.throws(() => parseDemoEnv({ QA_HARNESS_ORIGIN: bad }), /QA_HARNESS_ORIGIN must be an origin/, bad)
+    assert.throws(() => parseDemoEnv({ QA_FRAME_ANCESTORS: `http://127.0.0.1:3100,${bad}` }), /QA_FRAME_ANCESTORS must be an origin/, bad)
+  }
 })
 
 function fakeProcess() {
@@ -363,13 +433,22 @@ test('runDemoCli starts the demo from the env and stops it on SIGINT, SIGTERM or
     const start = async opts => { started.push(opts); return { ports: { harness: 4321, base: 1, pr: 2 }, stop: async () => { stops++ } } }
     const { lines, log } = captureLog()
     await runDemoCli({ env: { PORT: '4321', QA_DEMO_SPEED: '0' }, proc, start, log })
-    assert.deepEqual(started.map(o => [o.port, o.speed, o.log]), [[4321, 0, log]])
+    assert.deepEqual(started.map(o => [o.port, o.speed, o.harnessOrigin, o.frameAncestors, o.log]), [[4321, 0, null, [], log]])
     assert.ok(lines.some(l => l.includes('http://127.0.0.1:4321/')), 'prints the harness URL')
     proc.emit(signal, signal)
     await waitFor(() => proc.exits.length > 0)
     assert.equal(stops, 1, signal)
     assert.deepEqual(proc.exits, [0])
   }
+})
+
+test('runDemoCli passes the harness origin and frame ancestors on, and prints that origin', async () => {
+  const started = []
+  const start = async opts => { started.push(opts); return { ports: { harness: 4321, base: 1, pr: 2 }, stop: async () => {} } }
+  const { lines, log } = captureLog()
+  await runDemoCli({ env: { QA_HARNESS_ORIGIN: 'http://127.0.0.1:3102', QA_FRAME_ANCESTORS: 'http://127.0.0.1:3100' }, proc: fakeProcess(), start, log })
+  assert.deepEqual(started.map(o => [o.harnessOrigin, o.frameAncestors]), [['http://127.0.0.1:3102', ['http://127.0.0.1:3100']]])
+  assert.ok(lines.some(l => l.includes('open http://127.0.0.1:3102/')), lines.join('\n'))
 })
 
 test('runDemoCli: a second signal while stopping exits at once', async () => {

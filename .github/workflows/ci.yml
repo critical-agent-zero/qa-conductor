@@ -11,6 +11,9 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The suite takes seconds. A test file that leaves a server or timer open
+    # never exits, and would otherwise hold the job for GitHub's 6 hours.
+    timeout-minutes: 10
     strategy:
       matrix:
         node: [22, 24]

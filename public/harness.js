@@ -21,18 +21,12 @@ function isHttpsUrl(u) {
   return typeof u === 'string' && /^https:\/\//i.test(u)
 }
 
-// The mirroring contract: each pane's landing URL carries `qa=<harness
-// origin>` in its fragment so the bridge knows whom to talk to. Fragments are
-// &-separated key=value pairs; an existing qa param is left alone.
-function withQaFragment(url, harnessOrigin) {
-  const s = String(url)
-  const param = `qa=${encodeURIComponent(harnessOrigin)}`
-  const hash = s.indexOf('#')
-  if (hash === -1) return `${s}#${param}`
-  const fragment = s.slice(hash + 1)
-  if (fragment === '') return `${s}${param}`
-  if (fragment.split('&').some(pair => pair.split('=')[0] === 'qa')) return s
-  return `${s}&${param}`
+// Where to send a viewer who opened the harness somewhere other than its
+// configured origin (say localhost for 127.0.0.1): the panes refuse to load
+// in, or mirror with, any other origin. null when there's nothing to say.
+function harnessOriginNotice(configured, current) {
+  if (!configured || configured === current) return null
+  return `${configured}/qa/`
 }
 
 ;(() => {
@@ -80,10 +74,33 @@ function withQaFragment(url, harnessOrigin) {
   }
   function setPill(text) { $('statusPill').textContent = text }
 
+  // The banner for a harness opened at another origin. Its text is set as
+  // text, and the link is made only for an http(s) URL.
+  function showOriginNotice(configured) {
+    const el = $('originNotice')
+    const url = harnessOriginNotice(configured, location.origin)
+    el.textContent = ''
+    el.hidden = !url
+    if (!url) return
+    el.append('This harness is meant to be opened at ')
+    if (/^https?:\/\//i.test(url)) {
+      const a = document.createElement('a'); a.href = url; a.textContent = url
+      el.append(a)
+    } else {
+      el.append(url)
+    }
+    el.append('. The panes load and mirror only there.')
+  }
+
   async function render() {
     const route = parseHash()
     let s
-    try { s = await api('/state') } catch { s = { status: 'idle' } }
+    try { s = await api('/state'); showOriginNotice(s.harnessOrigin) } catch (e) {
+      // At another host or port than the harness origin's, the API refuses a
+      // browser (403 not the harness origin) and names the origin instead.
+      showOriginNotice(e && e.body ? e.body.harnessOrigin : null)
+      s = { status: 'idle' }
+    }
     const active = s.status !== 'idle'
     if (route.view === 'picker' || !route.pr) { teardownSessionUi(); return renderPicker(s) }
     if (active && s.pr === route.pr) {
@@ -308,8 +325,8 @@ function withQaFragment(url, harnessOrigin) {
       S.mounted = pr; S.pr = pr; S.panes = panes; S.paneOrigins = [panes.baseOrigin, panes.prOrigin]
       S.path = { base: '', pr: '' }; S.hasNav = { base: false, pr: false }; S.lastMsg = { base: Date.now(), pr: Date.now() }
       S.unmatched = { base: 0, pr: 0 }; renderUnmatched('base'); renderUnmatched('pr')
-      // #qa=<harness origin> tells each pane's bridge whom to talk to
-      $('baseFrame').src = withQaFragment(panes.base, location.origin); $('prFrame').src = withQaFragment(panes.pr, location.origin)
+      // as given: the pane proxy tells each pane's bridge whom to talk to
+      $('baseFrame').src = panes.base; $('prFrame').src = panes.pr
       $('baseOpen').href = panes.baseOrigin; $('prOpen').href = panes.prOrigin
       setDot('base', 'amber', 'signing in…'); setDot('pr', 'amber', 'signing in…')
       $('baseUrl').textContent = 'signing in…'; $('prUrl').textContent = 'signing in…'
@@ -521,5 +538,5 @@ function withQaFragment(url, harnessOrigin) {
 // --- test exports (node --test evaluates this file through a CJS wrapper) ---
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { withQaFragment, esc, isHttpsUrl, LABELS }
+  module.exports = { esc, isHttpsUrl, LABELS, harnessOriginNotice }
 }

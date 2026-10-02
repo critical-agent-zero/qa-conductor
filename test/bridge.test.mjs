@@ -14,7 +14,7 @@ const bridgePath = join(dirname(fileURLToPath(import.meta.url)), '..', 'public',
 const source = readFileSync(bridgePath, 'utf8')
 const cjsModule = { exports: {} }
 new Function('module', 'exports', source)(cjsModule, cjsModule.exports)
-const { buildSelector, resolveSelector, harnessOriginFromHash } = cjsModule.exports
+const { buildSelector, resolveSelector } = cjsModule.exports
 
 // --- minimal DOM stub (no jsdom) ------------------------------------------
 // Supports only what the bridge helpers use: querySelector (attribute-equals
@@ -239,45 +239,25 @@ test('selector for body itself round-trips as an empty path', () => {
 test('the CJS guard still exports the pure helpers', () => {
   assert.equal(typeof buildSelector, 'function')
   assert.equal(typeof resolveSelector, 'function')
-  assert.equal(typeof harnessOriginFromHash, 'function')
-  assert.deepEqual(Object.keys(cjsModule.exports).sort(), ['buildSelector', 'harnessOriginFromHash', 'resolveSelector'])
-})
-
-// --- the #qa= mirroring contract (reader side of harness.js withQaFragment) --
-
-const ORIGIN = 'https://qa.example.ts.net'
-const ENC = encodeURIComponent(ORIGIN)
-
-test('harnessOriginFromHash reads the qa param of an &-separated fragment', () => {
-  assert.equal(harnessOriginFromHash(`#qa=${ENC}`), ORIGIN)
-  assert.equal(harnessOriginFromHash(`#key=K&qa=${ENC}`), ORIGIN)
-  assert.equal(harnessOriginFromHash(`qa=${ENC}&x=1`), ORIGIN, 'leading # optional')
-})
-
-test('harnessOriginFromHash ignores qa= inside another param\'s value', () => {
-  assert.equal(harnessOriginFromHash(`#next=/a?qa=1&qa=${ENC}`), ORIGIN)
-  assert.equal(harnessOriginFromHash(`#token=abcqa==&qa=${ENC}`), ORIGIN)
-  assert.equal(harnessOriginFromHash('#token=abcqa=1'), null)
-})
-
-test('harnessOriginFromHash: absent, empty or malformed gives null', () => {
-  for (const hash of ['', '#', '#key=K', '#qa=', '#qa', '#qa=%E0%A4%A', undefined, null]) {
-    assert.equal(harnessOriginFromHash(hash), null, String(hash))
-  }
+  assert.deepEqual(Object.keys(cjsModule.exports).sort(), ['buildSelector', 'resolveSelector'])
 })
 
 // --- runtime trust: the IIFE against a stub window ----------------------------
-// The fragment is attacker-writable (any page can frame or open a pane URL), so
-// the bridge trusts it only inside a frame and only talks to that frame's
-// parent, at the qa= origin.
+// The harness origin comes from the pane proxy, as data-harness on the script
+// tag that loaded the bridge. The page URL is written by whoever frames or
+// opens the pane, so it counts for nothing. The bridge talks only to its
+// parent frame, at that origin.
 
-function runBridge({ framed = true, hash = `#qa=${ENC}`, stored = null, parentPost = null } = {}) {
+const ORIGIN = 'https://qa.example.ts.net'
+
+function runBridge({ framed = true, harness = ORIGIN, hash = '', parentPost = null } = {}) {
   const listeners = {}
   const posted = []
   const clicks = []
-  const store = stored ? { qaHarnessOrigin: stored } : {}
+  const store = {}
   const button = { tagName: 'BUTTON', click: () => clicks.push('go') }
   const doc = {
+    currentScript: { dataset: harness === null ? {} : { harness } },
     addEventListener() {},
     querySelector: sel => (sel === '[id="go"]' ? button : null),
   }
@@ -299,44 +279,58 @@ function runBridge({ framed = true, hash = `#qa=${ENC}`, stored = null, parentPo
   return { posted, clicks, message, parent, win, store, replay }
 }
 
-test('framed: posts to the parent at the qa= origin, never "*"', () => {
+test('framed with data-harness: posts only to the parent at that origin, never "*"', () => {
   const b = runBridge()
   assert.deepEqual(b.posted, [{ msg: { qa: 1, kind: 'nav', href: '/p' }, target: ORIGIN, to: 'parent' }])
-  assert.equal(b.store.qaHarnessOrigin, ORIGIN)
+  assert.deepEqual(b.store, {}, 'nothing is remembered between loads')
 })
 
-test('framed: a replay is applied only from the parent at the qa= origin', () => {
+test('a replay is applied only from window.parent at that origin', () => {
   const b = runBridge()
   b.message({ origin: ORIGIN, source: {}, data: b.replay })
   assert.deepEqual(b.clicks, [], 'another window at the harness origin')
   b.message({ origin: 'https://evil.example', source: b.parent, data: b.replay })
   assert.deepEqual(b.clicks, [], 'the parent at another origin')
+  b.message({ origin: ORIGIN, source: b.parent, data: { ...b.replay, kind: 'event' } })
+  assert.deepEqual(b.clicks, [], 'not a replay')
   b.message({ origin: ORIGIN, source: b.parent, data: b.replay })
   assert.deepEqual(b.clicks, ['go'])
 })
 
-test('not framed (e.g. window.open with #qa=): no trust, no mirroring', () => {
+test('not framed: nothing is posted, replays are ignored', () => {
   const b = runBridge({ framed: false })
   b.message({ origin: ORIGIN, source: b.win, data: b.replay })
   b.message({ origin: ORIGIN, source: {}, data: b.replay })
   assert.deepEqual(b.clicks, [])
   assert.deepEqual(b.posted, [])
-  assert.equal(b.store.qaHarnessOrigin, undefined, 'the fragment is not remembered either')
-
-  const stale = runBridge({ framed: false, hash: '', stored: ORIGIN })
-  stale.message({ origin: ORIGIN, source: stale.win, data: stale.replay })
-  assert.deepEqual([stale.clicks, stale.posted], [[], []], 'nor is a remembered origin used')
 })
 
-test('framed without a qa= origin: nothing is posted; a remembered origin still works', () => {
-  assert.deepEqual(runBridge({ hash: '#key=K' }).posted, [])
-  const later = runBridge({ hash: '', stored: ORIGIN })
-  assert.deepEqual(later.posted.map(p => p.target), [ORIGIN])
+test('no data-harness: inert even when framed', () => {
+  for (const harness of [null, '']) {
+    const b = runBridge({ harness })
+    b.message({ origin: ORIGIN, source: b.parent, data: b.replay })
+    b.message({ origin: 'null', source: b.parent, data: b.replay })
+    assert.deepEqual([b.posted, b.clicks], [[], []], String(harness))
+  }
 })
 
-test('a malformed qa= origin (postMessage throws SyntaxError) does not break install', () => {
+test('a #qa= fragment is ignored', () => {
+  const evil = 'https://evil.example'
+  // the 0.2 contract: anyone who frames or opens a pane chooses its fragment
+  const b = runBridge({ harness: null, hash: `#qa=${encodeURIComponent(evil)}` })
+  b.message({ origin: evil, source: b.parent, data: b.replay })
+  assert.deepEqual([b.posted, b.clicks], [[], []])
+  // with data-harness, the fragment can't redirect the bridge either
+  const c = runBridge({ hash: `#key=K&qa=${encodeURIComponent(evil)}` })
+  assert.deepEqual(c.posted.map(p => p.target), [ORIGIN])
+  c.message({ origin: evil, source: c.parent, data: c.replay })
+  assert.deepEqual(c.clicks, [])
+})
+
+test('a postMessage that throws does not break install', () => {
   assert.doesNotThrow(() => runBridge({
-    hash: '#qa=not%20an%20origin',
+    harness: 'not an origin',
     parentPost: () => { throw new SyntaxError('Invalid target origin') },
   }))
+  assert.doesNotThrow(() => runBridge({ parentPost: () => { throw new Error('parent gone') } }))
 })
