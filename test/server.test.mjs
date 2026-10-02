@@ -663,9 +663,11 @@ test('a pane 421 carries the pane frame-ancestors', async () => {
 
 // --- 0.3.0: start-time origin checks ---------------------------------------------
 
-// startConductor with no side effects to clean up: it must throw first.
+// startConductor for a check that must throw before anything starts. Should
+// a check regress, the conductor it starts is stopped at once, so the test
+// fails instead of its servers and reaper holding the process open.
 function startOnly(cfgOverrides) {
-  return startConductor({
+  const c = startConductor({
     cfg: {
       publicHost: 'h.ts.net', ports: { harness: 0, base: 0, pr: 0 }, idleMinutes: 30,
       paneOrigins: { base: 'https://h:8443', pr: 'https://h:10000' }, verdictLabels: { accept: 'ok', reject: 'nope' },
@@ -676,6 +678,8 @@ function startOnly(cfgOverrides) {
     adapters: { provisioner: { sweep: () => { throw new Error('ran') } }, build: {} },
     log: { log() {}, error() {} },
   })
+  c.stop()
+  return c
 }
 
 test('startConductor refuses a cfg.harnessOrigin or cfg.frameAncestors entry that is not an http(s) origin', () => {
