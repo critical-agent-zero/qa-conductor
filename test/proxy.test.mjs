@@ -255,7 +255,7 @@ test('upstream connection error yields a 502', async (t) => {
   const bridgePath = join(dir, 'bridge.js')
   await writeFile(bridgePath, '')
   const proxy = http.createServer(
-    createPaneProxy({ upstreamPort: deadPort, bridgePath, onActivity: () => {}, httpMod: http }),
+    createPaneProxy({ upstreamPort: deadPort, bridgePath, onActivity: () => {}, httpMod: http, harnessOrigin: HARNESS }),
   )
   const proxyPort = await listen(proxy)
   t.after(async () => {
@@ -265,6 +265,18 @@ test('upstream connection error yields a 502', async (t) => {
   const res = await request(proxyPort, '/')
   assert.equal(res.status, 502)
   assert.ok(res.body.length > 0)
+  // the proxy's own responses carry the pane frame policy without the
+  // conductor's paneHeaders in front
+  assert.equal(res.headers['content-security-policy'], `frame-ancestors 'self' ${HARNESS}`)
+})
+
+test('a missing bridge file yields a 404 that carries the pane frame policy', async (t) => {
+  const proxy = http.createServer(createPaneProxy({ upstreamPort: () => null, bridgePath: '/nonexistent/bridge.js', httpMod: http, harnessOrigin: HARNESS }))
+  const proxyPort = await listen(proxy)
+  t.after(() => new Promise((r) => proxy.close(r)))
+  const res = await request(proxyPort, '/__qa/bridge.js')
+  assert.equal(res.status, 404)
+  assert.equal(res.headers['content-security-policy'], `frame-ancestors 'self' ${HARNESS}`)
 })
 
 // --- redirects ------------------------------------------------------------
@@ -541,10 +553,18 @@ test('subresource loads from another page never reach the app; the pane\'s own a
 })
 
 test('without a harness origin nothing from another site gets in, and the operator\'s own navigations still do', async (t) => {
-  const { proxyPort } = await setup(t, (req, res) => res.end('ok'), { allowedHosts: ['h.ts.net'] })
+  const seen = []
+  const { proxyPort } = await setup(t, (req, res) => { seen.push(req.url); res.end('ok') }, { allowedHosts: ['h.ts.net'] })
   for (const dest of ['iframe', 'document']) {
     assert.equal((await request(proxyPort, '/x', { headers: { ...PANE_HOST, ...FROM_HARNESS, 'sec-fetch-dest': dest } })).status, 403, dest)
+    // with no Referer either, the missing harness origin must not match the
+    // missing Referer
+    for (const site of ['same-site', 'cross-site']) {
+      const headers = { ...PANE_HOST, 'sec-fetch-site': site, 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': dest }
+      assert.equal((await request(proxyPort, '/x', { headers })).status, 403, `${site} ${dest}, no Referer`)
+    }
   }
+  assert.deepEqual(seen, [])
   assert.equal((await request(proxyPort, '/x', { headers: { ...PANE_HOST, 'sec-fetch-site': 'none', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' } })).status, 200)
 })
 

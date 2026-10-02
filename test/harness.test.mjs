@@ -24,6 +24,19 @@ test('harnessOriginNotice: null at the configured origin or with none configured
   assert.equal(harnessOriginNotice('https://h.ts.net:8444', 'https://h.ts.net:8446'), 'https://h.ts.net:8444/qa/')
 })
 
+// "Open in new tab" must send the harness origin as the Referer the panes
+// check: rel="noopener" keeps it, and noreferrer would get every new tab a
+// 403 cross-site navigation refused.
+test('the "Open in new tab" links keep the Referer: rel="noopener", never noreferrer', () => {
+  const html = readFileSync(join(dirname(harnessPath), 'index.html'), 'utf8')
+  for (const id of ['baseOpen', 'prOpen']) {
+    const tag = html.match(new RegExp(`<a\\b[^>]*\\bid="${id}"[^>]*>`))?.[0]
+    assert.ok(tag, id)
+    assert.match(tag, /\brel="noopener"/, id)
+    assert.doesNotMatch(tag, /noreferrer/i, id)
+  }
+})
+
 test('esc escapes markup and both quote characters', () => {
   assert.equal(esc(`<a href="x" title='y'>&</a>`), '&lt;a href=&quot;x&quot; title=&#39;y&#39;&gt;&amp;&lt;/a&gt;')
   assert.equal(esc(null), '')

@@ -663,6 +663,34 @@ test('a derived harness origin frames the panes and is logged', async () => {
   } finally { configured.c.stop() }
 })
 
+// Off loopback, with no public host and no harness origin (a hand-built cfg:
+// loadConfig refuses this one), nothing can name the harness origin.
+test('with no harness origin startup logs an error, /api/state reports null, and only a pane may frame itself', async () => {
+  const { c, logLines, errorLines } = makeWorld({ cfg: { publicHost: null, host: '0.0.0.0' } })
+  try {
+    const { harness, base, pr } = await allPorts(c)
+    assert.ok(
+      errorLines.includes('[qa] no harness origin (set QA_HARNESS_ORIGIN): only a pane can frame itself and the mirror is off'),
+      errorLines.join('\n'),
+    )
+    assert.equal(logLines.some(l => l.startsWith('[qa] harness at')), false, logLines.join('\n'))
+    assert.equal((await api(harness, 'GET', '/api/state')).harnessOrigin, null)
+    await api(harness, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(harness, 'GET', '/api/state')).status === 'ready')
+    for (const port of [base, pr]) {
+      const page = await raw(port, { path: '/page' })
+      assert.equal(page.headers['content-security-policy'], "frame-ancestors 'self'")
+      // the bridge gets no harness to talk to
+      assert.match(page.body, /<script src="\/__qa\/bridge\.js"><\/script><\/head>pane-/)
+      // and no Referer admits a navigation from another site
+      for (const referer of [undefined, 'http://127.0.0.1:1/']) {
+        const headers = { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe', ...(referer ? { referer } : {}) }
+        assert.equal((await raw(port, { path: '/page', headers })).status, 403, String(referer))
+      }
+    }
+  } finally { c.stop() }
+})
+
 test('a pane 421 carries the pane frame-ancestors', async () => {
   const { c } = makeWorld()
   try {

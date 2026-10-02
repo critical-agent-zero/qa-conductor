@@ -63,6 +63,11 @@ test('paneRefusal: the harness\'s frames and new tabs, the pane\'s own requests,
 test('paneRefusal: a navigation from another site needs a harness origin to compare its Referer with', () => {
   const fromHarness = { ...fetchMeta('same-site', 'navigate', 'iframe'), referer: `${HARNESS}/` }
   assert.equal(paneRefusal(req(fromHarness)), 'cross-site framing refused')
+  // no Referer (rel=noreferrer, a no-referrer policy) and no harness origin
+  // don't match each other: both are missing
+  assert.equal(paneRefusal(req(fetchMeta('same-site', 'navigate', 'iframe'))), 'cross-site framing refused')
+  assert.equal(paneRefusal(req(fetchMeta('cross-site', 'navigate', 'document'))), 'cross-site navigation refused')
+  assert.equal(paneRefusal(req({ ...fetchMeta('cross-site', 'navigate', 'iframe'), referer: 'not a url' }), null), 'cross-site framing refused')
   assert.equal(paneRefusal(req(fetchMeta('none', 'navigate', 'document'))), null)
 })
 
