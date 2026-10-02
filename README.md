@@ -42,7 +42,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 - `shutdown()` is the graceful exit. It stops the idle reaper, refuses harness writes from then on (`503`, so no new boot can start), tears the session down (aborting an in-flight boot and tearing down both panes), ends the progress streams, closes every connection and resolves once all three servers are closed. Call it from your signal handlers; calling it again is a no-op.
 - `stop()` only stops the reaper and asks the servers to close.
 
-`cfg.paneOrigins` must be the URLs viewers actually reach the panes at. To reach the harness from anywhere but the machine it runs on, put your own TLS/auth front door in front of these ports (homefree uses `tailscale serve`) and read [Security](#security) first.
+`cfg.paneOrigins` must be the URLs viewers actually reach the panes at, and `cfg.harnessOrigin` the one they open the harness at (see [Configuration](#configuration)). To reach the harness from anywhere but the machine it runs on, put your own TLS/auth front door in front of these ports (homefree uses `tailscale serve`) and read [Security](#security) first.
 
 ## Security
 
@@ -50,11 +50,18 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 
 The conductor's own defences in depth:
 - **Loopback by default.** All three servers listen on `QA_BIND_HOST`, default `127.0.0.1`. Anything other than loopback exposes an unauthenticated API that returns pane login URLs and posts verdicts with `GITHUB_QA_TOKEN`. A pane proxy *is* an authenticated pane session, because the proxy holds the pane's cookie jar. Widen the bind only behind a firewall or an authenticating front door.
-- **Host allowlist.** Every server checks the `Host` header before routing (the harness does so before it even parses the request target) and answers `421` unless its hostname (port ignored, `[]` stripped) is `127.0.0.1`, `localhost`, `::1`, `QA_PUBLIC_HOST`, the hostname of either pane origin, or an entry in `QA_ALLOWED_HOSTS`. This defeats DNS rebinding. A front door must pass the viewer's `Host` through, or its hostname must be allowed.
-- **SameSite for the pane jar.** Loopback and the Host allowlist don't stop a site the reviewer visits from sending requests to a pane through the reviewer's own browser, and the proxy, not the browser, holds the pane's cookies. So the proxy applies each pane cookie's `SameSite` as a browser would. A cross-site request (by `sec-fetch-site`, else by an `Origin` outside the allowlist) gets only `SameSite=None` jar cookies, plus `Lax` ones on a top-level GET navigation. A missing `SameSite` counts as `Lax`, and `None` without `Secure` counts as `Lax`. The browser's own `Cookie` header passes through unchanged.
-- **Same-site harness and panes.** Serve the harness and the panes with the same scheme and host (ports may differ), and don't mix `localhost` with `127.0.0.1`. Otherwise the harness's load of each pane is cross-site and gets no `Lax` or `Strict` jar cookies. A magic-link `landingUrl` still signs in, because it carries its own token.
-- **Frame lock.** Every proxied pane response carries a `frame-ancestors` policy (added alongside the app's own CSP) that allows only the pane itself, loopback, `QA_PUBLIC_HOST`, the pane origin hosts and `QA_ALLOWED_HOSTS`, on any port. IPv6 literals can't be listed. The mirror bridge trusts the `qa=` origin only when the pane is framed, applies replays only from its parent at that origin, and posts only to that origin. So a page elsewhere can neither frame a signed-in pane nor drive it through the bridge. An authenticating front door must serve the harness from one of the allowed hosts.
-- **Same-origin writes.** Every harness `/api/*` request other than GET/HEAD is refused with `403` when `sec-fetch-site` is present and isn't `same-origin` or `none`, or, absent that, when `Origin` is present and its host isn't the request's `Host`. Browsers always send one of the two on a POST, so a request with neither comes from a non-browser client and is allowed.
+- **Host allowlist.** Every server checks the `Host` header before routing (the harness does so before it even parses the request target) and answers `421` unless its hostname (port ignored, `[]` stripped) is `127.0.0.1`, `localhost`, `::1`, `QA_PUBLIC_HOST`, the hostname of the harness origin or of either pane origin, or an entry in `QA_ALLOWED_HOSTS`. This defeats DNS rebinding. A front door must pass the viewer's `Host` through, or its hostname must be allowed.
+- **Pane request guard.** The proxy holds each pane's cookie jar, so every request that reaches a pane acts as the reviewer, and the reviewer's browser sends requests for any page they have open. Loopback and the Host allowlist don't stop that. So a pane answers `403` to:
+  - a write, a preflight, a CORS read or a WebSocket that doesn't come from the pane's own pages (`sec-fetch-site` `same-origin` or `none`, else an `Origin` whose host is the request's `Host`);
+  - a subresource load (`<img>`, `<script>`, a no-cors fetch) from another site;
+  - a navigation from another site, into a frame or top-level, unless its `Referer` is the harness origin, as it is for the harness's own iframes and "Open in new tab" links.
+
+  `same-site` counts as another site: on loopback every other port is same-site, and so is every host in a tailnet. A request with no `sec-fetch-site` (curl, an older browser) is judged by its `Origin` alone. A request the guard admits gets the whole jar.
+- **Pane frame lock.** Every pane response, the proxy's own `403`, `421`, `502` and `503` included, carries `Content-Security-Policy: frame-ancestors 'self' <harness origin> <QA_FRAME_ANCESTORS…>` and `X-Content-Type-Options: nosniff`. The policy replaces the app's own `frame-ancestors` directive (its other directives are kept), and the app's `X-Frame-Options` is dropped. A value that isn't an http(s) origin is left out, and so is an IPv6 literal, which a CSP source can't express.
+- **The mirror bridge talks only to the harness.** The proxy puts the harness origin on the script tag it injects (`data-harness`). The bridge posts only to its parent frame at that origin, applies replays only from its parent at that origin, and does nothing without one. So the PR pane can neither frame the base pane nor drive it.
+- **Harness frame lock.** Every harness response, errors and refusals included, carries `frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN` and `Referrer-Policy: strict-origin-when-cross-origin`. No other page can frame the harness to trick a click that starts a session or posts a verdict, and the harness's frame loads and new tabs always send its origin as the `Referer` the panes check.
+- **Open the harness at its origin.** The panes trust exactly one harness origin, `QA_HARNESS_ORIGIN`, which startup logs as `[qa] harness at <origin>/qa/`. Opened anywhere else (`localhost` for `127.0.0.1`, say), the harness shows a banner linking to that origin, and the panes answer `403`. The harness and the panes may still use different hosts: only the URL the harness itself is opened at must match.
+- **Same-origin API.** Every harness `/api/*` request, reads and the progress stream included, gets `403 cross-site request refused` when `sec-fetch-site` is present and isn't `same-origin` or `none`, or, absent that, when `Origin` is present and its host isn't the request's `Host`. Another page can't read the answers, but its writes would run, and each read of `/api/prs` spends GitHub API calls. A browser (a request with either header) must also reach the API at the harness origin's host and port, else it gets `403 not the harness origin`: a page served by another front-door handler that proxies to the harness, such as a stale `tailscale serve` mount on another port, is same-origin with that handler. Loopback `Host`s are exempt from that second check, and non-browser clients, which send neither header, from both.
 - **JSON bodies.** `POST /api/session`, `/api/verdict` and `/api/teardown` require `content-type: application/json` (else `415`). A cross-site form can't send that type, and a cross-site `fetch()` with it needs a CORS preflight the harness never grants.
 - **Inert rendering.** The harness UI renders PR titles, build messages, blocked reasons, errors and log tails as text, and links a build run only when its URL is `https://`.
 
@@ -86,7 +93,7 @@ The one exception: a build that declares `one-shot-image` migrations with a Prov
 - **`blocked`.** `describePrs` may report a PR as `blocked`, with a plain-text `reason` (for example, an untrusted author or a head branch in someone else's fork). The picker shows it as `can't boot: <reason>`. Opening the PR is still allowed, because `ensureBuilt` is the real gate. `describePrs` receives `listOpenPrs()` items, or for `/api/build-status` an item built from `github.prInfo(pr)` (`{number, headSha, author, authorAssociation, headRepo, headOwner}`), falling back to `{number, headSha}` from `prHead` when `github` has no `prInfo`.
 - **Display `label`.** `resolveBaseImages` / `resolvePrImages` may return a `label` string, used as the pane's tag instead of the primary service's ref (`app`, else the first service). The label appears in the harness header and in the **public** verdict comment. Consumers whose service refs are local paths or objects must set one, so no path or object leaks into the PR. It must not contain `:`.
 - **Failure log tails.** When a boot fails at a pane stage (`cloning`, `migrating`, `starting`), the core calls `logs({paneRef: {role}, stage, lines: 40})` for the failing pane *before* tearing the panes down, and attaches the result to the error as `err.logTail` (with the pane's role as `err.failedRole`). An error that already carries a string `logTail` keeps it, so a BuildConvention can attach its own tail to an `ensuring-image` failure (for example, installer output). The harness shows the tail under the error.
-- **The `#qa=` fragment (AuthBootstrap).** The harness appends `qa=<encoded harness origin>` to each `landingUrl`'s fragment before loading it in a pane: `#qa=…` when there's no fragment, `&qa=…` after an existing one, and nothing when the fragment already has a `qa` param. The pane's mirror bridge reads it, only while the pane is framed, to know which window to talk to. So adapter fragments must be `&`-separated `key=value` pairs, and the app must keep the hash through redirects until its first HTML load.
+- **Landing flows stay on the pane origin (AuthBootstrap).** The harness loads each `landingUrl` as given; the bridge learns the harness origin from the proxy, not from the URL. A pane serves a navigation from another site only when its `Referer` is the harness origin, so a sign-in step on another site, such as an external identity provider's form, comes back with that site's `Referer` and is refused. Keep landing flows on the pane origin.
 
 **Built in:** `adapters/provisioner-docker` is a Provisioner for docker-sibling deployments. It creates the pane postgres containers, one app container per pane, `0600` env files under `workDir`, registry login and a labelled-orphan sweep. The `docker`, `github` and `exec` modules are the effect wrappers it and the reference adapters use.
 
@@ -200,11 +207,15 @@ The other options are `healthTimeoutMs` (60000, per service), `host` (`127.0.0.1
 | `QA_BIND_HOST` | `127.0.0.1` | the address all three servers listen on (see [Security](#security)) |
 | `QA_ALLOWED_HOSTS` | *(none)* | extra comma-separated hostnames (no ports) the servers answer to |
 | `QA_HARNESS_PORT` / `QA_BASE_PROXY_PORT` / `QA_PR_PROXY_PORT` | `3100` / `3101` / `3102` | listen ports |
+| `QA_HARNESS_ORIGIN` | `https://<QA_PUBLIC_HOST>:8444`, else `http://<QA_BIND_HOST>:<QA_HARNESS_PORT>` on a loopback bind | the origin viewers open the harness at (any path dropped); the page is under `/qa/`. Required on a non-loopback bind with no public host. On port `0` the conductor derives it from the bound port |
 | `QA_BASE_ORIGIN` / `QA_PR_ORIGIN` | `https://<host>:8443` / `:10000` | public pane origins |
+| `QA_FRAME_ANCESTORS` | *(none)* | extra comma-separated origins allowed to frame the panes, for a harness nested in a pane (self-QA's inner demos). CSP only: they pass no `Referer` check, and the bridge never talks to them |
 | `QA_LABEL_ACCEPT` / `QA_LABEL_REJECT` | `qa-approved` / `qa-changes-requested` | verdict label pair |
 | `QA_IDLE_MINUTES` | `30` | idle sessions are torn down |
 
-A platform that builds `cfg` in code instead can leave out `host` (loopback is the default) and `allowedHosts`. The core reads `cfg.paneOrigins` per request, so it may be assigned once the proxies are listening.
+Every origin key must be an http(s) URL with a plain hostname. It is normalized to an origin (lowercased, a default port and any path dropped), and anything else throws. The harness and the two panes must be three different origins: a page that is same-origin with another could act for the reviewer there.
+
+A platform that builds `cfg` in code instead can leave out `host` (loopback is the default), `allowedHosts`, `harnessOrigin` (derived as above) and `frameAncestors`. `startConductor` refuses a `harnessOrigin` or `frameAncestors` entry that isn't an http(s) origin, and a harness origin equal to a pane origin. The core reads `cfg.paneOrigins` per request, so it may be assigned once the proxies are listening.
 
 **Migrating homefree to the package:** its RC app reaches the harness over the Docker bridge, so it will need `QA_BIND_HOST=0.0.0.0`, plus the hostname it uses for the host (for example `host.docker.internal`) in `QA_ALLOWED_HOSTS`.
 
@@ -213,7 +224,7 @@ A platform that builds `cfg` in code instead can leave out `host` (loopback is t
 | | |
 |---|---|
 | `GET /` | harness UI |
-| `GET /api/state` | session status, tags, `buildRun: {url, status, message}`, pane login URLs + origins |
+| `GET /api/state` | session status, tags, `buildRun: {url, status, message}`, pane login URLs + origins, `harnessOrigin` |
 | `GET /api/prs` | open PRs with build readiness (`imageStatus`, `runUrl`, `reason`) |
 | `GET /api/build-status?pr=N` | `{pr, status, exists, runUrl}`, plus `reason` when `status` is `blocked` |
 | `GET /api/progress` | server-sent boot progress (`step`, `build`, `ready`, `error` with `logTail`, `torn-down`) |
@@ -222,7 +233,7 @@ A platform that builds `cfg` in code instead can leave out `host` (loopback is t
 | `POST /api/verdict` `{verdict, notes}` | post the verdict comment and set the label |
 | `POST /api/teardown` `{}` | tear down the session (cancels an in-flight boot) |
 
-Every path also answers under a `/qa` prefix. POSTs must be same-origin and `application/json` (`403` / `415`), and a request to any of the three ports with an unrecognised `Host` gets `421`. A request target the harness can't parse as a URL gets `400`, and once `shutdown()` has begun every harness write gets `503`. While no session is ready, the pane proxies answer `503`.
+Every path also answers under a `/qa` prefix. Every `/api/*` request must come from the harness page itself, and a browser must reach it at the harness origin's host and port (`403`, see [Security](#security)). POSTs must be `application/json` (`415`), and a request to any of the three ports with an unrecognised `Host` gets `421`. A request target the harness can't parse as a URL gets `400`, and once `shutdown()` has begun every harness write gets `503`. While no session is ready, the pane proxies answer `503`.
 
 ## Demo
 
@@ -230,13 +241,15 @@ Every path also answers under a `/qa` prefix. POSTs must be same-origin and `app
 npm run demo            # then open http://127.0.0.1:4100/
 ```
 
+Open it at `127.0.0.1`: the panes trust only the harness origin, so at `localhost` the harness shows a banner and the panes stay blank.
+
 Demo mode runs the real conductor with fixture PRs and fake adapters, so you can try the whole harness with no GitHub, containers or databases. Everything listens on `127.0.0.1`: the harness on `PORT` (default `4100`), and the pane proxies and the two in-process pane apps on free ports. `QA_DEMO_SPEED` scales the fake build and boot delays (default `1`; `0` makes them instant). Ctrl-C (or SIGTERM/SIGHUP) stops it.
 
 - **#101, #102** are built and open in seconds. **#103** is mid-build. **#104** builds, then its app crashes at *starting*, with a log tail. **#105** is refused by the trust gate (its head is in someone else's fork).
 - The PR pane is visibly different from the base: a new heading, a purple accent and an extra sort control on *Products*. Both panes have several pages, forms and long pages, for trying mirroring.
 - Verdicts go to an in-memory GitHub fake and are printed to the console. Nothing leaves the machine.
 
-`demo/` is not published with the package. From code, `startDemo({ port, speed, log })` in `demo/index.mjs` returns `{ stop(), ports }`.
+`demo/` is not published with the package. From code, `startDemo({ port, speed, log, harnessOrigin, frameAncestors })` in `demo/index.mjs` returns `{ stop(), ports }`. Without a `harnessOrigin` the core derives `http://127.0.0.1:<port>`. `QA_HARNESS_ORIGIN` and `QA_FRAME_ANCESTORS` set the last two from `npm run demo`.
 
 ## QA this repo's own pull requests
 
@@ -248,7 +261,8 @@ npm run qa                                  # then open http://127.0.0.1:3100/
 qa-conductor QAs its own PRs with its own built-in adapters (`qa/self.mjs`):
 - **Panes.** Each pane is a git worktree of this repo, base (`main`) and the PR head, running demo mode (`node demo/server.mjs`). A UI change shows up side by side before it merges.
 - **Builds.** `build-worktree` checks a PR out only after the trust gate passes: the author has write access, and the head lives in this repo or the author's own fork. There is no install step, because the package has no dependencies.
-- **Processes.** `provisioner-process` runs each pane on `127.0.0.1` with only `PATH`, `PORT` and `QA_DEMO_SPEED` in its environment.
+- **Processes.** `provisioner-process` runs each pane on `127.0.0.1` with only `PATH`, `PORT`, `QA_DEMO_SPEED`, `QA_HARNESS_ORIGIN` and `QA_FRAME_ANCESTORS` in its environment.
+- **Nested harnesses.** Each pane's demo harness is seen at the outer pane's origin, inside the outer harness, and CSP `frame-ancestors` checks every ancestor. So each inner demo gets `QA_HARNESS_ORIGIN=<the pane's origin>` and `QA_FRAME_ANCESTORS=<the outer harness origin>`, and its own panes render and mirror inside the outer pane.
 - **Where things live.** Builds and the pidfile are under `$XDG_CACHE_HOME/qa-conductor/critical-labs-qa-conductor`, defaulting to `~/.cache/...`.
 - **Stopping.** Ctrl-C tears the panes down before exiting.
 
