@@ -28,9 +28,17 @@ test('selfQaCommand runs demo mode straight from the checkout on the reserved po
   })
 })
 
-test('the pane env is exactly PORT and QA_DEMO_SPEED', () => {
-  const { envTransform } = adapters()
-  assert.deepEqual(envTransform.derivePaneEnv({ prodEnv: { SECRET: 'x' }, pane }), { app: { PORT: '45678', QA_DEMO_SPEED: '1' } })
+test('the pane env is PORT, QA_DEMO_SPEED, the pane\'s own origin as QA_HARNESS_ORIGIN and the outer harness as QA_FRAME_ANCESTORS', () => {
+  // the inner demo's harness is seen at the outer pane's origin, framed by
+  // the outer harness: CSP checks every ancestor
+  const { envTransform } = adapters({ harnessOrigin: 'http://127.0.0.1:3100' })
+  assert.deepEqual(envTransform.derivePaneEnv({ prodEnv: { SECRET: 'x' }, pane }), {
+    app: { PORT: '45678', QA_DEMO_SPEED: '1', QA_HARNESS_ORIGIN: 'http://127.0.0.1:3102', QA_FRAME_ANCESTORS: 'http://127.0.0.1:3100' },
+  })
+  // without an outer origin there is no QA_FRAME_ANCESTORS
+  assert.deepEqual(adapters().envTransform.derivePaneEnv({ prodEnv: {}, pane }), {
+    app: { PORT: '45678', QA_DEMO_SPEED: '1', QA_HARNESS_ORIGIN: 'http://127.0.0.1:3102' },
+  })
   const slow = adapters({ speed: '0' })
   assert.equal(slow.envTransform.derivePaneEnv({ prodEnv: {}, pane }).app.QA_DEMO_SPEED, '0')
 })

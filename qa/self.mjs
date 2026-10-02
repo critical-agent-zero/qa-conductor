@@ -9,7 +9,8 @@
 //     author's own fork). There is no install step: the package has no
 //     dependencies.
 //   - provisioner-process runs `node demo/server.mjs` in each worktree with
-//     only PATH, PORT and QA_DEMO_SPEED in its environment, on 127.0.0.1.
+//     only PATH, PORT, QA_DEMO_SPEED, QA_HARNESS_ORIGIN and
+//     QA_FRAME_ANCESTORS in its environment, on 127.0.0.1.
 //
 //   .env.qa (or QA_ENV_FILE)  GITHUB_QA_TOKEN (required); optional QA_REPO,
 //                             QA_BASE_REF (default main), QA_IDLE_MINUTES,
@@ -44,7 +45,10 @@ export function selfQaCommand({ ref, port }, execPath = process.execPath) {
   return { cmd: execPath, args: ['demo/server.mjs'], cwd: ref, env: { PORT: String(port) } }
 }
 
-export function selfQaAdapters({ repo, github, cacheDir, baseRef = 'main', speed = '1', execPath = process.execPath }) {
+// `harnessOrigin` is this conductor's own harness origin. Each pane's demo
+// harness is seen at the pane's public origin, framed by this harness, and
+// CSP frame-ancestors checks every ancestor: the inner panes must allow both.
+export function selfQaAdapters({ repo, github, cacheDir, baseRef = 'main', speed = '1', execPath = process.execPath, harnessOrigin = null }) {
   return {
     build: createWorktreeBuild({
       repo,
@@ -62,7 +66,14 @@ export function selfQaAdapters({ repo, github, cacheDir, baseRef = 'main', speed
     }),
     seed: { databases: [], seedPane: async () => {} },
     envTransform: {
-      derivePaneEnv: ({ pane }) => ({ app: { PORT: String(pane.services.app.port), QA_DEMO_SPEED: speed } }),
+      derivePaneEnv: ({ pane }) => ({
+        app: {
+          PORT: String(pane.services.app.port),
+          QA_DEMO_SPEED: speed,
+          QA_HARNESS_ORIGIN: pane.publicOrigin,
+          ...(harnessOrigin ? { QA_FRAME_ANCESTORS: harnessOrigin } : {}),
+        },
+      }),
     },
     auth: {
       requiresDb: false,
@@ -93,9 +104,12 @@ export async function runSelfQa({ env = process.env, proc = process, log = conso
     github,
     cacheDir: cacheDirFor(cfg.repo, env),
     baseRef: cfg.env.QA_BASE_REF || 'main',
+    harnessOrigin: cfg.harnessOrigin,
   })
   const conductor = startConductor({ cfg, github, fsx: { readFile: p => fs.promises.readFile(p) }, adapters, log })
-  log.log(`[qa] open http://${cfg.host}:${cfg.ports.harness}/ (Ctrl-C to stop; panes are torn down on exit)`)
+  // On port 0 the origin is known once the harness listens, and logged then.
+  const url = cfg.harnessOrigin ? `${cfg.harnessOrigin}/` : 'the "[qa] harness at" URL'
+  log.log(`[qa] open ${url} (Ctrl-C to stop; panes are torn down on exit)`)
 
   let stopping = false
   const onSignal = signal => {
