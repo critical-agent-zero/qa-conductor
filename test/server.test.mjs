@@ -530,6 +530,21 @@ test('/api/state reports the harness origin', async () => {
   }
 })
 
+// A `::1` bind derives http://[::1]:<port>, and a CSP source can't name an
+// IPv6 literal: no harness could frame the panes.
+test('an IPv6-literal harness origin is logged as an error naming a localhost origin to use', async () => {
+  const { c, logLines, errorLines } = makeWorld({ cfg: { harnessOrigin: 'http://[::1]:3100' } })
+  try {
+    const { base } = await allPorts(c)
+    assert.ok(logLines.includes('[qa] harness at http://[::1]:3100/qa/'), logLines.join('\n'))
+    assert.ok(
+      errorLines.includes('[qa] the harness origin http://[::1]:3100 is an IPv6 literal, which frame-ancestors cannot name: the panes will stay blank; set QA_HARNESS_ORIGIN=http://localhost:3100'),
+      errorLines.join('\n'),
+    )
+    assert.equal((await raw(base, { path: '/x' })).headers['content-security-policy'], "frame-ancestors 'self'")
+  } finally { c.stop() }
+})
+
 // --- 0.3.0: frame locks ----------------------------------------------------------
 
 const HARNESS_FRAME = { 'content-security-policy': "frame-ancestors 'self'", 'x-frame-options': 'SAMEORIGIN', 'referrer-policy': 'strict-origin-when-cross-origin' }
