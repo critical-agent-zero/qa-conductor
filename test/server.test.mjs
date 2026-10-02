@@ -23,10 +23,12 @@ function makeWorld({
   cfg: cfgOverrides = {}, readBaseEnv: readBaseEnvOverride = null,
 } = {}) {
   const calls = []
-  const apps = {
-    base: http.createServer((req, res) => res.end('pane-base')),
-    pr: http.createServer((req, res) => res.end('pane-pr')),
-  }
+  // '/page' answers HTML, so the proxy injects the bridge; anything else is text.
+  const app = name => http.createServer((req, res) => {
+    if (req.url === '/page') res.setHeader('content-type', 'text/html')
+    res.end(req.url === '/page' ? `<head></head>${name}` : name)
+  })
+  const apps = { base: app('pane-base'), pr: app('pane-pr') }
   for (const s of Object.values(apps)) s.listen(0, '127.0.0.1')
   const appPort = role => apps[role].address().port
   const provisioner = {
@@ -111,6 +113,14 @@ async function harnessPort(c) {
   return proxyPort(c.servers.harness)
 }
 
+async function allPorts(c) {
+  return {
+    harness: await harnessPort(c),
+    base: await proxyPort(c.servers.baseProxy),
+    pr: await proxyPort(c.servers.prProxy),
+  }
+}
+
 // POSTs always carry a JSON content type (the harness requires it).
 async function api(port, method, path, body) {
   const post = method === 'POST'
@@ -126,7 +136,7 @@ function raw(port, { method = 'GET', path = '/', headers = {}, body = null } = {
     const req = http.request({ host: '127.0.0.1', port, method, path, headers, agent: false }, res => {
       const chunks = []
       res.on('data', c => chunks.push(c))
-      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString() }))
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() }))
     })
     req.on('error', reject)
     if (body != null) req.write(body)
@@ -371,11 +381,11 @@ test('an unparseable request target gets 421/400 and the harness stays up', asyn
   } finally { c.stop() }
 })
 
-test('allowed Hosts: loopback, the public host, the pane origin hosts, QA_ALLOWED_HOSTS', async () => {
-  const { c, cfg } = makeWorld({ cfg: { allowedHosts: ['qa.corp.example'] } })
+test('allowed Hosts: loopback, the public host, the pane origin hosts, the harness origin host, QA_ALLOWED_HOSTS', async () => {
+  const { c, cfg } = makeWorld({ cfg: { allowedHosts: ['qa.corp.example'], harnessOrigin: 'https://harness.example:8445' } })
   try {
     const port = await harnessPort(c)
-    for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`, 'h.ts.net', 'H.TS.NET:443', 'h:8443', 'qa.corp.example']) {
+    for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`, 'h.ts.net', 'H.TS.NET:443', 'h:8443', 'qa.corp.example', 'harness.example', 'HARNESS.example:8445']) {
       assert.equal((await raw(port, { path: '/api/state', headers: { host } })).status, 200, host)
     }
     // pane origins are read per request (a platform may assign them after start)
@@ -384,39 +394,313 @@ test('allowed Hosts: loopback, the public host, the pane origin hosts, QA_ALLOWE
     assert.equal((await raw(port, { path: '/api/state', headers: { host: 'late.example' } })).status, 200)
     const base = await proxyPort(c.servers.baseProxy)
     assert.equal((await raw(base, { path: '/', headers: { host: 'late.example:4101' } })).status, 503, 'proxies share the allowlist')
+    assert.equal((await raw(base, { path: '/', headers: { host: 'harness.example' } })).status, 503)
   } finally { c.stop() }
 })
 
-test('a cross-site POST to the API gets 403; same-origin and non-browser POSTs pass', async () => {
-  const { c, calls } = makeWorld()
+// PR code in a pane runs in the reviewer's browser, and so does any page the
+// reviewer has open: only the harness page itself may use the API. Another
+// page can't read the answers, but its writes would run, and each read of
+// /api/prs or /api/build-status spends GitHub API calls on the conductor's
+// token (merged from homefree #329's three harness API tests).
+test('every /api/* request from another page gets 403, reads and the event stream included; the page itself and non-browser clients pass', async () => {
+  const { c, calls, github } = makeWorld()
   try {
     const port = await harnessPort(c)
     const host = `127.0.0.1:${port}`
+    const hits = []
+    github.listOpenPrs = async () => { hits.push('listOpenPrs'); return [] }
+    github.prHead = async () => { hits.push('prHead'); return 'abc' }
     const json = { 'content-type': 'application/json' }
-    const post = (path, headers) => raw(port, { method: 'POST', path, headers: { host, ...json, ...headers }, body: '{}' })
+    const post = (path, headers) => raw(port, { method: 'POST', path, headers: { host, ...json, ...headers }, body: '{"pr":7,"verdict":"accept"}' })
     for (const headers of [
       { 'sec-fetch-site': 'cross-site' },
       { 'sec-fetch-site': 'same-site' },
       // sec-fetch-site wins over a matching origin
       { 'sec-fetch-site': 'cross-site', origin: `http://${host}` },
+      // a pane's page: another port of the same host
+      { 'sec-fetch-site': 'same-site', origin: 'https://h:10000' },
       { origin: 'http://attacker.example' },
       { origin: `http://127.0.0.1:${port + 1}` },
       { origin: 'null' },
+      { origin: 'not a url' },
     ]) {
-      assert.equal((await post('/api/teardown', headers)).status, 403, JSON.stringify(headers))
-      assert.equal((await post('/qa/api/teardown', headers)).status, 403, `/qa prefix: ${JSON.stringify(headers)}`)
+      // the check covers every /api/* request, routed or not
+      for (const path of ['/api/teardown', '/qa/api/teardown', '/qa/api/session', '/qa/api/verdict', '/api/nope']) {
+        const res = await post(path, headers)
+        assert.equal(res.status, 403, `${path} ${JSON.stringify(headers)}`)
+        assert.match(res.body, /cross-site request refused/)
+      }
     }
-    assert.equal(calls.some(x => x[0] === 'teardown'), false, 'a refused request does nothing')
-    // the check covers every non-GET/HEAD /api/* request, routed or not
-    assert.equal((await post('/api/nope', { origin: 'http://attacker.example' })).status, 403)
+    const reads = [
+      '/qa/api/prs', '/api/prs', '/qa/api/build-status?pr=7', '/qa/api/state', '/qa/api/progress',
+      '/qa/api/verdict/preview?verdict=accept', '/qa/api/nope',
+    ]
+    for (const headers of [
+      // <img src="http://127.0.0.1:3100/qa/api/prs"> on another site
+      { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'image' },
+      // fetch(url, { mode: 'no-cors' }) from a pane
+      { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'empty' },
+      // new EventSource(url) from a pane
+      { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty', origin: 'https://h:10000' },
+      // a link or window.open to the API
+      { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' },
+      // an older browser's CORS read: Origin alone
+      { origin: 'https://evil.example' },
+    ]) {
+      for (const path of reads) {
+        const res = await raw(port, { path, headers: { host, ...headers } })
+        assert.equal(res.status, 403, `${path} ${JSON.stringify(headers)}`)
+        assert.match(res.body, /cross-site request refused/)
+      }
+    }
+    assert.deepEqual(hits, [])
+    assert.equal(calls.some(x => x[0] === 'teardown' || x[0] === 'ensureBuilt' || x[0] === 'comment'), false, 'a refused request does nothing')
 
-    assert.equal((await post('/api/teardown', { 'sec-fetch-site': 'same-origin' })).status, 200)
-    assert.equal((await post('/api/teardown', { 'sec-fetch-site': 'none' })).status, 200)
-    assert.equal((await post('/api/teardown', { origin: `http://${host}` })).status, 200)
-    assert.equal((await post('/api/teardown', {})).status, 200, 'no browser headers: a non-browser client')
-    // reads are not checked
-    assert.equal((await raw(port, { path: '/api/state', headers: { host, 'sec-fetch-site': 'cross-site' } })).status, 200)
+    // the harness page's own fetches, the operator's own navigation, and curl
+    for (const headers of [
+      { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' },
+      { 'sec-fetch-site': 'none' },
+      { origin: `http://${host}` },
+      {},
+    ]) {
+      assert.equal((await post('/api/teardown', headers)).status, 200, JSON.stringify(headers))
+      assert.equal((await raw(port, { path: '/qa/api/prs', headers: { host, ...headers } })).status, 200, JSON.stringify(headers))
+    }
+    assert.deepEqual(hits, ['listOpenPrs', 'listOpenPrs', 'listOpenPrs', 'listOpenPrs'])
+    // the harness page at the harness origin's own host:port
+    const own = { origin: 'https://h.ts.net:8444', host: 'h.ts.net:8444' }
+    assert.equal((await raw(port, { method: 'POST', path: '/qa/api/session', body: '{"pr":7}', headers: { ...json, ...own } })).status, 202)
+    // (the stream sends its headers with its first event, so a session runs)
+    const stream = await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port, path: '/qa/api/progress', headers: { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors' } }, res => { res.destroy(); resolve(res) }).on('error', reject)
+    })
+    assert.equal(stream.statusCode, 200)
+    // the page itself still opens from a link on any site
+    for (const path of ['/qa', '/qa/harness.js']) {
+      const res = await raw(port, { path, headers: { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' } })
+      assert.equal(res.status, 200, path)
+    }
   } finally { c.stop() }
+})
+
+// A page at another port of the harness's hostname is same-origin with the
+// handler that served it. If that handler proxies to the harness too (a stale
+// tailscale serve mount), only the host:port check keeps the page out.
+test('a browser /api/* request whose Host is another port of the harness hostname gets 403 not the harness origin; loopback Hosts and curl pass', async () => {
+  const { c, calls } = makeWorld()
+  try {
+    const port = await harnessPort(c)
+    for (const host of ['h.ts.net:8446', 'h.ts.net', 'h:8443']) {
+      for (const headers of [{ 'sec-fetch-site': 'same-origin' }, { origin: `https://${host}` }]) {
+        const read = await raw(port, { path: '/qa/api/state', headers: { host, ...headers } })
+        assert.deepEqual([read.status, JSON.parse(read.body)], [403, { error: 'not the harness origin' }], `${host} ${JSON.stringify(headers)}`)
+        const write = await raw(port, { method: 'POST', path: '/qa/api/teardown', body: '{}', headers: { host, 'content-type': 'application/json', ...headers } })
+        assert.equal(write.status, 403, `${host} ${JSON.stringify(headers)}`)
+      }
+    }
+    assert.equal(calls.some(x => x[0] === 'teardown'), false)
+    // the harness origin itself
+    assert.equal((await raw(port, { path: '/qa/api/state', headers: { host: 'h.ts.net:8444', 'sec-fetch-site': 'same-origin' } })).status, 200)
+    assert.equal((await raw(port, { path: '/qa/api/state', headers: { host: 'H.TS.NET:8444', 'sec-fetch-site': 'same-origin' } })).status, 200)
+    assert.equal((await raw(port, { path: '/qa/api/state', headers: { host: 'h.ts.net:8444', origin: 'https://h.ts.net:8444' } })).status, 200)
+    // loopback Hosts: the harness opened at localhost, and nested demos
+    for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`]) {
+      assert.equal((await raw(port, { path: '/qa/api/state', headers: { host, 'sec-fetch-site': 'same-origin' } })).status, 200, host)
+    }
+    // curl through any handler
+    assert.equal((await raw(port, { path: '/qa/api/state', headers: { host: 'h.ts.net:8446' } })).status, 200)
+    // the page itself is not an API route
+    assert.equal((await raw(port, { path: '/qa/', headers: { host: 'h.ts.net:8446', 'sec-fetch-site': 'none' } })).status, 200)
+  } finally { c.stop() }
+})
+
+test('/api/state reports the harness origin', async () => {
+  for (const [cfg, want] of [
+    [{}, () => 'https://h.ts.net:8444'],
+    [{ harnessOrigin: 'https://Q.example:8445/qa/' }, () => 'https://q.example:8445'],
+    [{ publicHost: null }, port => `http://127.0.0.1:${port}`],
+  ]) {
+    const { c } = makeWorld({ cfg })
+    try {
+      const port = await harnessPort(c)
+      assert.equal((await api(port, 'GET', '/api/state')).harnessOrigin, want(port), JSON.stringify(cfg))
+    } finally { c.stop() }
+  }
+})
+
+// --- 0.3.0: frame locks ----------------------------------------------------------
+
+const HARNESS_FRAME = { 'content-security-policy': "frame-ancestors 'self'", 'x-frame-options': 'SAMEORIGIN', 'referrer-policy': 'strict-origin-when-cross-origin' }
+const frameHeaders = res => Object.fromEntries(Object.keys(HARNESS_FRAME).map(k => [k, res.headers[k]]))
+
+// The harness starts sessions and posts verdicts in one click, so a page that
+// framed it could trick the operator into clicking (clickjacking). The
+// Referrer-Policy keeps the harness origin in the Referer the panes check,
+// whatever a browser's default.
+test('every harness response forbids framing by other pages and sets the Referrer-Policy, 403s, 421s, 400s and errors included', async () => {
+  const { c } = makeWorld()
+  try {
+    const port = await harnessPort(c)
+    const cases = [
+      [{ path: '/qa' }, 200],
+      [{ path: '/qa/harness.js' }, 200],
+      [{ path: '/qa/api/state' }, 200],
+      [{ path: '/qa/api/build-status?pr=x' }, 400],
+      [{ path: '/qa/api/verdict/preview?verdict=accept' }, 409],
+      [{ path: '/qa/nope' }, 404],
+      [{ method: 'POST', path: '/qa/api/teardown', headers: { 'sec-fetch-site': 'same-site' } }, 403],
+      [{ path: '/qa/api/state', headers: { host: 'h.ts.net:8446', 'sec-fetch-site': 'same-origin' } }, 403],
+      [{ method: 'POST', path: '/qa/api/teardown', headers: { 'content-type': 'text/plain' } }, 415],
+      [{ method: 'POST', path: '/qa/api/session', body: '{}', headers: { 'content-type': 'application/json' } }, 400],
+      [{ path: '/qa', headers: { host: 'attacker.example' } }, 421],
+      [{ path: '//x:99999' }, 400],
+    ]
+    for (const [r, status] of cases) {
+      const res = await raw(port, r)
+      const label = `${r.method ?? 'GET'} ${r.path} ${JSON.stringify(r.headers ?? {})}`
+      assert.equal(res.status, status, label)
+      assert.deepEqual(frameHeaders(res), HARNESS_FRAME, label)
+    }
+    // the progress stream never ends (and sends its headers with the first
+    // event): start a session, then check the stream's headers and hang up
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const stream = await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port, path: '/qa/api/progress' }, res => { res.destroy(); resolve(res) }).on('error', reject)
+    })
+    assert.equal(stream.headers['content-type'], 'text/event-stream')
+    assert.deepEqual(frameHeaders(stream), HARNESS_FRAME)
+  } finally { c.stop() }
+})
+
+test('a harness 500 forbids framing too', async () => {
+  const { c, github } = makeWorld()
+  try {
+    const port = await harnessPort(c)
+    github.listOpenPrs = async () => { throw new Error('github down') }
+    const res = await raw(port, { path: '/qa/api/prs' })
+    assert.equal(res.status, 500)
+    assert.deepEqual(frameHeaders(res), HARNESS_FRAME)
+  } finally { c.stop() }
+})
+
+// The pane proxies sign every request in as the operator, so they too must
+// tell the pane's own pages from others, and only the harness may frame them
+// (as its Referer shows: frame-ancestors stops only the render).
+test('both panes refuse other pages\' writes and subresource loads, and only the harness, at the origin derived from its bound port, may frame them', async () => {
+  const { c } = makeWorld({ cfg: { publicHost: null } })
+  try {
+    const { harness, base, pr } = await allPorts(c)
+    const HARNESS = `http://127.0.0.1:${harness}`
+    await api(harness, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(harness, 'GET', '/api/state')).status === 'ready')
+    for (const port of [base, pr]) {
+      const other = port === base ? pr : base
+      for (const site of ['same-site', 'cross-site']) {
+        const res = await raw(port, { method: 'POST', path: '/x', body: '{}', headers: { 'sec-fetch-site': site, origin: HARNESS } })
+        assert.equal(res.status, 403, `${port} ${site}`)
+        assert.doesNotMatch(res.body, /pane-/)
+      }
+      const own = await raw(port, { method: 'POST', path: '/x', body: '{}', headers: { 'sec-fetch-site': 'same-origin' } })
+      assert.equal(own.status, 200)
+      // another page's <img> or no-cors fetch, and another page's frame
+      for (const headers of [
+        { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'image' },
+        { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'empty' },
+        { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe', referer: `http://127.0.0.1:${other}/` },
+        { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe', referer: `http://localhost:${harness}/` },
+      ]) {
+        const res = await raw(port, { path: '/page', headers })
+        assert.equal(res.status, 403, `${port} ${JSON.stringify(headers)}`)
+        assert.doesNotMatch(res.body, /pane-/)
+        assert.equal(res.headers['content-security-policy'], `frame-ancestors 'self' ${HARNESS}`)
+      }
+      // the harness loading the pane in its iframe
+      const page = await raw(port, {
+        path: '/page',
+        headers: { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe', referer: `${HARNESS}/` },
+      })
+      assert.equal(page.status, 200)
+      assert.equal(page.headers['content-security-policy'], `frame-ancestors 'self' ${HARNESS}`)
+      assert.equal(page.headers['x-content-type-options'], 'nosniff')
+      assert.match(page.body, new RegExp(`<script src="/__qa/bridge\\.js" data-harness="${HARNESS}"></script></head>pane-`))
+    }
+  } finally { c.stop() }
+})
+
+test('a derived harness origin frames the panes and is logged', async () => {
+  const { c, logLines, errorLines } = makeWorld({ cfg: { publicHost: null, frameAncestors: ['https://outer.example:8444'] } })
+  try {
+    const { harness, base, pr } = await allPorts(c)
+    const origin = `http://127.0.0.1:${harness}`
+    assert.ok(logLines.includes(`[qa] harness at ${origin}/qa/`), logLines.join('\n'))
+    for (const port of [base, pr]) {
+      assert.equal((await raw(port, { path: '/x' })).headers['content-security-policy'], `frame-ancestors 'self' ${origin} https://outer.example:8444`)
+    }
+    assert.equal(errorLines.some(l => /harness origin/.test(l)), false, errorLines.join('\n'))
+  } finally { c.stop() }
+  // a configured origin is logged as it is
+  const configured = makeWorld()
+  try {
+    await harnessPort(configured.c)
+    assert.ok(configured.logLines.includes('[qa] harness at https://h.ts.net:8444/qa/'), configured.logLines.join('\n'))
+  } finally { configured.c.stop() }
+})
+
+test('a pane 421 carries the pane frame-ancestors', async () => {
+  const { c } = makeWorld()
+  try {
+    const { base, pr } = await allPorts(c)
+    for (const port of [base, pr]) {
+      const res = await raw(port, { path: '/x', headers: { host: 'attacker.example' } })
+      assert.equal(res.status, 421)
+      assert.equal(res.headers['content-security-policy'], "frame-ancestors 'self' https://h.ts.net:8444")
+      assert.equal(res.headers['x-content-type-options'], 'nosniff')
+      assert.equal(res.headers['x-frame-options'], undefined)
+    }
+  } finally { c.stop() }
+})
+
+// --- 0.3.0: start-time origin checks ---------------------------------------------
+
+// startConductor with no side effects to clean up: it must throw first.
+function startOnly(cfgOverrides) {
+  return startConductor({
+    cfg: {
+      publicHost: 'h.ts.net', ports: { harness: 0, base: 0, pr: 0 }, idleMinutes: 30,
+      paneOrigins: { base: 'https://h:8443', pr: 'https://h:10000' }, verdictLabels: { accept: 'ok', reject: 'nope' },
+      ...cfgOverrides,
+    },
+    github: {},
+    fsx: {},
+    adapters: { provisioner: { sweep: () => { throw new Error('ran') } }, build: {} },
+    log: { log() {}, error() {} },
+  })
+}
+
+test('startConductor refuses a cfg.harnessOrigin or cfg.frameAncestors entry that is not an http(s) origin', () => {
+  for (const bad of ['h.ts.net:8444', 'file:///x', 'data:text/html,x', '*', 'https://a;b', '', 42]) {
+    assert.throws(() => startOnly({ harnessOrigin: bad }), /cfg\.harnessOrigin must be an origin/, String(bad))
+    assert.throws(() => startOnly({ frameAncestors: ['https://ok.example', bad] }), /cfg\.frameAncestors must be an origin/, String(bad))
+  }
+  assert.throws(() => startOnly({ publicHost: 'h.ts.net;x' }), /must be an origin/)
+})
+
+test('startConductor refuses a harness origin, explicit or derived from publicHost, equal to a pane origin; equal pane placeholders start', async () => {
+  assert.throws(() => startOnly({ harnessOrigin: 'https://H:8443/qa/' }), /harness origin https:\/\/h:8443 is also the base pane's origin/)
+  assert.throws(() => startOnly({ paneOrigins: { base: 'https://h:8443', pr: 'https://h.ts.net:8444/' } }), /harness origin https:\/\/h\.ts\.net:8444 is also the pr pane's origin/)
+  // derived from a fixed loopback port
+  assert.throws(() => startOnly({ publicHost: null, ports: { harness: 3100, base: 0, pr: 0 }, paneOrigins: { base: 'http://127.0.0.1:3100', pr: 'x' } }), /base pane/)
+
+  // the demo's placeholders are equal until its proxies listen; an
+  // unparseable pane origin is skipped here
+  for (const paneOrigins of [{ base: 'http://127.0.0.1', pr: 'http://127.0.0.1' }, { base: 'not a url', pr: 'https://h:10000' }]) {
+    const { c } = makeWorld({ cfg: { publicHost: null, paneOrigins } })
+    try {
+      const port = await harnessPort(c)
+      assert.equal((await api(port, 'GET', '/api/state')).status, 'idle', JSON.stringify(paneOrigins))
+    } finally { c.stop() }
+  }
 })
 
 test('POST /api/session, /api/verdict and /api/teardown require application/json (else 415)', async () => {

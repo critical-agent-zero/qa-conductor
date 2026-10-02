@@ -146,7 +146,7 @@ test('a good PR reaches ready, and both pane proxies serve distinguishable pages
     assert.match(base, /main@demo123/)
     assert.match(pr, /#101@abc1234/)
     for (const html of [base, pr]) {
-      assert.match(html, /<script src="\/__qa\/bridge\.js"><\/script>/, 'served through the pane proxy')
+      assert.ok(html.includes(`<script src="/__qa/bridge.js" data-harness="http://127.0.0.1:${demo.ports.harness}"></script>`), 'served through the pane proxy')
       for (const href of ['/products', '/guide', '/contact', '/cart']) assert.ok(html.includes(`href="${href}"`), href)
     }
 
