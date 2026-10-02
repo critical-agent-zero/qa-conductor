@@ -4,9 +4,17 @@ A side-by-side PR-QA harness. For a pull request it boots two copies of your app
 
 The conductor owns the choreography: session state, cancellation, the harness UI and API, the pane proxies and the verdict. Everything about *your* app and infrastructure comes from five adapters you supply.
 
-> **Status: 0.x, pre-release.** The interface may still change while a second consumer is integrated. Install from git; nothing is published to npm yet. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+> **Status: 0.x, pre-release.** The interface may still change while a second consumer is integrated. It is published to npm from 0.3.0; until then, install from a git tag. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Install
+
+From npm, from 0.3.0:
+
+```sh
+npm install @critical-labs/qa-conductor
+```
+
+Consumers that pin a git tag may keep doing so:
 
 ```sh
 npm install github:critical-labs/qa-conductor#v0.2.1
@@ -279,6 +287,15 @@ npm test
 ```
 
 The suite runs on `node:test` with injected effects, so it needs no Docker, network or GitHub.
+
+## Releasing
+
+1. Bump `version` in `package.json`, and turn the CHANGELOG's `Unreleased` heading into that version.
+2. Once that is on `main`, tag it `vX.Y.Z` and push the tag.
+3. The [publish workflow](.github/workflows/publish.yml) refuses a tag that isn't `v` plus the `package.json` version. Then it runs the tests and `npm pack --dry-run`, and stages the version on npm with provenance (`npm stage publish`).
+4. A maintainer approves the staged version on npmjs.com. Only then does it go live.
+
+Nothing publishes directly: the workflow's npm token can only stage, and `test/package.test.mjs` fails on any other publish command in the workflow.
 
 ## License
 
