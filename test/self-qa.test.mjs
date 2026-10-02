@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -41,6 +41,41 @@ test('the pane env is PORT, QA_DEMO_SPEED, the pane\'s own origin as QA_HARNESS_
   })
   const slow = adapters({ speed: '0' })
   assert.equal(slow.envTransform.derivePaneEnv({ prodEnv: {}, pane }).app.QA_DEMO_SPEED, '0')
+})
+
+test('the outer harness origin may be a function, read each time a pane env is derived', () => {
+  let origin = null
+  const { envTransform } = adapters({ harnessOrigin: () => origin })
+  assert.equal(envTransform.derivePaneEnv({ prodEnv: {}, pane }).app.QA_FRAME_ANCESTORS, undefined)
+  origin = 'http://127.0.0.1:41234'
+  assert.equal(envTransform.derivePaneEnv({ prodEnv: {}, pane }).app.QA_FRAME_ANCESTORS, 'http://127.0.0.1:41234')
+})
+
+// The inner demos' panes render only when they allow this harness as an
+// ancestor. On QA_HARNESS_PORT=0 its origin is the bound port's, known once
+// the harness listens, which is before any pane boots.
+test('runSelfQa gives the pane env the outer harness origin, on a fixed port and on port 0', async () => {
+  for (const [lines, want] of [
+    [[], 'http://127.0.0.1:3100'],
+    [['QA_HARNESS_PORT=4100'], 'http://127.0.0.1:4100'],
+    [['QA_HARNESS_PORT=0'], 'http://127.0.0.1:45999'],
+  ]) {
+    const dir = mkdtempSync(join(tmpdir(), 'self-qa-env-'))
+    const file = join(dir, '.env.qa')
+    writeFileSync(file, ['GITHUB_QA_TOKEN=tok', ...lines].join('\n'))
+    let listening = false
+    const fake = { servers: { harness: { address: () => (listening ? { port: 45999 } : null) } }, shutdown: async () => {} }
+    let started = null
+    const conductor = await runSelfQa({
+      env: { QA_ENV_FILE: file, XDG_CACHE_HOME: join(dir, 'cache') },
+      proc: { on() {}, exit() {} },
+      log: { log() {}, error() {} },
+      start: opts => { started = opts; return fake },
+    })
+    assert.equal(conductor, fake)
+    listening = true
+    assert.equal(started.adapters.envTransform.derivePaneEnv({ prodEnv: {}, pane }).app.QA_FRAME_ANCESTORS, want, lines.join())
+  }
 })
 
 test('auth lands on the pane origin; there is no database or seed', async () => {
