@@ -95,7 +95,12 @@ function harnessOriginNotice(configured, current) {
   async function render() {
     const route = parseHash()
     let s
-    try { s = await api('/state'); showOriginNotice(s.harnessOrigin) } catch { s = { status: 'idle' } }
+    try { s = await api('/state'); showOriginNotice(s.harnessOrigin) } catch (e) {
+      // At another host or port than the harness origin's, the API refuses a
+      // browser (403 not the harness origin) and names the origin instead.
+      showOriginNotice(e && e.body ? e.body.harnessOrigin : null)
+      s = { status: 'idle' }
+    }
     const active = s.status !== 'idle'
     if (route.view === 'picker' || !route.pr) { teardownSessionUi(); return renderPicker(s) }
     if (active && s.pr === route.pr) {

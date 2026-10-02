@@ -493,8 +493,9 @@ test('a browser /api/* request whose Host is another port of the harness hostnam
     const port = await harnessPort(c)
     for (const host of ['h.ts.net:8446', 'h.ts.net', 'h:8443']) {
       for (const headers of [{ 'sec-fetch-site': 'same-origin' }, { origin: `https://${host}` }]) {
+        // the refusal names the harness origin, for the harness page's banner
         const read = await raw(port, { path: '/qa/api/state', headers: { host, ...headers } })
-        assert.deepEqual([read.status, JSON.parse(read.body)], [403, { error: 'not the harness origin' }], `${host} ${JSON.stringify(headers)}`)
+        assert.deepEqual([read.status, JSON.parse(read.body)], [403, { error: 'not the harness origin', harnessOrigin: 'https://h.ts.net:8444' }], `${host} ${JSON.stringify(headers)}`)
         const write = await raw(port, { method: 'POST', path: '/qa/api/teardown', body: '{}', headers: { host, 'content-type': 'application/json', ...headers } })
         assert.equal(write.status, 403, `${host} ${JSON.stringify(headers)}`)
       }
