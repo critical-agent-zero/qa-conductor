@@ -685,3 +685,46 @@ test('a request the harness Referer admits gets the whole jar', async (t) => {
     assert.equal((await request(proxyPort, '/echo', { headers })).body.toString(), all, JSON.stringify(headers))
   }
 })
+
+// A redirect's own Referrer-Policy sets the Referer of the request it leads to.
+// The harness's Referer is what admits the next hop, so an app's no-referrer
+// (helmet's default) or same-origin (Django's) on a redirect within the pane
+// would get the app's own redirect refused: a magic-link landing that
+// redirects home, or a trailing-slash redirect on resync.
+test('a redirect that stays on the pane drops the app\'s Referrer-Policy; a redirect elsewhere and other responses keep it', async (t) => {
+  let upstreamPortRef
+  const { upstreamPort, proxyPort } = await setup(t, (req, res) => {
+    const to = new URL(req.url, 'http://x').searchParams.get('to')
+    res.setHeader('referrer-policy', 'no-referrer')
+    if (to === null) return res.end('page')
+    res.statusCode = to === 'rel' ? 301 : 302
+    res.setHeader('location', {
+      rel: '/home',
+      bare: 'home',
+      query: '?next=1',
+      upstream: `http://127.0.0.1:${upstreamPortRef}/home`,
+      pane: 'https://h.ts.net:10000/home',
+      paneUpper: 'https://H.TS.NET:10000/home',
+      foreign: 'https://example.com/x',
+      schemeRelative: '//evil.example/x',
+      backslash: '/\\evil.example/x',
+      otherPort: 'https://h.ts.net:8443/x',
+    }[to])
+    res.end()
+  }, GUARDED)
+  upstreamPortRef = upstreamPort
+  const frame = { ...PANE_HOST, ...FROM_HARNESS, 'sec-fetch-dest': 'iframe' }
+  const policyOf = async to => {
+    const res = await request(proxyPort, `/landing?to=${to}`, { headers: frame })
+    assert.ok(res.status >= 300 && res.status < 400, `${to}: ${res.status}`)
+    return res.headers['referrer-policy']
+  }
+  for (const to of ['rel', 'bare', 'query', 'upstream', 'pane', 'paneUpper']) {
+    assert.equal(await policyOf(to), undefined, to)
+  }
+  for (const to of ['foreign', 'schemeRelative', 'backslash', 'otherPort']) {
+    assert.equal(await policyOf(to), 'no-referrer', to)
+  }
+  // a page keeps its policy: it governs the requests that page makes
+  assert.equal((await request(proxyPort, '/page', { headers: frame })).headers['referrer-policy'], 'no-referrer')
+})
