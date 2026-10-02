@@ -1,0 +1,46 @@
+name: publish
+
+# A pushed v<version> tag stages that version on npm. Nothing goes live until a
+# maintainer approves the staged version on npmjs.com. NPM_TOKEN is the org's
+# stage-only token for @critical-labs, so a plain publish would be refused.
+# test/package.test.mjs pins the shape of this file.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          # Staged publishing needs Node >= 22.14 and npm >= 11.15.
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@^11.15.0
+      # The tag names the release, package.json is what gets packed: refuse a
+      # tag that would stage some other version under its name.
+      - name: Check the tag matches package.json
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version (want v$version)"
+            exit 1
+          fi
+      - run: npm test
+      # Lists exactly what the stage step will upload.
+      - run: npm pack --dry-run
+      - name: Stage publish (a maintainer approves on npmjs.com to go live)
+        run: npm stage publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"
