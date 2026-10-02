@@ -717,6 +717,11 @@ test('a redirect that stays on the pane drops the app\'s Referrer-Policy; a redi
     const to = new URL(req.url, 'http://x').searchParams.get('to')
     res.setHeader('referrer-policy', 'no-referrer')
     if (to === null) return res.end('page')
+    if (to === 'created') {
+      res.statusCode = 201
+      res.setHeader('location', '/home')
+      return res.end()
+    }
     res.statusCode = to === 'rel' ? 301 : 302
     res.setHeader('location', {
       rel: '/home',
@@ -747,4 +752,9 @@ test('a redirect that stays on the pane drops the app\'s Referrer-Policy; a redi
   }
   // a page keeps its policy: it governs the requests that page makes
   assert.equal((await request(proxyPort, '/page', { headers: frame })).headers['referrer-policy'], 'no-referrer')
+  // so does a non-redirect whose Location stays on the pane (201 Created): only
+  // a 3xx leads the browser to another request under its own policy
+  const created = await request(proxyPort, '/landing?to=created', { headers: frame })
+  assert.equal(created.status, 201)
+  assert.equal(created.headers['referrer-policy'], 'no-referrer')
 })
