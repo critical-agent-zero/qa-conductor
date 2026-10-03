@@ -374,3 +374,25 @@ test('QA_ALLOWED_LOGINS is split, trimmed and lowercased; unset means nobody (#3
   const c = loadConfig(envFile([...withoutLogins(REQUIRED), 'QA_ALLOWED_LOGINS= Alice@GitHub , ,bob@homefree.local']))
   assert.deepEqual(c.allowedLogins, ['alice@github', 'bob@homefree.local'])
 })
+
+// --- 0.3.0: the exposure reconcile interval -----------------------------------------
+
+// 35791 minutes is the longest setInterval can wait: above 2^31-1 ms, Node
+// fires every 1 ms, and the loop would run the front door's CLI back to back.
+test('QA_EXPOSURE_INTERVAL_MINUTES: default 5; 35791 and 0.5 are accepted; 0, -1, abc and 35792 throw', () => {
+  const minutes = (...lines) => loadConfig(envFile([...REQUIRED, ...lines])).exposureIntervalMinutes
+  assert.equal(minutes(), 5)
+  assert.equal(minutes('QA_EXPOSURE_INTERVAL_MINUTES='), 5)
+  for (const [value, want] of [['35791', 35791], ['0.5', 0.5], ['1', 1], ['60', 60]]) {
+    assert.equal(minutes(`QA_EXPOSURE_INTERVAL_MINUTES=${value}`), want, value)
+  }
+  // in none mode too: the value is checked wherever it is set
+  assert.equal(loadConfig(envFile([...LOOPBACK, 'QA_EXPOSURE_INTERVAL_MINUTES=2'])).exposureIntervalMinutes, 2)
+  for (const bad of ['0', '-1', '-0', 'abc', '35792', '1e9', 'Infinity', 'NaN', '5m']) {
+    const file = envFile([...REQUIRED, `QA_EXPOSURE_INTERVAL_MINUTES=${bad}`])
+    assert.throws(() => loadConfig(file), err => {
+      assert.equal(err.message, `QA_EXPOSURE_INTERVAL_MINUTES must be a number of minutes above 0 and at most 35791 (the longest a timer can wait), got ${JSON.stringify(bad)} in ${file}`)
+      return true
+    }, bad)
+  }
+})
