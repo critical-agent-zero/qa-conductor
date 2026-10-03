@@ -5,6 +5,7 @@
 // the two pane apps on ephemeral ports. `cfg` is built here rather than by
 // loadConfig; the pane origins depend on the proxies' ephemeral ports, so they
 // are filled in once the proxies listen (the core reads them at session time).
+// The demo is always ungated (exposure 'none'; see demoConfig).
 //
 // startDemo({ port = 4100, speed = 1, log = console, harnessOrigin = null, frameAncestors = [] })
 //   => { stop(), ports: { harness, base, pr } }
@@ -42,6 +43,11 @@ function demoConfig(port, { harnessOrigin, frameAncestors }) {
     paneOrigins: { base: `http://${DEMO_HOST}`, pr: `http://${DEMO_HOST}` },
     harnessOrigin,
     frameAncestors,
+    // Always ungated, whatever the harness origin. The demo binds loopback;
+    // nested in self-QA it sits behind the outer conductor's identity gate,
+    // and that outer pane proxy strips Tailscale-* headers, so the demo could
+    // never see a login anyway.
+    exposure: 'none',
     verdictLabels: { accept: 'qa-approved', reject: 'qa-changes-requested' },
   }
 }
