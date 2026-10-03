@@ -1,7 +1,6 @@
 {
   "name": "@critical-labs/qa-conductor",
   "version": "0.2.1",
-  "private": true,
   "description": "Side-by-side PR-QA harness: boots base-vs-PR app panes against cloned data behind mirrored proxies, with a pluggable five-seam adapter interface (Provisioner, BuildConvention, Seed, EnvTransform, AuthBootstrap).",
   "type": "module",
   "license": "MIT",
@@ -11,6 +10,10 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/critical-labs/qa-conductor.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "files": [
     "lib",
