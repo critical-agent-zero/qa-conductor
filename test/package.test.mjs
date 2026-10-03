@@ -36,10 +36,127 @@ const inFiles = file =>
     return file === dir || file.startsWith(`${dir}/`)
   })
 
-// The workflow with YAML and shell comments removed, so prose that names a
-// command can't satisfy, or trip, a check meant for the commands themselves.
-const workflowCommands = () =>
-  readFileSync(WORKFLOW, 'utf8').split('\n').map(line => line.replace(/(^|\s)#.*$/, '').trimEnd()).join('\n')
+// The scripts `npm stage publish` would run, as `npm publish` does, with the
+// token in their env.
+const PUBLISH_SCRIPTS = ['prepublish', 'prepublishOnly', 'prepack', 'prepare', 'postpack', 'publish', 'postpublish']
+
+// The workflow's lines without blank lines and full-line comments, so prose
+// that names a command can't satisfy, or trip, a check meant for the commands.
+// Trailing ` #` comments stay: inside a `run: |` block or quotes a `#` is not
+// a YAML comment, so stripping one could hide a command, and a check that
+// trips on a real comment fails safe.
+const contentLines = text =>
+  text
+    .split('\n')
+    .map(line => line.trimEnd())
+    .filter(line => line && !/^\s*#/.test(line))
+
+// The lines under each top-level key, which must each appear once.
+function topLevel(lines) {
+  const blocks = new Map()
+  let key
+  for (const line of lines) {
+    if (/^\S/.test(line)) {
+      key = /^([\w-]+):/.exec(line)?.[1]
+      assert.ok(key && !blocks.has(key), `top-level line "${line}" is a key that appears once`)
+      blocks.set(key, [line])
+    } else {
+      assert.ok(key, `"${line}" is under a top-level key`)
+      blocks.get(key).push(line)
+    }
+  }
+  return blocks
+}
+
+// The job's steps, each as { key: [its value, ...the lines under it] }.
+function jobSteps(lines) {
+  const steps = []
+  let key
+  for (const line of lines) {
+    const item = /^ {6}- (.*)$/.exec(line)
+    const text = item ? item[1] : /^ {8}/.test(line) ? line.slice(8) : undefined
+    assert.ok(text !== undefined && (item || steps.length), `"${line.trim()}" belongs to a step`)
+    if (item) steps.push({})
+    const field = /^([\w-]+):(?: (.*))?$/.exec(text)
+    if (field) {
+      key = field[1]
+      assert.ok(!(key in steps.at(-1)), `a step sets ${key} once`)
+      steps.at(-1)[key] = [field[2] ?? '']
+    } else {
+      assert.ok(!item, `step "${line.trim()}" starts with a key`)
+      steps.at(-1)[key].push(text.trim())
+    }
+  }
+  return steps
+}
+
+// Throws unless the workflow text runs on v* tags only, gates the stage on
+// the tag check, the tests and the pack, and gives the token to the stage
+// step alone. It reads the file as text, so it catches mistakes, not every
+// way a shell could spell a command: the stage-only token is what refuses a
+// plain publish.
+function assertStagesOnly(text) {
+  const lines = contentLines(text)
+  const blocks = topLevel(lines)
+  assert.deepEqual([...blocks.keys()], ['name', 'on', 'permissions', 'jobs'], 'no workflow-level env, defaults or other key')
+  assert.deepEqual(blocks.get('on'), ['on:', '  push:', '    tags: ["v*"]'], 'runs on pushed v* tags only')
+  assert.deepEqual(blocks.get('permissions'), ['permissions:', '  contents: read', '  id-token: write'], 'contents: read, id-token: write (provenance)')
+
+  const job = blocks.get('jobs')
+  const at = job.indexOf('    steps:')
+  assert.deepEqual(
+    job.slice(0, at + 1).map(line => line.replace(/: .*$/, ':')),
+    ['jobs:', '  publish:', '    runs-on:', '    timeout-minutes:', '    steps:'],
+    'one job, with no env, if, defaults, container or environment',
+  )
+  assert.match(job[3], /^ {4}timeout-minutes: \d+$/)
+
+  const steps = jobSteps(job.slice(at + 1))
+  // Any other key could skip a gate or let it fail (if, continue-on-error),
+  // or run a step's command some other way (shell, working-directory).
+  assert.deepEqual(
+    steps.map(step => Object.keys(step).join(' ')),
+    ['uses with', 'uses with', 'run', 'name run', 'run', 'run', 'name run env'],
+    'checkout, setup-node, the npm upgrade, the tag check, npm test, npm pack --dry-run, then the stage, and nothing else',
+  )
+  const [checkout, node, upgrade, tagCheck, tests, pack, stage] = steps
+  for (const step of [checkout, node]) {
+    assert.match(step.uses[0], /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}( # \S+)?$/, `${step.uses[0]} is pinned to a commit SHA`)
+  }
+  assert.match(checkout.uses[0], /^actions\/checkout@/)
+  assert.deepEqual(checkout.with, ['', 'persist-credentials: false'])
+  assert.match(node.uses[0], /^actions\/setup-node@/)
+  assert.deepEqual(node.with, ['', 'node-version: 22', 'registry-url: https://registry.npmjs.org'])
+  assert.deepEqual(upgrade.run, ['npm install -g npm@^11.15.0'], 'staged publishing needs npm 11.15')
+  assert.deepEqual(tagCheck.name, [TAG_CHECK])
+  assert.equal(tagCheck.run[0], '|')
+  assert.deepEqual(tests.run, ['npm test'], 'a failing test fails the job')
+  assert.deepEqual(pack.run, ['npm pack --dry-run'])
+  assert.deepEqual(stage.run, ['npm stage publish --access public'])
+  assert.deepEqual(stage.env, ['', 'NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}', 'NPM_CONFIG_PROVENANCE: "true"'], 'the stage step gets the token')
+
+  // Across every line, block scripts included. npm expands any unambiguous
+  // abbreviation (`npm pub`, `npm pu`), so every npm or npx line must be one
+  // of the four above, not just free of the word publish.
+  assert.deepEqual(
+    lines.filter(line => /\bnp[mx]\b/.test(line)).map(line => line.trim()),
+    ['- run: npm install -g npm@^11.15.0', '- run: npm test', '- run: npm pack --dry-run', 'run: npm stage publish --access public'],
+    'every npm or npx command is one of the four the workflow needs',
+  )
+  // No third-party publish action or other publisher (pnpm, yarn): apart from
+  // names, the stage command is the only line that says pub.
+  assert.deepEqual(
+    lines.filter(line => /pub/i.test(line) && !/^\s*(-\s+)?name:|^ {2}publish:$/.test(line)).map(line => line.trim()),
+    ['run: npm stage publish --access public'],
+    'the stage command is the only publish',
+  )
+  assert.deepEqual(
+    lines.filter(line => line.includes('${{')).map(line => line.trim()),
+    ['NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}'],
+    'the token is the only expression, so it reaches the stage step alone',
+  )
+  assert.doesNotMatch(lines.join('\n'), /^\s*(-\s+)?(if|continue-on-error):/m, 'no gate can be skipped or allowed to fail')
+}
 
 // The `run: |` block of the step with this name, dedented.
 function stepScript(yaml, name) {
@@ -106,36 +223,60 @@ test('npm pack --dry-run packs lib/ and public/, and no test/, demo/, qa/, docs/
   }
 })
 
+test('nothing in the package runs with the publish token, or sends it elsewhere', () => {
+  for (const script of PUBLISH_SCRIPTS) assert.equal(pkg.scripts?.[script], undefined, `package.json has no ${script} script`)
+  // A registry here, or a project .npmrc, outranks setup-node's npmjs.org.
+  assert.deepEqual(pkg.publishConfig, { access: 'public', provenance: true }, 'publishConfig sets no registry')
+  assert.ok(!existsSync(path.join(ROOT, '.npmrc')), 'no project .npmrc')
+})
+
 test('the publish workflow stages the tag\'s version and never publishes directly', () => {
   assert.ok(existsSync(WORKFLOW), '.github/workflows/publish.yml exists')
-  const yaml = workflowCommands()
+  assertStagesOnly(readFileSync(WORKFLOW, 'utf8'))
+})
 
-  assert.match(yaml, /^on:\s*\n\s+push:\s*\n\s+tags:\s*\[\s*["']v\*["']\s*\]\s*$/m, 'runs on pushed v* tags')
-  assert.doesNotMatch(yaml, /^\s*(pull_request|pull_request_target|workflow_run)\b/m, 'never runs for pull requests')
-  assert.match(yaml, /^permissions:\s*\n\s+contents: read\s*\n\s+id-token: write\s*$/m, 'contents: read, id-token: write (provenance)')
-  assert.doesNotMatch(yaml, /write-all|contents: write/)
-  assert.match(yaml, /timeout-minutes: \d+/)
-  const uses = yaml.match(/uses:.*$/gm) ?? []
-  assert.ok(uses.length > 0, 'checks out and sets up node')
-  for (const use of uses) {
-    assert.match(use, /^uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40}$/, `${use} is pinned to a commit SHA`)
+test('the workflow check refuses a publish, a skippable gate or a token that leaks out of the stage step', () => {
+  const yaml = readFileSync(WORKFLOW, 'utf8')
+  const TESTS = '      - run: npm test\n'
+  const STAGE = '        run: npm stage publish --access public\n'
+  const TOKEN = '          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}\n'
+  const PIN = 'a'.repeat(40)
+  // Each mutation edits the real workflow at an anchor that must be there.
+  const replace = (from, to) => text => {
+    assert.ok(text.includes(from), `the workflow has ${JSON.stringify(from)}`)
+    return text.replace(from, to)
   }
-  assert.match(yaml, /node-version: 22$/m)
-  assert.match(yaml, /registry-url: https:\/\/registry\.npmjs\.org$/m)
-  assert.match(yaml, /run: npm install -g npm@\^11\.15\.0$/m, 'staged publishing needs npm 11.15')
-
-  assert.match(yaml, /run: npm stage publish --access public$/m)
-  assert.match(yaml, /NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}$/m)
-  assert.match(yaml, /NPM_CONFIG_PROVENANCE: "true"$/m)
-  // The only line that says publish, apart from names, is the stage command:
-  // no bare `npm publish` in any spelling, and no third-party publish action.
-  // The token is stage-only, and a maintainer approves each version.
-  const publishLines = yaml.split('\n').filter(line => /\bpublish\b/i.test(line) && !/^\s*(-\s+)?name:|^\s*publish:$/.test(line))
-  assert.deepEqual(publishLines.map(line => line.trim()), ['run: npm stage publish --access public'])
-
-  const order = [`- name: ${TAG_CHECK}`, 'run: npm test', 'run: npm pack --dry-run', 'run: npm stage publish'].map(s => yaml.indexOf(s))
-  assert.ok(order.every(i => i >= 0), `steps present: ${order}`)
-  assert.deepEqual([...order].sort((a, b) => a - b), order, 'tag check, then tests, then pack, then stage')
+  const after = (anchor, ...lines) => replace(anchor, `${anchor}${lines.map(line => `${line}\n`).join('')}`)
+  const mutations = {
+    'npm pub, which npm expands to publish': after(TESTS, '      - run: npm pub --access public', '        env:', TOKEN.trimEnd()),
+    'npm pu': after(TESTS, '      - run: npm pu --access public'),
+    'npx publish': after(TESTS, '      - run: npx --yes npm@11 publish'),
+    'a quoted # before npm publish in a run: | block': after(TESTS, '      - run: |', '          echo "x #" && npm publish --access public'),
+    'npm pub in the tag check\'s script': after('          fi\n', '          npm pub --access public'),
+    'pnpm publish': after(TESTS, '      - run: pnpm publish --no-git-checks'),
+    'a third-party publish action': after(TESTS, `      - uses: JS-DevTools/npm-publish@${PIN}`),
+    'if: false on the tag check': after(`      - name: ${TAG_CHECK}\n`, '        if: false'),
+    'continue-on-error on the tag check': after(`      - name: ${TAG_CHECK}\n`, '        continue-on-error: true'),
+    'continue-on-error on the tests': after(TESTS, '        continue-on-error: true'),
+    'npm test || true': replace(TESTS, '      - run: npm test || true\n'),
+    'a shell that runs something else': after(STAGE, '        shell: bash -c "npm publish" {0}'),
+    'the tests after the stage': text => replace(TESTS, '')(text) + TESTS,
+    'another trigger': after('    tags: ["v*"]\n', '  workflow_dispatch:'),
+    'branch pushes': after('    tags: ["v*"]\n', '    branches: ["**"]'),
+    'pull requests': after('\non:\n', '  pull_request:'),
+    'contents: write': replace('  contents: read\n', '  contents: write\n'),
+    'the token at workflow level': replace('\npermissions:\n', `\nenv:\n  ${TOKEN.trim()}\n\npermissions:\n`),
+    'the token at job level': after('    timeout-minutes: 15\n', '    env:', `      ${TOKEN.trim()}`),
+    'the token on the tests too': after(TESTS, '        env:', TOKEN.trimEnd()),
+    'the token in the tag check\'s script': after('          fi\n', '          echo "${{ secrets.NPM_TOKEN }}"'),
+    'an action by tag, not SHA': replace('actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5', 'actions/checkout@v4'),
+  }
+  for (const [what, mutate] of Object.entries(mutations)) {
+    // Mutated outside assert.throws, so a missing anchor fails the test.
+    const mutated = mutate(yaml)
+    assert.notEqual(mutated, yaml, what)
+    assert.throws(() => assertStagesOnly(mutated), assert.AssertionError, `${what} passes the check`)
+  }
 })
 
 test('the workflow\'s tag check passes only for v<package.json version>', { timeout: 30_000 }, async () => {

@@ -295,7 +295,7 @@ The suite runs on `node:test` with injected effects, so it needs no Docker, netw
 3. The [publish workflow](.github/workflows/publish.yml) refuses a tag that isn't `v` plus the `package.json` version. Then it runs the tests and `npm pack --dry-run`, and stages the version on npm with provenance (`npm stage publish`).
 4. A maintainer approves the staged version on npmjs.com. Only then does it go live.
 
-Nothing publishes directly: the workflow's npm token can only stage, and `test/package.test.mjs` fails on any other publish command in the workflow.
+Nothing publishes directly: the workflow's npm token can only stage, and only the stage step gets it. `test/package.test.mjs` pins the workflow's trigger and steps. It fails on any npm or npx command other than the four the workflow runs (npm expands abbreviations such as `npm pub`), on a gate that could be skipped or allowed to fail, and on the token anywhere but the stage step. It reads the file as text, so it catches mistakes, not every way a shell can spell a command: the stage-only token is what refuses a plain publish.
 
 ## License
 
