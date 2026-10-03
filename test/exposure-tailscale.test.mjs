@@ -91,6 +91,68 @@ test('check: a handler on a port without HTTPS is drift', async () => {
   }
 })
 
+test('check: a handler that takes some of a mount\'s requests is drift, and ensure leaves it in place', async () => {
+  // tailscaled hands a request to the deepest handler that holds it, `/qa/`
+  // before `/qa`: the 8444 /qa/ handler takes every /qa/... request, and
+  // 8443 /api the base pane's /api/... ones. Each mount's own handler is in
+  // place.
+  const r = await check(fixture('shadowed'))
+  assert.equal(r.ok, false)
+  const shadowed = [['harness', '/qa/ -> http://127.0.0.1:6666'], ['base', '/api -> http://127.0.0.1:7777']]
+  assert.deepEqual(driftOf(r), shadowed)
+  assert.equal(r.drift[0].mount, MOUNTS[0], 'drift carries the mount itself')
+
+  // ensure writes nothing: rewriting /qa wouldn't help, and neither handler
+  // is the conductor's to change or remove. So every pass reports them.
+  const { execFileFn, argv, writes } = recorder(fixture('shadowed'))
+  const exposure = createTailscaleExposure({ execFileFn })
+  assert.deepEqual(await exposure.ensure(MOUNTS), { added: [], ok: MOUNTS })
+  const pass = await reconcileExposure(exposure, MOUNTS, { now: () => 1 })
+  assert.deepEqual({ ...pass, drift: driftOf(pass) }, { ok: false, checkedAt: 1, drift: shadowed, added: [], error: null })
+  assert.deepEqual(writes(), [])
+  assert.deepEqual(argv(), [STATUS, STATUS, STATUS])
+
+  // a missing own handler is drift beside its shadow, and only it is written
+  const noQa = recorder(edited('shadowed', st => { delete st.Web[`${HOST}:8444`].Handlers['/qa'] }))
+  const fixing = createTailscaleExposure({ execFileFn: noQa.execFileFn })
+  assert.deepEqual(driftOf(await fixing.check(MOUNTS)), [['harness', null], ...shadowed])
+  assert.deepEqual(await fixing.ensure(MOUNTS), { added: [MOUNTS[0]], ok: [MOUNTS[1], MOUNTS[2]] })
+  assert.deepEqual(noQa.writes(), [['tailscale', 'serve', '--bg', '--https=8444', '--set-path=/qa', 'http://127.0.0.1:3100']])
+
+  // a deeper path, and a handler that isn't a proxy
+  const deeper = edited('all', st => {
+    st.Web[`${HOST}:8444`].Handlers['/qa/api'] = { Proxy: 'http://127.0.0.1:6666' }
+    st.Web[`${HOST}:10000`].Handlers['/docs/'] = { Path: '/srv/docs' }
+    st.Web[`${HOST}:10000`].Handlers['/hello'] = { Text: 'hello' }
+  })
+  assert.deepEqual(driftOf(await check(deeper)), [
+    ['harness', '/qa/api -> http://127.0.0.1:6666'],
+    ['pr', '/docs/ (not a proxy)'],
+    ['pr', '/hello (not a proxy)'],
+  ])
+})
+
+test('check: a handler beside a mount, or under it with the mount\'s own target, is not drift', async () => {
+  const beside = edited('all', st => {
+    const h8444 = st.Web[`${HOST}:8444`].Handlers
+    h8444['/qa/'] = { Proxy: 'http://127.0.0.1:3100/' } // the harness's own target
+    h8444['/qax'] = { Proxy: 'http://127.0.0.1:6666' } // not under /qa
+    h8444['/rc/api'] = { Proxy: 'http://127.0.0.1:6666' } // the RC app's side of 8444
+    st.Web[`${HOST}:8443`].Handlers['/static/'] = { Proxy: 'http://127.0.0.1:3101' }
+  })
+  assert.deepEqual(await check(beside), { ok: true, drift: [] })
+  // another name's key on the port isn't read when the mount's own key is there
+  const alias = edited('all', st => ({ ...st, Web: { 'alias.tail1234.ts.net:8443': { Handlers: { '/api': { Proxy: 'http://127.0.0.1:9' } } }, ...st.Web } }))
+  assert.deepEqual(await check(alias), { ok: true, drift: [] })
+  // a port without https serves nothing to shadow: the mount alone drifts
+  const plain = edited('no-https', st => { st.Web[`${HOST}:8443`].Handlers['/api'] = { Proxy: 'http://127.0.0.1:9' } })
+  assert.deepEqual(driftOf(await check(plain)), [['base', null]])
+  // Handlers that aren't an object serve nothing
+  for (const Handlers of [null, 'x', [{ Proxy: 'http://127.0.0.1:3101' }]]) {
+    assert.deepEqual(driftOf(await check(edited('all', st => { st.Web[`${HOST}:8443`].Handlers = Handlers }))), [['base', null]], JSON.stringify(Handlers))
+  }
+})
+
 test('ensure: mounts only what drifted, --set-path only for non-root, never touches foreign handlers', async () => {
   const { execFileFn, argv, writes } = recorder(fixture('foreign-only'))
   const r = await createTailscaleExposure({ execFileFn }).ensure(MOUNTS)

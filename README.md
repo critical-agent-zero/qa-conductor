@@ -232,7 +232,7 @@ The contract:
   - **`host` is not `cfg.host`.** `cfg.host` is the address the conductor binds, and only `target` uses it.
   - `path` is `/qa` for the harness and `/` for each pane.
   - `target` is `http://<cfg.host>:<listen port>`, with brackets for IPv6.
-- **`Drift = { mount, actual }`**: `actual` is what the front door serves at that mount now, or `null` when it serves nothing there.
+- **`Drift = { mount, actual }`**: `actual` is the proxy target the front door serves at that mount over https now, or `null` when there is none: nothing at that path, no https on the port, or a handler that isn't a proxy. A mount also drifts once for each other handler that takes some of its requests, and `actual` then names that handler, as `<path> -> <target>` or `<path> (not a proxy)`.
 - **`ensure(mounts) → Promise<{ added, ok }>`** creates the missing or mismatched mounts, and only those. **`check(mounts) → Promise<{ ok, drift }>`** changes nothing. Either rejects on failure. An `ensure` that fails part way may list the mounts it did write on its error, as `added`.
 - **An adapter owns exactly the `(port, path)` pairs it is given**, and never touches another handler.
 
@@ -247,7 +247,8 @@ The contract:
 
 **Built in: `adapters/exposure-tailscale`.** `createTailscaleExposure({ execFileFn, bin = 'tailscale', socket = null, timeoutMs = 30000 })` drives `tailscale serve` on the host it runs on:
 - `check` runs `tailscale serve status --json`. A mount is in place when its port serves https and its path proxies to its target (one trailing `/` ignored). It reads the status entry for the mount's `host:port`, else the first entry on that port.
-- `ensure` runs `check`, then `tailscale serve --bg --https=<port> [--set-path=<path>] <target>` for each drifted mount, and only those. `--set-path` is left out for `/`. A mount that fails doesn't stop the others, and `ensure` then rejects, naming each failure, with the mounts it did write as the error's `added`.
+- tailscaled hands a request to the deepest handler path that holds it, so a handler under a mount's path takes some of its requests: `/qa/` or `/qa/api` beside the harness's `/qa`, or any other path on a pane's port. `check` reports each one that doesn't proxy to the mount's target as drift.
+- `ensure` reads the same status, then runs `tailscale serve --bg --https=<port> [--set-path=<path>] <target>` for each mount whose own handler is missing or points elsewhere, and only those. `--set-path` is left out for `/`. A handler that shadows a mount stays drift until you remove it: `ensure` never writes or removes it. A mount that fails doesn't stop the others, and `ensure` then rejects, naming each failure, with the mounts it did write as the error's `added`.
 - Every call goes through `execFileFn` (`makeExecFileFn()` from `./exec`) with a `timeoutMs` timeout. With `socket` set, `--socket=<socket>` comes before the subcommand, for a CLI whose daemon's socket is somewhere else, such as one mounted into a container.
 - `bin` is the CLI to run, and it should be no older than the daemon. On macOS, the `tailscale` on `PATH` may lag behind the app's daemon: use the app's bundled CLI, `/Applications/Tailscale.app/Contents/MacOS/Tailscale`.
 
