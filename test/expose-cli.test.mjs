@@ -145,6 +145,27 @@ test('a cfg without exposure or harnessOrigin resolves both as the conductor doe
   assert.equal(await runExpose({ cfg: loopback, exposure: local, log: recordLog().log }), 0)
   assert.deepEqual(local.calls, [])
 
+  // https origins on loopback are none too, until an allowed host or a public
+  // host widens the Host allowlist: then tailscale, as startConductor resolves it
+  const https = { ports: CFG.ports, harnessOrigin: 'https://localhost:8444', paneOrigins: { base: 'https://localhost:8443', pr: 'https://localhost:10000' } }
+  for (const [extra, mode] of [[{}, 'none'], [{ allowedHosts: ['box.ts.net'] }, 'tailscale'], [{ publicHost: 'box.ts.net' }, 'tailscale']]) {
+    const probe = fakeExposure()
+    const seen = recordLog()
+    assert.equal(await runExpose({ cfg: { ...https, ...extra }, exposure: probe, log: seen.log }), 0, JSON.stringify(extra))
+    if (mode === 'none') {
+      assert.deepEqual(probe.calls, [], JSON.stringify(extra))
+      assert.deepEqual(seen.lines, [['out', 'qa exposure: QA_EXPOSURE=none, nothing to do']])
+    } else {
+      assert.deepEqual(probe.calls.map(([member, mounts]) => [member, mounts.map(m => m.target)]), [
+        ['ensure', ['http://127.0.0.1:3100', 'http://127.0.0.1:3101', 'http://127.0.0.1:3102']],
+        ['check', ['http://127.0.0.1:3100', 'http://127.0.0.1:3101', 'http://127.0.0.1:3102']],
+      ], JSON.stringify(extra))
+      assert.deepEqual(seen.lines, [['out', 'qa exposure: ok (harness https://localhost:8444/qa/)']])
+    }
+  }
+  // a non-loopback bind host makes it tailscale too, which the conductor then
+  // refuses: see the next test
+
   const odd = recordLog()
   assert.equal(await runExpose({ cfg: { ...CFG, exposure: 'caddy' }, exposure, log: odd.log }), 2)
   assert.deepEqual(odd.lines, [['err', 'qa exposure: QA_EXPOSURE must be none or tailscale, got "caddy"']])
@@ -152,6 +173,34 @@ test('a cfg without exposure or harnessOrigin resolves both as the conductor doe
   const bad = recordLog()
   assert.equal(await runExpose({ cfg: { ...bare, publicHost: 'a b' }, exposure, log: bad.log }), 2)
   assert.match(bad.lines[0][1], /^qa exposure: the harness origin derived from QA_PUBLIC_HOST must be an origin/)
+})
+
+test('tailscale mode off a loopback bind host, or a bracketed one, is a config error, as startConductor has it', async () => {
+  const https = { ports: CFG.ports, harnessOrigin: 'https://localhost:8444', paneOrigins: { base: 'https://localhost:8443', pr: 'https://localhost:10000' } }
+  const cases = [
+    // defaulted: the bind host alone is what makes it tailscale
+    [{ ...https, host: '0.0.0.0' }, 'qa exposure: QA_EXPOSURE defaults to tailscale because QA_BIND_HOST=0.0.0.0 is not loopback, and the conductor runs tailscale mode only on a loopback bind host (QA_BIND_HOST, cfg.host), got "0.0.0.0"'],
+    [{ ...CFG, host: '0.0.0.0' }, 'qa exposure: QA_EXPOSURE is tailscale, and the conductor runs tailscale mode only on a loopback bind host (QA_BIND_HOST, cfg.host), got "0.0.0.0"'],
+    [{ ...CFG, host: '192.168.1.5' }, /got "192\.168\.1\.5"$/],
+    [{ ...CFG, host: '[::1]' }, 'qa exposure: the bind host (QA_BIND_HOST, cfg.host) takes an IPv6 literal without brackets, as the conductor requires: use "::1", not "[::1]"'],
+  ]
+  for (const [cfg, line] of cases) {
+    const exposure = fakeExposure()
+    const { lines, log } = recordLog()
+    assert.equal(await runExpose({ cfg, exposure, log }), 2, cfg.host)
+    assert.deepEqual(exposure.calls, [], `${cfg.host}: no adapter call`)
+    assert.equal(lines.length, 1)
+    assert.equal(lines[0][0], 'err')
+    if (typeof line === 'string') assert.equal(lines[0][1], line)
+    else assert.match(lines[0][1], line)
+  }
+
+  // loopback binds are fine, ::1 included
+  for (const [host, target] of [['127.0.0.2', 'http://127.0.0.2:3100'], ['localhost', 'http://localhost:3100'], ['::1', 'http://[::1]:3100']]) {
+    const exposure = fakeExposure()
+    assert.equal(await runExpose({ cfg: { ...CFG, host }, exposure, log: recordLog().log }), 0, host)
+    assert.equal(exposure.calls[0][1][0].target, target)
+  }
 })
 
 test('a handler that takes some of a mount\'s requests is named as such, and an adapter that reports no mount still fails', async () => {
