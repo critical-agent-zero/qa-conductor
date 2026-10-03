@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { SELF_REPO, cacheDirFor, runSelfQa, selfQaAdapters, selfQaCommand } from '../qa/self.mjs'
+import { SELF_REPO, cacheDirFor, runSelfQa, selfQaAdapters, selfQaCommand, selfQaExposure } from '../qa/self.mjs'
 
 const github = { prInfo: async () => ({}), authorPermission: async () => 'write' }
 const pane = { publicOrigin: 'http://127.0.0.1:3102', services: { app: { url: 'http://127.0.0.1:45678', port: 45678 } } }
@@ -92,6 +92,52 @@ test('the build and provisioner are the built-in adapters, on-boot migration, no
   for (const m of ['ensureBuilt', 'resolvePrImages', 'resolveBaseImages', 'describePrs', 'subscribeBuild']) assert.equal(typeof build[m], 'function', m)
   for (const m of ['provisionDatabase', 'reserveServices', 'launchServices', 'waitHealthy', 'teardown', 'sweep', 'logs']) assert.equal(typeof provisioner[m], 'function', m)
   assert.equal(provisioner.runMigrate, undefined)
+})
+
+// On a tailnet layout self-QA dogfoods the tailscale Exposure adapter, so the
+// conductor mounts itself; a loopback layout gets none and is unchanged.
+test('selfQaExposure: the tailscale adapter only in tailscale mode', async () => {
+  const runs = []
+  let made = 0
+  const makeExec = () => {
+    made++
+    return async (cmd, args, opts) => { runs.push([cmd, args, opts]); return { stdout: '{}' } }
+  }
+  assert.equal(selfQaExposure({ exposure: 'none', env: {} }, makeExec), undefined)
+  assert.equal(made, 0, 'no exec function is made for none mode')
+
+  const exposure = selfQaExposure({ exposure: 'tailscale', env: {} }, makeExec)
+  assert.equal(made, 1)
+  assert.deepEqual(await exposure.check([]), { ok: true, drift: [] })
+  assert.deepEqual(runs, [['tailscale', ['serve', 'status', '--json'], { timeout: 30_000 }]])
+  // QA_TAILSCALE_BIN picks the CLI (on macOS the one on PATH may be older
+  // than the app's daemon)
+  const app = '/Applications/Tailscale.app/Contents/MacOS/Tailscale'
+  await selfQaExposure({ exposure: 'tailscale', env: { QA_TAILSCALE_BIN: app } }, makeExec).check([])
+  assert.equal(runs[1][0], app)
+
+  // runSelfQa passes it to the conductor
+  const tailnet = [
+    'QA_PUBLIC_HOST=box.ts.net', 'QA_BASE_ORIGIN=https://box.ts.net:8443', 'QA_PR_ORIGIN=https://box.ts.net:10000', 'QA_ALLOWED_LOGINS=alice@github',
+  ]
+  for (const [lines, wired, page] of [[[], false, 'http://127.0.0.1:3100/qa/'], [tailnet, true, 'https://box.ts.net:8444/qa/']]) {
+    const dir = mkdtempSync(join(tmpdir(), 'self-qa-env-'))
+    const file = join(dir, '.env.qa')
+    writeFileSync(file, ['GITHUB_QA_TOKEN=tok', ...lines].join('\n'))
+    let started = null
+    const logged = []
+    await runSelfQa({
+      env: { QA_ENV_FILE: file, XDG_CACHE_HOME: join(dir, 'cache') },
+      proc: { on() {}, exit() {} },
+      log: { log: line => logged.push(line), error() {} },
+      start: opts => { started = opts; return { servers: { harness: { address: () => null } }, shutdown: async () => {} } },
+    })
+    assert.equal(started.cfg.exposure, wired ? 'tailscale' : 'none')
+    assert.equal('exposure' in started.adapters, wired, lines.join())
+    if (wired) for (const m of ['ensure', 'check']) assert.equal(typeof started.adapters.exposure[m], 'function', m)
+    // the page is under /qa/, the only path mounted on the harness port
+    assert.ok(logged.some(l => l.startsWith(`[qa] open ${page} `)), logged.join('\n'))
+  }
 })
 
 test('runSelfQa refuses to start without its env file, naming what to put in it', async () => {

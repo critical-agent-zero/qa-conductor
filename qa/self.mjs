@@ -11,9 +11,12 @@
 //   - provisioner-process runs `node demo/server.mjs` in each worktree with
 //     only PATH, PORT, QA_DEMO_SPEED, QA_HARNESS_ORIGIN and
 //     QA_FRAME_ANCESTORS in its environment, on 127.0.0.1.
+//   - exposure-tailscale, on a tailnet layout only (tailscale mode): the
+//     conductor then mounts itself on `tailscale serve`.
 //
 //   .env.qa (or QA_ENV_FILE)  GITHUB_QA_TOKEN (required); optional QA_REPO,
-//                             QA_BASE_REF (default main), QA_IDLE_MINUTES,
+//                             QA_BASE_REF (default main), QA_TAILSCALE_BIN
+//                             (default tailscale), QA_IDLE_MINUTES,
 //                             QA_HARNESS_PORT and the other conductor keys
 //   cache                     $XDG_CACHE_HOME/qa-conductor/<owner>-<name>
 //                             (default ~/.cache/qa-conductor/...)
@@ -25,9 +28,11 @@ import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 import { startConductor } from '@critical-labs/qa-conductor'
-import { defaultHarnessOrigin, loadConfig } from '@critical-labs/qa-conductor/config'
+import { defaultHarnessOrigin, HARNESS_PATH, loadConfig } from '@critical-labs/qa-conductor/config'
+import { makeExecFileFn } from '@critical-labs/qa-conductor/exec'
 import { createGithub } from '@critical-labs/qa-conductor/github'
 import { createWorktreeBuild } from '@critical-labs/qa-conductor/adapters/build-worktree'
+import { createTailscaleExposure } from '@critical-labs/qa-conductor/adapters/exposure-tailscale'
 import { createProcessProvisioner } from '@critical-labs/qa-conductor/adapters/provisioner-process'
 
 export const SELF_REPO = 'critical-labs/qa-conductor'
@@ -88,6 +93,16 @@ export function selfQaAdapters({ repo, github, cacheDir, baseRef = 'main', speed
   }
 }
 
+// The Exposure adapter self-QA passes the conductor: on a tailnet layout
+// (tailscale mode) the built-in tailscale one, so self-QA dogfoods it and
+// the conductor mounts its harness and panes itself; on loopback, none, and
+// nothing changes. QA_TAILSCALE_BIN names the CLI: on macOS, the `tailscale`
+// on PATH may be older than the app's daemon.
+export function selfQaExposure(cfg, makeExec = makeExecFileFn) {
+  if (cfg.exposure !== 'tailscale') return undefined
+  return createTailscaleExposure({ execFileFn: makeExec(), bin: cfg.env?.QA_TAILSCALE_BIN || 'tailscale' })
+}
+
 // `start` is startConductor; a test passes its own.
 export async function runSelfQa({ env = process.env, proc = process, log = console, start = startConductor } = {}) {
   const file = env.QA_ENV_FILE || '.env.qa'
@@ -121,9 +136,12 @@ export async function runSelfQa({ env = process.env, proc = process, log = conso
     baseRef: cfg.env.QA_BASE_REF || 'main',
     harnessOrigin,
   })
+  const exposure = selfQaExposure(cfg, makeExecFileFn)
+  if (exposure) adapters.exposure = exposure
   conductor = start({ cfg, github, fsx: { readFile: p => fs.promises.readFile(p) }, adapters, log })
   // On port 0 the origin is known once the harness listens, and logged then.
-  const url = cfg.harnessOrigin ? `${cfg.harnessOrigin}/` : 'the "[qa] harness at" URL'
+  // The page is under /qa/: on a tailnet only that path is mounted.
+  const url = cfg.harnessOrigin ? `${cfg.harnessOrigin}${HARNESS_PATH}/` : 'the "[qa] harness at" URL'
   log.log(`[qa] open ${url} (Ctrl-C to stop; panes are torn down on exit)`)
 
   let stopping = false
