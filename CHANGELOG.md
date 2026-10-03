@@ -34,7 +34,7 @@ The hardening that homefree #329 shipped for homefree #307, the Tailscale identi
 ### Migrating from 0.2
 
 1. **Identity gate.** `QA_EXPOSURE` defaults to `tailscale` when any of these isn't loopback: the harness origin, a pane origin, `QA_PUBLIC_HOST`, a `QA_ALLOWED_HOSTS` entry or `QA_BIND_HOST`. The harness and both panes then answer `403` unless `Tailscale-User-Login` is in `QA_ALLOWED_LOGINS`, and `loadConfig` refuses an empty list.
-   - Behind another authenticating front door, set `QA_EXPOSURE=none`; behind `tailscale serve`, set `QA_ALLOWED_LOGINS`. A 0.2 layout that isn't loopback throughout fails to load until it does one or the other, and the errors say so.
+   - Behind another authenticating front door, set `QA_EXPOSURE=none`; behind `tailscale serve`, set `QA_ALLOWED_LOGINS`, with `QA_BIND_HOST` loopback or unset (note 2). A 0.2 layout that isn't loopback throughout fails to load until it does one or the other, and the errors say so.
    - Loopback layouts are unaffected: self-QA and agent-identity's defaults resolve to `none`, and the demo is always `none`.
    - A code-built `cfg` whose non-loopback origins are assigned after start must set `exposure`, since the mode is fixed at start.
    - With `provisioner-process`, PR code runs as the same user and can send the header itself. The gate keeps out other devices, not PR code: only the BuildConvention's trust gate does.
