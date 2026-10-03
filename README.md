@@ -25,14 +25,14 @@ Node ≥ 22. There are no runtime dependencies.
 | Import | Exports | |
 |---|---|---|
 | `@critical-labs/qa-conductor` | `startConductor` | the conductor: harness, pane proxies, sessions, the exposure loop ([Use](#use)) |
-| `@critical-labs/qa-conductor/config` | `loadConfig`, `parseEnvFile`, `defaultExposure`, `defaultHarnessOrigin`, `EXPOSURE_MODES`, `HARNESS_PATH` | reading `.env.qa` into `cfg` ([Configuration](#configuration)) |
-| `@critical-labs/qa-conductor/session` | `bootSession`, `teardownSession`, `createSession`, `reduce`, `ROLES`, `PANE_STAGES` | the boot sequence and session state the conductor runs |
+| `@critical-labs/qa-conductor/config` | `loadConfig`, `parseEnvFile`, `defaultExposure`, `defaultHarnessOrigin`, `isExposureInterval`, `EXPOSURE_MODES`, `EXPOSURE_INTERVAL_RULE`, `MAX_EXPOSURE_INTERVAL_MINUTES`, `HARNESS_PATH` | reading `.env.qa` into `cfg` ([Configuration](#configuration)), and the rules it checks |
+| `@critical-labs/qa-conductor/session` | `bootSession`, `teardownSession`, `createSession`, `reduce`, `touch`, `isIdle`, `ROLES`, `PANE_STAGES`, `parseEnv`, `renderEnv`, `migrateImageFor` | the boot sequence and session state the conductor runs, and helpers for adapters: parsing and rendering env file text, and the `migrate-<tag>` image beside an app image |
 | `@critical-labs/qa-conductor/github` | `createGithub` | the GitHub effect wrapper |
 | `@critical-labs/qa-conductor/docker` | `createDocker` | the Docker effect wrapper |
 | `@critical-labs/qa-conductor/exec` | `makeExecFileFn` | the `execFile` effect wrapper |
 | `@critical-labs/qa-conductor/identity` | `normalizeLogins`, `refusalReason`, `isAllowed`, `identityGate` | the [Tailscale identity gate](#security) |
 | `@critical-labs/qa-conductor/exposure` | `mountsFor`, `reconcileExposure`, `runExpose` | one [exposure](#exposure-optional) pass, outside a conductor |
-| `@critical-labs/qa-conductor/proxy` | `createPaneProxy`, `panePolicy`, `parseSetCookie`, `isAllowedHost` | the pane proxy |
+| `@critical-labs/qa-conductor/proxy` | `createPaneProxy`, `panePolicy`, `parseSetCookie`, `isAllowedHost`, `requestHostname`, `misdirected` | the pane proxy, and the [Host allowlist](#security) check every server runs |
 | `@critical-labs/qa-conductor/verdict` | `formatVerdict`, `postVerdict` | the verdict comment and label |
 | `@critical-labs/qa-conductor/adapters/provisioner-docker` | `createDockerProvisioner` | a Provisioner for docker-sibling deployments |
 | `@critical-labs/qa-conductor/adapters/provisioner-process` | `createProcessProvisioner` | a Provisioner for local process groups |
@@ -40,7 +40,7 @@ Node ≥ 22. There are no runtime dependencies.
 | `@critical-labs/qa-conductor/adapters/exposure-tailscale` | `createTailscaleExposure` | an Exposure adapter on `tailscale serve` |
 | `@critical-labs/qa-conductor/package.json` | *(the manifest)* | |
 
-Nothing else is exported. The package also installs one bin, `qa-conductor-expose`, the [expose CLI](#expose-cli), for operators.
+Each row lists every name its entry point exports, and no other entry point is exported. The package also installs one bin, `qa-conductor-expose`, the [expose CLI](#expose-cli), for operators.
 
 ## Use
 

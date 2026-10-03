@@ -1,7 +1,8 @@
 // The README is the published package's reference: an npm consumer reads it,
 // not the source. So every entry point package.json exports, the bin, and
-// every env file key the published code reads must be in it, and a name it
-// says an entry point exports must be one.
+// every env file key the published code reads must be in it, and the names
+// it says an entry point exports must be exactly the ones it does: a name it
+// leaves out would read as internal, and a later release could drop it.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -36,7 +37,7 @@ function published(dir = '') {
   })
 }
 
-test('the README\'s entry points are exactly package.json\'s exports and bin, and each name it lists is exported there', async () => {
+test('the README\'s entry points are exactly package.json\'s exports and bin, and each row lists exactly the names its entry point exports', async () => {
   const lines = section('### Entry points')
   const rows = lines.filter(line => line.startsWith(`| \`${pkg.name}`))
   const documented = new Map(rows.map(row => {
@@ -48,8 +49,7 @@ test('the README\'s entry points are exactly package.json\'s exports and bin, an
     if (subpath === './package.json') continue
     // By the package's own name, so the exports map is what resolves it.
     const mod = await import(`${pkg.name}${subpath.slice(1)}`)
-    assert.ok(names.length > 0, `${subpath} names what it exports`)
-    for (const name of names) assert.ok(name in mod, `${subpath} exports ${name}`)
+    assert.deepEqual([...names].sort(), Object.keys(mod).sort(), `the ${subpath} row lists every name it exports, and no other`)
   }
   for (const bin of Object.keys(pkg.bin)) {
     assert.ok(lines.some(line => line.includes(`\`${bin}\``)), `the bin ${bin} is listed with the entry points`)
