@@ -6,8 +6,9 @@
 // It loads cfg as the conductor does (loadConfig, or the platform's own
 // loader named by --config, so a .env.qa that leans on a platform's defaults
 // loads too), builds the built-in tailscale adapter, and runs runExpose:
-// mountsFor then reconcileExposure, the conductor loop's own pass. All the
-// logic is in lib/; this file parses flags and sets the exit code.
+// mountsFor then reconcileExposure, the conductor loop's own pass. The pass
+// and what it prints are in lib/exposure.mjs; this file parses flags, loads
+// cfg and sets the exit code.
 
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'

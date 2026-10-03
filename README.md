@@ -333,7 +333,7 @@ Every path also answers under a `/qa` prefix. In tailscale mode, a request to an
 ```sh
 npx qa-conductor-expose --check   # report drift on the conductor's tailscale serve mounts; change nothing
 npx qa-conductor-expose           # put any missing or wrong mount back now
-npm run expose -- --check         # the same, in this repo
+npm run expose -- --check --config qa/self.mjs#loadSelfQaConfig   # in this repo, for self-QA's .env.qa
 ```
 
 `qa-conductor-expose` runs one [exposure](#exposure-optional) pass from a shell, through the built-in tailscale adapter. **It is a tool for operators and debugging.** The conductor's reconcile loop owns the mounts: it sets them once its servers listen and restores them every `QA_EXPOSURE_INTERVAL_MINUTES`. So a deploy only restarts the conductor, and runs neither this CLI nor `tailscale serve`. Use the CLI to see drift, or to restore a mount now instead of at the next pass.
@@ -348,7 +348,7 @@ qa-conductor-expose [--check] [--env FILE] [--config MODULE[#export]] [--tailsca
 - **`--tailscale BIN`** is the CLI to run: by default `QA_TAILSCALE_BIN` in the env file, else `tailscale` on `PATH`. On macOS, use the app's `/Applications/Tailscale.app/Contents/MacOS/Tailscale` when the one on `PATH` is older than the daemon. **`--socket PATH`** passes `--socket=PATH` before the subcommand, for a daemon whose socket is elsewhere, such as one mounted into a container.
 - **`--help`** or **`-h`** prints the usage and exits `0` before loading anything.
 
-It prints a line for each mount it writes (`qa exposure: mounted <port><path> -> <target>`), and one for each mount still wrong (`qa exposure: drift <port><path>: want <target>, have <actual|nothing>`). A handler under a mount's path that takes some of its requests is named as one to remove, since the CLI never removes it. Then it prints any tailscale error, and finally `qa exposure: ok (harness <origin>/qa/)` once all three mounts are in place. In none mode it prints `qa exposure: QA_EXPOSURE=none, nothing to do`, since an ungated conductor must not publish itself.
+It prints a line for each mount it writes (`qa exposure: mounted <port><path> -> <target>`), and one for each mount still wrong (`qa exposure: drift <port><path>: want <target>, have <actual|nothing>`). A handler under a mount's path that takes some of its requests is named as one to remove, since the CLI never removes it. Then it prints any tailscale error, and finally `qa exposure: ok (harness <origin>/qa/)` once all three mounts are in place. In none mode it prints `qa exposure: QA_EXPOSURE=none, nothing to do`, since an ungated conductor must not publish itself. Drift and errors go to stderr, everything else to stdout.
 
 | Exit | |
 |---|---|
