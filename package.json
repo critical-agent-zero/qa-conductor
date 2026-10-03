@@ -26,6 +26,7 @@
     "./docker": "./lib/docker.mjs",
     "./github": "./lib/github.mjs",
     "./identity": "./lib/identity.mjs",
+    "./exposure": "./lib/exposure.mjs",
     "./exec": "./lib/exec.mjs",
     "./proxy": "./lib/proxy.mjs",
     "./verdict": "./lib/verdict.mjs",
