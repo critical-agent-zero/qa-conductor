@@ -1748,6 +1748,33 @@ test('a mount that drifts back is logged as restored', async t => {
       mountedLine('restored', mounts[2]),
     ])
   } finally { w.c.stop() }
+
+  // a restart onto mounts already in place (a fixed-port deploy): pass 1
+  // writes nothing, so a mount that goes later and comes back is restored
+  const deployed = fakeExposure({ ensure: (mounts, pass) => ({ added: pass === 2 ? [mounts[1]] : [], ok: [] }) })
+  const d = makeWorld({ cfg: GATED, exposure: deployed })
+  try {
+    await d.c.exposure.ready
+    const mounts = mountsAt(await allPorts(d.c))
+    await d.c.exposure.reconcile()
+    assert.deepEqual(exposureLines(d.lines), ['[qa] exposure ok', mountedLine('restored', mounts[1])])
+  } finally { d.c.stop() }
+})
+
+// A platform may assign cfg.paneOrigins after start, so no pass reuses the
+// mounts an earlier one derived.
+test('every pass derives the mounts afresh from cfg', async () => {
+  const exposure = fakeExposure()
+  const { c, cfg } = makeWorld({ cfg: GATED, exposure })
+  try {
+    await c.exposure.ready
+    const ports = await allPorts(c)
+    cfg.paneOrigins = { ...cfg.paneOrigins, pr: 'https://h:10001' }
+    await c.exposure.reconcile()
+    const ensures = exposure.calls.filter(([fn]) => fn === 'ensure')
+    assert.equal(ensures.length, 2)
+    assert.deepEqual(ensures[1][1][2], { name: 'pr', host: 'h', port: 10001, path: '/', target: `http://127.0.0.1:${ports.pr}` })
+  } finally { c.stop() }
 })
 
 test('an adapter with QA_EXPOSURE=none refuses to start', () => {
