@@ -239,7 +239,7 @@ The contract:
 `mountsFor(cfg, { ports = cfg.ports })` derives the mounts from the origins viewers open, so the URL a viewer sees and the mount behind it can't disagree. Pass the bound ports when `cfg.ports` holds `0`. It throws on a layout no front door can publish:
 - no harness origin;
 - a missing or unparseable pane origin;
-- an origin that isn't https;
+- an origin that isn't https, or is on port `0`;
 - two mounts on one port, which would share an origin;
 - a listen port that isn't an integer from 1 to 65535.
 

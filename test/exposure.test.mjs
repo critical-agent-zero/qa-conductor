@@ -74,6 +74,11 @@ test('mountsFor refuses an http origin, a missing or unparseable pane origin, tw
   refuses({ paneOrigins: undefined }, /QA_BASE_ORIGIN\) is missing/)
   refuses({ paneOrigins: { ...cfg.paneOrigins, pr: 'not a url' } }, /QA_PR_ORIGIN\) must be an origin/)
   refuses({ paneOrigins: { ...cfg.paneOrigins, base: 'file:///etc/passwd' } }, /QA_BASE_ORIGIN\) must be an origin/)
+  // an origin on port 0, which the URL parser takes and no front door serves
+  refuses({ harnessOrigin: `https://${HOST}:0` }, /harness origin \(QA_HARNESS_ORIGIN\) https:\/\/qa-box\.tail1234\.ts\.net:0 has no port a front door can listen on/)
+  refuses({ paneOrigins: { ...cfg.paneOrigins, pr: `https://${HOST}:0` } }, /PR pane origin \(QA_PR_ORIGIN\) https:\/\/\S+:0 has no port/)
+  // two on port 0: the port-0 error, not the shared-port one
+  refuses({ paneOrigins: { base: `https://${HOST}:0`, pr: `https://${HOST}:0` } }, /QA_BASE_ORIGIN\) https:\/\/\S+:0 has no port/)
   // two mounts on one port, on one hostname or two
   refuses({ paneOrigins: { base: 'https://a.ts.net:8443', pr: 'https://b.ts.net:8443' } }, /base and pr mounts are both on port 8443/)
   refuses({ harnessOrigin: `https://${HOST}:10000` }, /harness and pr mounts are both on port 10000/)
