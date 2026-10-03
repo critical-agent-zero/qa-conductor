@@ -1777,6 +1777,20 @@ test('every pass derives the mounts afresh from cfg', async () => {
   } finally { c.stop() }
 })
 
+// Before the servers listen there are no targets to mount, so reconcile()
+// runs nothing of its own: it returns `ready`, the first pass.
+test('reconcile() before the servers listen returns ready, and runs no pass of its own', async () => {
+  const exposure = fakeExposure()
+  const { c, lines } = makeWorld({ cfg: GATED, exposure })
+  try {
+    const early = c.exposure.reconcile()
+    assert.equal(early, c.exposure.ready)
+    assert.equal((await early).ok, true)
+    assert.equal(exposure.ensures(), 1)
+    assert.deepEqual(exposureLines(lines).filter(l => l.startsWith('[qa] exposure failed')), [])
+  } finally { c.stop() }
+})
+
 test('an adapter with QA_EXPOSURE=none refuses to start', () => {
   const message = 'adapters.exposure needs QA_EXPOSURE=tailscale: an ungated conductor must not publish itself'
   // set, or defaulted from a loopback layout
