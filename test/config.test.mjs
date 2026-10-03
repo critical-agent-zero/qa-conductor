@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { loadConfig, parseEnvFile } from '../lib/config.mjs'
+import { defaultExposure, loadConfig, parseEnvFile } from '../lib/config.mjs'
 
 function envFile(lines) {
   const dir = mkdtempSync(join(tmpdir(), 'qa-config-'))
@@ -13,7 +13,11 @@ function envFile(lines) {
   return path
 }
 
-const REQUIRED = ['GITHUB_QA_TOKEN=tok', 'QA_OPERATOR_EMAIL=op@homefree.local', 'QA_REPO=acme/widget', 'QA_PUBLIC_HOST=w.ts.net']
+// A public host puts the conductor in tailscale mode, which needs an allowlist.
+const REQUIRED = [
+  'GITHUB_QA_TOKEN=tok', 'QA_OPERATOR_EMAIL=op@homefree.local', 'QA_REPO=acme/widget', 'QA_PUBLIC_HOST=w.ts.net',
+  'QA_ALLOWED_LOGINS=alice@github',
+]
 
 test('parseEnvFile: KEY=value lines, comments/blanks ignored, values may contain =', () => {
   assert.deepEqual(parseEnvFile(envFile(['# c', '', '   ', 'A=1', 'B=x=y=='])), { A: '1', B: 'x=y==' })
@@ -45,7 +49,8 @@ test('overrides: ports, origins, labels, idle minutes (a number)', () => {
 })
 
 test('platform defaults fill gaps; file values win', () => {
-  const c = loadConfig(envFile(['GITHUB_QA_TOKEN=tok', 'QA_OPERATOR_EMAIL=op@homefree.local', 'QA_REPO=file/wins']),
+  // the default public host puts it in tailscale mode, so it needs logins
+  const c = loadConfig(envFile(['GITHUB_QA_TOKEN=tok', 'QA_OPERATOR_EMAIL=op@homefree.local', 'QA_REPO=file/wins', 'QA_ALLOWED_LOGINS=alice@github']),
     { defaults: { QA_REPO: 'default/repo', QA_PUBLIC_HOST: 'd.ts.net' } })
   assert.equal(c.repo, 'file/wins')
   assert.equal(c.publicHost, 'd.ts.net')
@@ -96,9 +101,13 @@ test('the GHCR token is QA_GHCR_TOKEN, falling back to GITHUB_QA_TOKEN', () => {
   assert.equal(c.githubToken, 'tok', 'the repo token is unchanged')
 })
 
-test('QA_BIND_HOST: the listen host defaults to loopback', () => {
+test('listens on 127.0.0.1, or on the loopback address QA_BIND_HOST names', () => {
   assert.equal(loadConfig(envFile(REQUIRED)).host, '127.0.0.1')
-  assert.equal(loadConfig(envFile([...REQUIRED, 'QA_BIND_HOST=0.0.0.0'])).host, '0.0.0.0')
+  assert.equal(loadConfig(envFile([...REQUIRED, 'QA_BIND_HOST='])).host, '127.0.0.1')
+  assert.equal(loadConfig(envFile([...REQUIRED, 'QA_BIND_HOST=::1'])).host, '::1')
+  for (const host of ['127.0.0.2', 'localhost']) {
+    assert.equal(loadConfig(envFile([...REQUIRED, `QA_BIND_HOST=${host}`])).host, host)
+  }
 })
 
 test('QA_ALLOWED_HOSTS: comma-separated, trimmed, empties dropped; default none', () => {
@@ -144,7 +153,8 @@ test('a non-loopback QA_BIND_HOST with no public host needs QA_HARNESS_ORIGIN', 
       return true
     }, extra.join())
   }
-  const c = loadConfig(envFile([...NO_HOST, ...LOOPBACK_PANES, 'QA_BIND_HOST=0.0.0.0', 'QA_HARNESS_ORIGIN=https://box.lan:3100']))
+  // (a non-loopback bind needs QA_EXPOSURE=none, behind another front door)
+  const c = loadConfig(envFile([...NO_HOST, ...LOOPBACK_PANES, 'QA_BIND_HOST=0.0.0.0', 'QA_HARNESS_ORIGIN=https://box.lan:3100', 'QA_EXPOSURE=none']))
   assert.equal(c.harnessOrigin, 'https://box.lan:3100')
 })
 
@@ -204,8 +214,156 @@ test('an http origin must be loopback: browsers send no Sec-Fetch-* headers to p
     }
   }
   // https anywhere; http on 127.0.0.0/8, ::1 and localhost
-  const c = loadConfig(envFile([...NO_HOST, 'QA_BIND_HOST=0.0.0.0',
+  const c = loadConfig(envFile([...NO_HOST, 'QA_BIND_HOST=0.0.0.0', 'QA_EXPOSURE=none',
     'QA_HARNESS_ORIGIN=https://box.lan:3100', 'QA_BASE_ORIGIN=http://localhost:3101', 'QA_PR_ORIGIN=http://[::1]:3102']))
   assert.deepEqual([c.harnessOrigin, c.paneOrigins], ['https://box.lan:3100', { base: 'http://localhost:3101', pr: 'http://[::1]:3102' }])
   assert.equal(loadConfig(envFile([...NO_HOST, ...LOOPBACK_PANES, 'QA_HARNESS_ORIGIN=http://127.0.0.2:3100'])).harnessOrigin, 'http://127.0.0.2:3100')
+})
+
+// --- 0.3.0: exposure modes and the identity gate ----------------------------------
+
+// Everything loopback: self-QA's and agent-identity's layout.
+const LOOPBACK = [...NO_HOST, ...LOOPBACK_PANES]
+const withoutLogins = lines => lines.filter(l => !l.startsWith('QA_ALLOWED_LOGINS='))
+const BIND_RULE = 'QA_BIND_HOST must be a loopback address: tailscale serve on this host is the only supported front'
+const NONE_HINT = ', or set QA_EXPOSURE=none if another front door authenticates'
+
+test('QA_EXPOSURE: an explicit value wins, and anything else throws. Unset, it is tailscale when any of these is not loopback: the harness origin, a pane origin, QA_PUBLIC_HOST, a QA_ALLOWED_HOSTS entry or QA_BIND_HOST. When all are loopback, it is none.', () => {
+  const mode = (...lines) => loadConfig(envFile([...LOOPBACK, ...lines])).exposure
+  for (const lines of [
+    [], ['QA_EXPOSURE='], ['QA_BIND_HOST=::1'], ['QA_BIND_HOST=localhost'], ['QA_BIND_HOST=127.0.0.2'],
+    // on port 0 the harness origin is null until it listens: it adds nothing
+    ['QA_HARNESS_PORT=0'],
+    ['QA_HARNESS_ORIGIN=http://localhost:3100'], ['QA_HARNESS_ORIGIN=https://127.0.0.1:3100'],
+    ['QA_BASE_ORIGIN=http://[::1]:3101'], ['QA_ALLOWED_HOSTS=localhost, 127.0.0.2,[::1]'],
+    ['QA_PUBLIC_HOST=localhost'],
+  ]) {
+    assert.equal(mode(...lines), 'none', lines.join())
+  }
+  for (const lines of [
+    ['QA_HARNESS_ORIGIN=https://h.ts.net:8444'],
+    ['QA_BASE_ORIGIN=https://h.ts.net:8443'],
+    ['QA_PR_ORIGIN=https://h.ts.net:10000'],
+    // the harness and pane origins it derives count too, but it counts alone
+    ['QA_PUBLIC_HOST=h.ts.net'],
+    ['QA_PUBLIC_HOST=h.ts.net', 'QA_HARNESS_ORIGIN=http://127.0.0.1:3100'],
+    ['QA_ALLOWED_HOSTS=localhost,box.ts.net'],
+  ]) {
+    assert.equal(mode(...lines), 'tailscale', lines.join())
+  }
+  // a non-loopback bind alone makes it tailscale, which then refuses that bind
+  assert.throws(
+    () => mode('QA_HARNESS_ORIGIN=http://127.0.0.1:3100', 'QA_BIND_HOST=0.0.0.0'),
+    err => err.message.startsWith(`QA_EXPOSURE defaults to tailscale because QA_BIND_HOST=0.0.0.0 is not loopback, so ${BIND_RULE}`),
+  )
+  // an explicit value wins either way
+  assert.equal(mode('QA_EXPOSURE=tailscale'), 'tailscale')
+  assert.equal(loadConfig(envFile([...REQUIRED, 'QA_EXPOSURE=none'])).exposure, 'none')
+  assert.equal(loadConfig(envFile([...REQUIRED, 'QA_EXPOSURE=tailscale'])).exposure, 'tailscale')
+  for (const bad of ['Tailscale', 'NONE', 'off', 'caddy', '0', 'true']) {
+    assert.throws(() => mode(`QA_EXPOSURE=${bad}`), err => {
+      assert.match(err.message, /^QA_EXPOSURE must be none or tailscale, got "/)
+      assert.ok(err.message.includes(JSON.stringify(bad)), err.message)
+      return true
+    }, bad)
+  }
+  // origins are checked first, then the mode
+  assert.throws(() => mode('QA_EXPOSURE=off', 'QA_HARNESS_ORIGIN=ftp://x'), /QA_HARNESS_ORIGIN must be an origin/)
+})
+
+// A hand-made `tailscale serve` in front of a loopback layout: any tailnet
+// device could curl the API (non-browser clients pass the API guard), so the
+// Host the servers answer to puts it in tailscale mode.
+test('QA_ALLOWED_HOSTS=box.ts.net with loopback origins resolves to tailscale, and the error names it', () => {
+  assert.equal(loadConfig(envFile([...LOOPBACK, 'QA_ALLOWED_HOSTS=box.ts.net'])).exposure, 'tailscale')
+  const file = envFile(withoutLogins([...LOOPBACK, 'QA_ALLOWED_HOSTS=localhost,box.ts.net']))
+  assert.throws(() => loadConfig(file), err => {
+    assert.ok(err.message.startsWith(`QA_ALLOWED_LOGINS is empty in ${file} and QA_EXPOSURE is tailscale (the QA_ALLOWED_HOSTS entry box.ts.net is not loopback)`), err.message)
+    return true
+  })
+  assert.throws(
+    () => loadConfig(envFile([...LOOPBACK, 'QA_ALLOWED_HOSTS=box.ts.net', 'QA_BIND_HOST=0.0.0.0', 'QA_HARNESS_ORIGIN=http://127.0.0.1:3100'])),
+    err => err.message.startsWith(`QA_EXPOSURE defaults to tailscale because the QA_ALLOWED_HOSTS entry box.ts.net is not loopback, so ${BIND_RULE}`),
+  )
+  // behind another authenticating front door
+  assert.equal(loadConfig(envFile(withoutLogins([...LOOPBACK, 'QA_ALLOWED_HOSTS=box.ts.net', 'QA_EXPOSURE=none']))).exposure, 'none')
+})
+
+// The resolver loadConfig and startConductor share, for a cfg that names no mode.
+test('defaultExposure: a missing or unparseable pane origin counts as non-loopback; a null harness origin adds nothing', () => {
+  const panes = { base: 'http://127.0.0.1:3101', pr: 'http://localhost:3102' }
+  const layout = { harnessOrigin: null, paneOrigins: panes, publicHost: null, allowedHosts: [], host: '127.0.0.1' }
+  assert.deepEqual(defaultExposure(layout), { mode: 'none', because: null })
+  // the demo's placeholders, before its proxies listen
+  assert.deepEqual(defaultExposure({ ...layout, paneOrigins: { base: 'http://127.0.0.1', pr: 'http://127.0.0.1' } }).mode, 'none')
+  assert.deepEqual(defaultExposure({ ...layout, harnessOrigin: 'http://[::1]:3100' }).mode, 'none')
+  for (const [change, because] of [
+    [{ paneOrigins: { pr: panes.pr } }, 'QA_BASE_ORIGIN (unset)'],
+    [{ paneOrigins: { base: panes.base, pr: null } }, 'QA_PR_ORIGIN (unset)'],
+    [{ paneOrigins: undefined }, 'QA_BASE_ORIGIN (unset)'],
+    [{ paneOrigins: { base: 'not a url', pr: panes.pr } }, 'QA_BASE_ORIGIN="not a url"'],
+    [{ paneOrigins: { base: panes.base, pr: 'file:///x' } }, 'QA_PR_ORIGIN="file:///x"'],
+    // a hand-built cfg whose harness origin is derived from its public host
+    [{ harnessOrigin: 'https://h.ts.net:8444' }, 'QA_HARNESS_ORIGIN=https://h.ts.net:8444'],
+    [{ harnessOrigin: 'nope' }, 'QA_HARNESS_ORIGIN=nope'],
+    [{ paneOrigins: { base: panes.base, pr: 'https://h.ts.net:10000' } }, 'QA_PR_ORIGIN=https://h.ts.net:10000'],
+    [{ publicHost: 'h.ts.net', harnessOrigin: 'https://h.ts.net:8444' }, 'QA_PUBLIC_HOST=h.ts.net'],
+    [{ allowedHosts: ['', 'localhost', 'Box.ts.net'] }, 'the QA_ALLOWED_HOSTS entry Box.ts.net'],
+    [{ host: '0.0.0.0' }, 'QA_BIND_HOST=0.0.0.0'],
+    [{ host: '::' }, 'QA_BIND_HOST=::'],
+  ]) {
+    assert.deepEqual(defaultExposure({ ...layout, ...change }), { mode: 'tailscale', because }, JSON.stringify(change))
+  }
+  // the bind host defaults to loopback
+  assert.equal(defaultExposure({ paneOrigins: panes }).mode, 'none')
+})
+
+test('tailscale mode refuses a QA_BIND_HOST that is not loopback; none mode accepts 0.0.0.0', () => {
+  // Off loopback, anyone who reaches the port can send their own
+  // Tailscale-User-Login (#307).
+  for (const host of ['0.0.0.0', '::', '*', '100.80.52.18', '"127.0.0.1"', '127.0.0.1.nip.io', '::ffff:127.0.0.1', 'example.com']) {
+    for (const [extra, why] of [
+      [[], 'QA_EXPOSURE defaults to tailscale because QA_PUBLIC_HOST=w.ts.net is not loopback'],
+      [['QA_EXPOSURE=tailscale'], 'QA_EXPOSURE=tailscale is set'],
+    ]) {
+      // checked before the allowlist, so the hint names QA_EXPOSURE=none too
+      for (const lines of [REQUIRED, withoutLogins(REQUIRED)]) {
+        assert.throws(() => loadConfig(envFile([...lines, `QA_BIND_HOST=${host}`, ...extra])), err => {
+          assert.ok(err.message.startsWith(`${why}, so ${BIND_RULE} (got ${JSON.stringify(host)} in `), err.message)
+          assert.ok(err.message.endsWith(`; use 127.0.0.1, ::1 or localhost)${NONE_HINT}`), err.message)
+          return true
+        }, `${host} ${extra}`)
+      }
+    }
+  }
+  // 0.2 accepted this; none mode still does, behind another front door
+  const c = loadConfig(envFile([...REQUIRED, 'QA_BIND_HOST=0.0.0.0', 'QA_EXPOSURE=none']))
+  assert.deepEqual([c.host, c.exposure], ['0.0.0.0', 'none'])
+})
+
+test('tailscale mode with no QA_ALLOWED_LOGINS throws, naming the reason, tailscale whois and QA_EXPOSURE=none', () => {
+  const message = (file, reason) =>
+    `QA_ALLOWED_LOGINS is empty in ${file} and QA_EXPOSURE is tailscale (${reason}): the harness and both panes would refuse everyone. ` +
+    'Set it to the comma-separated Tailscale logins allowed in (to find one, run `tailscale whois <device tailnet ip>`), ' +
+    'or set QA_EXPOSURE=none if another front door authenticates.'
+  for (const [lines, reason] of [
+    [withoutLogins(REQUIRED), 'QA_PUBLIC_HOST=w.ts.net is not loopback'],
+    [[...withoutLogins(REQUIRED), 'QA_ALLOWED_LOGINS= , ,'], 'QA_PUBLIC_HOST=w.ts.net is not loopback'],
+    [[...withoutLogins(LOOPBACK), 'QA_EXPOSURE=tailscale'], 'set'],
+    [[...withoutLogins(LOOPBACK), 'QA_PR_ORIGIN=https://h.ts.net:10000'], 'QA_PR_ORIGIN=https://h.ts.net:10000 is not loopback'],
+  ]) {
+    const file = envFile(lines)
+    assert.throws(() => loadConfig(file), err => {
+      assert.equal(err.message, message(file, reason))
+      return true
+    }, lines.join())
+  }
+  // none mode needs no allowlist
+  assert.deepEqual(loadConfig(envFile(withoutLogins([...REQUIRED, 'QA_EXPOSURE=none']))).allowedLogins, [])
+})
+
+test('QA_ALLOWED_LOGINS is split, trimmed and lowercased; unset means nobody (#307)', () => {
+  assert.deepEqual(loadConfig(envFile(withoutLogins(LOOPBACK))).allowedLogins, [])
+  const c = loadConfig(envFile([...withoutLogins(REQUIRED), 'QA_ALLOWED_LOGINS= Alice@GitHub , ,bob@homefree.local']))
+  assert.deepEqual(c.allowedLogins, ['alice@github', 'bob@homefree.local'])
 })
