@@ -146,6 +146,11 @@ test('never rejects: an adapter error becomes { ok: false, error }', async () =>
   // a check that fails after ensure added mounts still reports them
   assert.deepEqual(await run(fakeExposure({ added: [mounts[0]], checkFails: new Error('status: timeout') })), failed('status: timeout', [mounts[0]]))
   assert.deepEqual(await run(fakeExposure({ checkFails: new Error('status: timeout') }), { checkOnly: true }), failed('status: timeout'))
+  // an ensure that fails part way says what it added on its error
+  const partial = Object.assign(new Error('could not mount 8443/'), { added: [mounts[0]] })
+  assert.deepEqual(await run(fakeExposure({ ensureFails: partial })), failed('could not mount 8443/', [mounts[0]]))
+  const bogus = Object.assign(new Error('status: timeout'), { added: 'not a list' })
+  assert.deepEqual(await run(fakeExposure({ added: [mounts[1]], checkFails: bogus })), failed('status: timeout', [mounts[1]]))
   // whatever is thrown, and whatever the adapter is
   assert.deepEqual(await run(fakeExposure({ ensureFails: 'a string' })), failed('a string'))
   assert.equal((await run(null)).ok, false)

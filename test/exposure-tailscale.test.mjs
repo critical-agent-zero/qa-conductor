@@ -167,16 +167,22 @@ test('a CLI failure rejects (the conductor turns it into an error result)', asyn
   await assert.rejects(exposure.ensure(MOUNTS), /Command failed/)
   assert.deepEqual(down.writes(), [])
 
-  // one mount fails: the others are still tried, and the error names it
-  const one = recorder(fixture('foreign-only'), { fail: args => args.includes('--https=8443') })
+  // one mount fails: the others are still tried, and the error names it and
+  // lists what was added
+  const failing8443 = { fail: args => args.includes('--https=8443') }
+  const one = recorder(fixture('foreign-only'), failing8443)
   const ensure = createTailscaleExposure({ execFileFn: one.execFileFn }).ensure(MOUNTS)
   await assert.rejects(ensure, err => {
     assert.match(err.message, /could not mount 8443\/ -> http:\/\/127\.0\.0\.1:3101: tailscale serve: Command failed/)
     assert.match(err.message, /exit status 1/)
     assert.doesNotMatch(err.message, /8444|10000/)
+    assert.deepEqual(err.added, [MOUNTS[0], MOUNTS[2]])
     return true
   })
   assert.deepEqual(one.writes().map(a => a[3]), ['--https=8444', '--https=8443', '--https=10000'])
+  const partly = await reconcileExposure(createTailscaleExposure({ execFileFn: recorder(fixture('foreign-only'), failing8443).execFileFn }), MOUNTS)
+  assert.deepEqual([partly.ok, partly.added], [false, [MOUNTS[0], MOUNTS[2]]])
+  assert.match(partly.error, /^could not mount 8443\//)
 
   // through reconcileExposure: { ok: false, error }, never a rejection
   const r = await reconcileExposure(createTailscaleExposure({ execFileFn: recorder(fixture('all'), { fail: () => true }).execFileFn }), MOUNTS, { now: () => 2 })
