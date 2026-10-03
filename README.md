@@ -22,6 +22,28 @@ npm install github:critical-labs/qa-conductor#v0.2.1
 
 Node ≥ 22. There are no runtime dependencies.
 
+### Entry points
+
+| Import | Exports | |
+|---|---|---|
+| `@critical-labs/qa-conductor` | `startConductor` | the conductor: harness, pane proxies, sessions, the exposure loop ([Use](#use)) |
+| `@critical-labs/qa-conductor/config` | `loadConfig`, `parseEnvFile`, `defaultExposure`, `defaultHarnessOrigin`, `EXPOSURE_MODES`, `HARNESS_PATH` | reading `.env.qa` into `cfg` ([Configuration](#configuration)) |
+| `@critical-labs/qa-conductor/session` | `bootSession`, `teardownSession`, `createSession`, `reduce`, `ROLES`, `PANE_STAGES` | the boot sequence and session state the conductor runs |
+| `@critical-labs/qa-conductor/github` | `createGithub` | the GitHub effect wrapper |
+| `@critical-labs/qa-conductor/docker` | `createDocker` | the Docker effect wrapper |
+| `@critical-labs/qa-conductor/exec` | `makeExecFileFn` | the `execFile` effect wrapper |
+| `@critical-labs/qa-conductor/identity` | `normalizeLogins`, `refusalReason`, `isAllowed`, `identityGate` | the [Tailscale identity gate](#security) |
+| `@critical-labs/qa-conductor/exposure` | `mountsFor`, `reconcileExposure`, `runExpose` | one [exposure](#exposure-optional) pass, outside a conductor |
+| `@critical-labs/qa-conductor/proxy` | `createPaneProxy`, `panePolicy`, `parseSetCookie`, `isAllowedHost` | the pane proxy |
+| `@critical-labs/qa-conductor/verdict` | `formatVerdict`, `postVerdict` | the verdict comment and label |
+| `@critical-labs/qa-conductor/adapters/provisioner-docker` | `createDockerProvisioner` | a Provisioner for docker-sibling deployments |
+| `@critical-labs/qa-conductor/adapters/provisioner-process` | `createProcessProvisioner` | a Provisioner for local process groups |
+| `@critical-labs/qa-conductor/adapters/build-worktree` | `createWorktreeBuild`, `trustDecision` | a BuildConvention that runs PRs from git worktrees, behind a trust gate |
+| `@critical-labs/qa-conductor/adapters/exposure-tailscale` | `createTailscaleExposure` | an Exposure adapter on `tailscale serve` |
+| `@critical-labs/qa-conductor/package.json` | *(the manifest)* | |
+
+Nothing else is exported. The package also installs one bin, `qa-conductor-expose`, the [expose CLI](#expose-cli), for operators.
+
 ## Use
 
 ```js
@@ -298,6 +320,7 @@ The contract:
 | `QA_EXPOSURE` | `tailscale` if any address the conductor answers to or listens on is off loopback (see below), else `none` | `tailscale`: fronted by `tailscale serve` on this host, so the identity gate is on and the bind must be loopback. `none`: no gate (0.2's behaviour), for loopback or another authenticating front door. Anything else throws |
 | `QA_ALLOWED_LOGINS` | *(none)* | comma-separated Tailscale logins (as `tailscale whois` shows them, e.g. `alice@github`) allowed in when the gate is on; trimmed and lowercased. Required in tailscale mode |
 | `QA_EXPOSURE_INTERVAL_MINUTES` | `5` | minutes between [exposure](#exposure-optional) reconcile passes, when the platform passes an Exposure adapter. Above `0` and at most `35791`, the longest a timer can wait (above it, Node would fire every millisecond); fractions are fine |
+| `QA_TAILSCALE_BIN` | `tailscale` | the tailscale CLI the [expose CLI](#expose-cli) and self-QA run, for an env file they read. On macOS, use the app's `/Applications/Tailscale.app/Contents/MacOS/Tailscale` when the one on `PATH` is older than the daemon. The conductor never reads it: a platform passes `bin` to `createTailscaleExposure` |
 | `QA_HARNESS_PORT` / `QA_BASE_PROXY_PORT` / `QA_PR_PROXY_PORT` | `3100` / `3101` / `3102` | listen ports |
 | `QA_HARNESS_ORIGIN` | `https://<QA_PUBLIC_HOST>:8444`, else `http://<QA_BIND_HOST>:<QA_HARNESS_PORT>` on a loopback bind | the origin viewers open the harness at (any path dropped); the page is under `/qa/`. Required on a non-loopback bind with no public host. On port `0` the conductor derives it from the bound port. Not an IPv6 literal: on a `::1` bind, set `http://localhost:<port>` |
 | `QA_BASE_ORIGIN` / `QA_PR_ORIGIN` | `https://<host>:8443` / `:10000` | public pane origins |
