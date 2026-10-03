@@ -201,7 +201,18 @@ test('every exports and bin target exists and is inside a files entry', () => {
   }
 })
 
-test('npm pack --dry-run packs lib/ and public/, and no test/, demo/, qa/, docs/ or .github files', { timeout: 90_000 }, async () => {
+test('the bin is the expose CLI, run by node from npx and by npm run expose', () => {
+  // No leading ./: npm pkg fix strips it, and a publish would warn that it
+  // auto-corrected package.json.
+  assert.deepEqual(pkg.bin, { 'qa-conductor-expose': 'bin/qa-conductor-expose.mjs' })
+  // npm links a bin as is: without the #! line, npx would hand it to the shell
+  for (const target of Object.values(pkg.bin)) {
+    assert.match(readFileSync(path.join(ROOT, target), 'utf8'), /^#!\/usr\/bin\/env node\n/, `${target} starts with #!/usr/bin/env node`)
+  }
+  assert.equal(pkg.scripts.expose, 'node bin/qa-conductor-expose.mjs')
+})
+
+test('npm pack --dry-run packs lib/, public/ and bin/, and no test/, demo/, qa/, docs/ or .github files', { timeout: 90_000 }, async () => {
   const { stdout } = await execFileP('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], {
     cwd: ROOT,
     timeout: 60_000,
@@ -213,7 +224,8 @@ test('npm pack --dry-run packs lib/ and public/, and no test/, demo/, qa/, docs/
   const packed = result.files.map(file => file.path)
   assert.ok(packed.some(file => file.startsWith('lib/')), 'lib/ is packed')
   assert.ok(packed.some(file => file.startsWith('public/')), 'public/ is packed')
-  for (const file of ['package.json', 'public/index.html', 'public/harness.js', 'public/bridge.js', ...shipped()]) {
+  assert.ok(packed.some(file => file.startsWith('bin/')), 'bin/ is packed')
+  for (const file of ['package.json', 'public/index.html', 'public/harness.js', 'public/bridge.js', 'bin/qa-conductor-expose.mjs', ...shipped()]) {
     assert.ok(packed.includes(file), `${file} is packed`)
   }
   for (const file of packed) {

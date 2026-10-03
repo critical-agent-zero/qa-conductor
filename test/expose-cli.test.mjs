@@ -1,10 +1,22 @@
 // The expose CLI: runExpose, its exit codes and what it prints, against a fake
-// adapter. No tailscale here.
+// adapter; then bin/qa-conductor-expose.mjs, spawned with a fake `tailscale`
+// (a #!/usr/bin/env node shim that logs its argv and prints {} for `serve
+// status --json`). Each spawn's PATH holds only the shim's dir, so no real
+// tailscale can run.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { runExpose } from '../lib/exposure.mjs'
+
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+const BIN = path.join(ROOT, 'bin', 'qa-conductor-expose.mjs')
+const USAGE_LINE = 'Usage: qa-conductor-expose [--check] [--env FILE] [--config MODULE[#export]] [--tailscale BIN] [--socket PATH] [--help|-h]'
 
 const HOST = 'h.ts.net'
 const CFG = {
@@ -170,4 +182,211 @@ test('a handler that takes some of a mount\'s requests is named as such, and an 
   const traps = { ensure: async () => ({ added: [sly], ok: [] }), check: async () => ({ ok: false, drift: [{ get mount() { throw new Error('no') } }] }) }
   assert.equal(await runExpose({ cfg: CFG, exposure: traps, log: trap.log }), 1)
   assert.deepEqual(trap.lines.at(-1), ['err', 'qa exposure: the adapter returned a result that cannot be printed'])
+})
+
+// --- the bin -------------------------------------------------------------------
+
+// A fake tailscale CLI. It logs [its own file name, ...argv] as a JSON line to
+// $SHIM_LOG, and answers `serve status --json` (after any --socket=) with {}.
+const SHIM = `#!/usr/bin/env node
+const fs = require('node:fs')
+const path = require('node:path')
+const args = process.argv.slice(2)
+fs.appendFileSync(process.env.SHIM_LOG, JSON.stringify([path.basename(process.argv[1]), ...args]) + '\\n')
+if (args.filter(a => !a.startsWith('--socket=')).join(' ') === 'serve status --json') process.stdout.write('{}\\n')
+`
+const FIXTURE = ['GITHUB_QA_TOKEN=unused', 'QA_REPO=acme/widget', 'QA_PUBLIC_HOST=h.ts.net', 'QA_ALLOWED_LOGINS=a@github']
+const STATUS = ['serve', 'status', '--json']
+const ENSURE = [
+  ['serve', '--bg', '--https=8444', '--set-path=/qa', 'http://127.0.0.1:3100'],
+  ['serve', '--bg', '--https=8443', 'http://127.0.0.1:3101'],
+  ['serve', '--bg', '--https=10000', 'http://127.0.0.1:3102'],
+]
+const MISSING = [
+  'qa exposure: drift 8444/qa: want http://127.0.0.1:3100, have nothing',
+  'qa exposure: drift 8443/: want http://127.0.0.1:3101, have nothing',
+  'qa exposure: drift 10000/: want http://127.0.0.1:3102, have nothing',
+]
+
+// A scratch dir with the shim as `tailscale` (and any other names) in
+// dir/bin, beside a `node` link for its #! line.
+function world({ shims = [] } = {}) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'qa-expose-'))
+  const bin = path.join(dir, 'bin')
+  mkdirSync(bin)
+  // the shim is CommonJS whatever package.json is above the scratch dir
+  writeFileSync(path.join(bin, 'package.json'), '{"type":"commonjs"}\n')
+  for (const name of ['tailscale', ...shims]) writeFileSync(path.join(bin, name), SHIM, { mode: 0o755 })
+  symlinkSync(process.execPath, path.join(bin, 'node'))
+  const log = path.join(dir, 'tailscale.log')
+  const lines = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [])
+  return {
+    dir,
+    shim: name => path.join(bin, name),
+    envFile: (lines, name = '.env.qa') => {
+      const file = path.join(dir, name)
+      writeFileSync(file, `${lines.join('\n')}\n`)
+      return file
+    },
+    // Each call the shim saw, as its argv; `ran` adds which shim it was.
+    calls: () => lines().map(([, ...args]) => args),
+    ran: () => lines().map(([name]) => name),
+    run: (args, { cwd = dir, env = {} } = {}) => new Promise(resolve => {
+      execFile(process.execPath, [BIN, ...args], { cwd, env: { PATH: bin, SHIM_LOG: log, ...env }, timeout: 20_000 }, (err, stdout, stderr) => {
+        resolve({ code: err ? err.code : 0, stdout, stderr })
+      })
+    }),
+  }
+}
+const outLines = text => text.split('\n').filter(Boolean)
+
+test('mounts all three, then exits 1 because the shim still reports none', async () => {
+  const w = world()
+  const r = await w.run(['--env', w.envFile(FIXTURE), '--tailscale', w.shim('tailscale')])
+  assert.equal(r.code, 1, r.stderr)
+  // ensure reads the status, writes each missing mount; check reads it again
+  assert.deepEqual(w.calls(), [STATUS, ...ENSURE, STATUS])
+  assert.deepEqual(outLines(r.stdout), [
+    'qa exposure: mounted 8444/qa -> http://127.0.0.1:3100',
+    'qa exposure: mounted 8443/ -> http://127.0.0.1:3101',
+    'qa exposure: mounted 10000/ -> http://127.0.0.1:3102',
+  ])
+  assert.deepEqual(outLines(r.stderr), MISSING)
+})
+
+test('--check never runs serve --bg and exits 1', async () => {
+  const w = world()
+  const r = await w.run(['--check', '--env', w.envFile(FIXTURE), '--tailscale', w.shim('tailscale')])
+  assert.equal(r.code, 1, r.stderr)
+  assert.deepEqual(w.calls(), [STATUS])
+  assert.equal(r.stdout, '')
+  assert.deepEqual(outLines(r.stderr), MISSING)
+})
+
+test('QA_EXPOSURE=none exits 0 without calling tailscale', async () => {
+  const w = world()
+  const file = w.envFile([...FIXTURE, 'QA_EXPOSURE=none'])
+  for (const args of [['--env', file], ['--check', '--env', file]]) {
+    const r = await w.run(args)
+    assert.equal(r.code, 0, r.stderr)
+    assert.equal(r.stdout, 'qa exposure: QA_EXPOSURE=none, nothing to do\n')
+    assert.equal(r.stderr, '')
+  }
+  assert.deepEqual(w.calls(), [])
+})
+
+test('--config loads cfg from MODULE#export', async () => {
+  const w = world()
+  // a platform's loader: its own defaults (QA_REPO, a harness on :8445), and
+  // a note of the path it was called with
+  writeFileSync(path.join(w.dir, 'loader.mjs'), [
+    `import { writeFileSync } from 'node:fs'`,
+    `import { loadConfig } from ${JSON.stringify(pathToFileURL(path.join(ROOT, 'lib/config.mjs')).href)}`,
+    `export function loadMine(file) {`,
+    `  writeFileSync(new URL('./called-with', import.meta.url), file)`,
+    `  return loadConfig(file, { defaults: { QA_REPO: 'acme/widget', QA_HARNESS_ORIGIN: 'https://h.ts.net:8445' } })`,
+    `}`,
+    `export default async file => ({ ...loadMine(file), paneOrigins: { base: 'https://h.ts.net:9443', pr: 'https://h.ts.net:9444' } })`,
+    `export const notAFunction = 1`,
+  ].join('\n'))
+  const file = w.envFile(FIXTURE.filter(line => !line.startsWith('QA_REPO=')), 'platform.env')
+
+  // the core loadConfig refuses it: no QA_REPO
+  const core = await w.run(['--check', '--env', file])
+  assert.equal(core.code, 2)
+  assert.match(core.stderr, /QA_REPO missing in /)
+
+  // MODULE#export, a path from the working directory
+  const named = await w.run(['--check', '--env', 'platform.env', '--config', './loader.mjs#loadMine'])
+  assert.equal(named.code, 1, named.stderr)
+  assert.equal(readFileSync(path.join(w.dir, 'called-with'), 'utf8'), 'platform.env')
+  assert.equal(outLines(named.stderr)[0], 'qa exposure: drift 8445/qa: want http://127.0.0.1:3100, have nothing')
+
+  // MODULE alone calls its default export, which may be async; an absolute path works too
+  const fallback = await w.run(['--check', '--env', file, '--config', path.join(w.dir, 'loader.mjs')])
+  assert.equal(fallback.code, 1, fallback.stderr)
+  assert.deepEqual(outLines(fallback.stderr).slice(1).map(line => line.split(':')[1]), [' drift 9443/', ' drift 9444/'])
+
+  // a missing module or export, or one that isn't a function, is a config error
+  for (const spec of ['./loader.mjs#nope', './loader.mjs#notAFunction', './absent.mjs#loadMine']) {
+    const r = await w.run(['--check', '--env', file, '--config', spec])
+    assert.equal(r.code, 2, spec)
+    assert.ok(r.stderr.includes(USAGE_LINE), spec)
+  }
+  assert.deepEqual(w.calls(), [STATUS, STATUS], 'only the two loads that worked called tailscale')
+})
+
+test('--help and -h print the usage and exit 0 without loading a config or calling tailscale', async () => {
+  const w = world() // no .env.qa in its dir
+  for (const args of [['--help'], ['-h'], ['--check', '--env', 'absent.env', '--config', './absent.mjs', '--help']]) {
+    const r = await w.run(args)
+    assert.equal(r.code, 0, `${args}: ${r.stderr}`)
+    assert.equal(outLines(r.stdout)[0], USAGE_LINE)
+    assert.match(r.stdout, /--tailscale BIN/)
+    assert.match(r.stdout, /no\s+deploy/)
+    assert.equal(r.stderr, '')
+  }
+  assert.deepEqual(w.calls(), [])
+})
+
+test('an unknown flag, or a config that does not load (the fixture without GITHUB_QA_TOKEN), exits 2 with the usage', async () => {
+  const w = world()
+  const file = w.envFile(FIXTURE)
+  const cases = [
+    [['--bogus'], /--bogus/],
+    [['--check', 'extra'], /extra/],
+    [['--env'], /--env/],
+    [['--check=yes', '--env', file], /--check/],
+    [['--env', w.envFile(FIXTURE.filter(line => !line.startsWith('GITHUB_QA_TOKEN=')), 'no-token.env')], /GITHUB_QA_TOKEN missing in /],
+    [['--env', path.join(w.dir, 'absent.env')], /absent\.env/],
+    [['--env', file, '--tailscale', ''], /bin must be/],
+    [['--env', file, '--socket', ''], /socket must be/],
+  ]
+  for (const [args, message] of cases) {
+    const r = await w.run(args)
+    assert.equal(r.code, 2, `${JSON.stringify(args)}: ${r.stderr}`)
+    assert.match(r.stderr, /^qa-conductor-expose: /)
+    assert.match(r.stderr, message)
+    assert.ok(r.stderr.includes(USAGE_LINE), JSON.stringify(args))
+    assert.equal(r.stdout, '')
+  }
+  assert.deepEqual(w.calls(), [])
+})
+
+test('a mount layout no front door can publish exits 2, without the usage', async () => {
+  const w = world()
+  const r = await w.run(['--env', w.envFile([...FIXTURE, 'QA_HARNESS_PORT=0'])])
+  assert.equal(r.code, 2)
+  assert.match(r.stderr, /^qa exposure: the harness listen port must be an integer from 1 to 65535, got 0/)
+  assert.ok(!r.stderr.includes('Usage'))
+  assert.deepEqual(w.calls(), [])
+})
+
+test('the CLI is --tailscale, else QA_TAILSCALE_BIN in the env file, else tailscale on PATH; --socket comes first', async () => {
+  const w = world({ shims: ['ts-flag', 'ts-file'] })
+  const plain = w.envFile(FIXTURE)
+  const named = w.envFile([...FIXTURE, `QA_TAILSCALE_BIN=${w.shim('ts-file')}`], 'named.env')
+  await w.run(['--check', '--env', plain])
+  await w.run(['--check', '--env', named])
+  await w.run(['--check', '--env', named, '--tailscale', w.shim('ts-flag')])
+  assert.deepEqual(w.ran(), ['tailscale', 'ts-file', 'ts-flag'])
+
+  const sock = world()
+  const r = await sock.run(['--check', '--env', sock.envFile(FIXTURE), '--socket', '/run/ts/tailscaled.sock'])
+  assert.equal(r.code, 1, r.stderr)
+  assert.deepEqual(sock.calls(), [['--socket=/run/ts/tailscaled.sock', ...STATUS]])
+})
+
+test('the env file is --env, else $QA_ENV_FILE, else ./.env.qa', async () => {
+  const w = world()
+  w.envFile([...FIXTURE, 'QA_EXPOSURE=none'])
+  const other = w.envFile(FIXTURE, 'other.env')
+  const cwdFile = await w.run(['--check'])
+  assert.equal(cwdFile.code, 0, cwdFile.stderr)
+  assert.match(cwdFile.stdout, /nothing to do/)
+  const fromEnv = await w.run(['--check'], { env: { QA_ENV_FILE: other } })
+  assert.equal(fromEnv.code, 1, fromEnv.stderr)
+  const flag = await w.run(['--check', '--env', '.env.qa'], { env: { QA_ENV_FILE: other } })
+  assert.equal(flag.code, 0, flag.stderr)
+  assert.deepEqual(w.calls(), [STATUS])
 })
