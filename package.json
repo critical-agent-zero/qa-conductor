@@ -16,9 +16,13 @@
     "provenance": true
   },
   "files": [
+    "bin",
     "lib",
     "public"
   ],
+  "bin": {
+    "qa-conductor-expose": "bin/qa-conductor-expose.mjs"
+  },
   "exports": {
     ".": "./lib/server.mjs",
     "./session": "./lib/session.mjs",
@@ -39,6 +43,7 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "demo": "node demo/server.mjs",
-    "qa": "node qa/self.mjs"
+    "qa": "node qa/self.mjs",
+    "expose": "node bin/qa-conductor-expose.mjs --config qa/self.mjs#loadSelfQaConfig"
   }
 }
