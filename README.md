@@ -338,6 +338,8 @@ npm run expose -- --check        # in this repo: self-QA's .env.qa, through self
 
 `qa-conductor-expose` runs one [exposure](#exposure-optional) pass from a shell, through the built-in tailscale adapter. **It is a tool for operators and debugging.** The conductor's reconcile loop owns the mounts: it sets them once its servers listen and restores them every `QA_EXPOSURE_INTERVAL_MINUTES`. So a deploy only restarts the conductor, and runs neither this CLI nor `tailscale serve`. Use the CLI to see drift, or to restore a mount now instead of at the next pass.
 
+**Run it without `--check` only while the conductor is running.** The CLI never removes a mount, and self-QA removes its own only as it stops, so a mount written with no conductor behind it stays. Until someone removes it, it publishes whatever listens on its loopback port next, such as a later loopback self-QA, with no identity gate: that is why self-QA removes its mounts when it stops. With the conductor stopped, use `--check`.
+
 ```
 qa-conductor-expose [--check] [--env FILE] [--config MODULE[#export]] [--tailscale BIN] [--socket PATH] [--help|-h]
 ```
@@ -391,7 +393,7 @@ qa-conductor QAs its own PRs with its own built-in adapters (`qa/self.mjs`):
   - `QA_BASE_ORIGIN=https://<machine>.ts.net:8443` and `QA_PR_ORIGIN=https://<machine>.ts.net:10000` (self-QA defaults both to loopback, so set both);
   - `QA_ALLOWED_LOGINS=<your Tailscale login>`.
 
-  That layout is tailscale mode, so self-QA passes the conductor the built-in tailscale [Exposure](#exposure-optional) adapter. The conductor mounts the harness at `https://<machine>.ts.net:8444/qa/` and the panes at `:8443` and `:10000` with `tailscale serve`, and restores them every `QA_EXPOSURE_INTERVAL_MINUTES`. `QA_TAILSCALE_BIN` names the CLI (default `tailscale`; on macOS, use the app's `/Applications/Tailscale.app/Contents/MacOS/Tailscale`, since the one on `PATH` may be older than the daemon). To see drift from a shell, run `npm run expose -- --check`: the script passes `--config qa/self.mjs#loadSelfQaConfig`, which reads `.env.qa` with self-QA's defaults, such as `QA_REPO`, that the core `loadConfig` lacks (see [Expose CLI](#expose-cli)).
+  That layout is tailscale mode, so self-QA passes the conductor the built-in tailscale [Exposure](#exposure-optional) adapter. The conductor mounts the harness at `https://<machine>.ts.net:8444/qa/` and the panes at `:8443` and `:10000` with `tailscale serve`, and restores them every `QA_EXPOSURE_INTERVAL_MINUTES`. `QA_TAILSCALE_BIN` names the CLI (default `tailscale`; on macOS, use the app's `/Applications/Tailscale.app/Contents/MacOS/Tailscale`, since the one on `PATH` may be older than the daemon). To see drift from a shell, run `npm run expose -- --check`: the script passes `--config qa/self.mjs#loadSelfQaConfig`, which reads `.env.qa` with self-QA's defaults, such as `QA_REPO`, that the core `loadConfig` lacks (see [Expose CLI](#expose-cli)). A plain `npm run expose` restores them now, but only while self-QA runs: once it has stopped, it would put back the mounts self-QA just removed.
 
   From another device, the outer harness and each pane's demo harness render, but a demo's own panes are on this machine's loopback (`http://127.0.0.1:<port>`), so they render only in a browser on this machine.
 
