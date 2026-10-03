@@ -356,7 +356,7 @@ It prints a line for each mount it writes (`qa exposure: mounted <port><path> ->
 |---|---|
 | `0` | every mount is in place (after writing any that weren't), or `QA_EXPOSURE=none`, or `--help` |
 | `1` | drift remains, or tailscale failed |
-| `2` | a usage or config error, with the usage on stderr; or a mount layout no front door can publish, such as an `http:` origin, two mounts on one port or a listen port `0` |
+| `2` | a bad flag or a config that doesn't load, with the usage on stderr; or, as one `qa exposure:` line, a mode, bind host or mount layout the conductor can't publish, such as an unknown `QA_EXPOSURE` from a `--config` loader, tailscale mode on a bind host that isn't loopback, an `http:` origin, two mounts on one port or a listen port `0` |
 
 ## Demo
 

@@ -432,12 +432,29 @@ test('an unknown flag, or a config that does not load (the fixture without GITHU
   assert.deepEqual(w.calls(), [])
 })
 
-test('a mount layout no front door can publish exits 2, without the usage', async () => {
+test('a mode, bind host or mount layout the conductor can\'t publish exits 2, with one line and without the usage', async () => {
   const w = world()
   const r = await w.run(['--env', w.envFile([...FIXTURE, 'QA_HARNESS_PORT=0'])])
   assert.equal(r.code, 2)
   assert.match(r.stderr, /^qa exposure: the harness listen port must be an integer from 1 to 65535, got 0/)
   assert.ok(!r.stderr.includes('Usage'))
+
+  // a --config loader's cfg that loads, but that runExpose refuses
+  writeFileSync(path.join(w.dir, 'loader.mjs'), [
+    `import { loadConfig } from ${JSON.stringify(pathToFileURL(path.join(ROOT, 'lib/config.mjs')).href)}`,
+    `export const caddy = file => ({ ...loadConfig(file), exposure: 'caddy' })`,
+    `export const wide = file => ({ ...loadConfig(file), host: '0.0.0.0' })`,
+  ].join('\n'))
+  const file = w.envFile(FIXTURE)
+  for (const [name, line] of [
+    ['caddy', 'qa exposure: QA_EXPOSURE must be none or tailscale, got "caddy"'],
+    ['wide', 'qa exposure: QA_EXPOSURE is tailscale, and the conductor runs tailscale mode only on a loopback bind host (QA_BIND_HOST, cfg.host), got "0.0.0.0"'],
+  ]) {
+    const refused = await w.run(['--env', file, '--config', `./loader.mjs#${name}`])
+    assert.equal(refused.code, 2, name)
+    assert.deepEqual(outLines(refused.stderr), [line])
+    assert.equal(refused.stdout, '')
+  }
   assert.deepEqual(w.calls(), [])
 })
 
