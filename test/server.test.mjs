@@ -3,6 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import net from 'node:net'
 
 import { startConductor } from '../lib/server.mjs'
 
@@ -16,11 +17,13 @@ function deferred() {
 // test releases it — modelling a boot stuck waiting on a GHCR image. The
 // startup sweep blocks on `sweepGate` when given, then fails if `sweepFails`;
 // `provisioner` overrides members (`{ sweep: undefined }` removes the sweep).
+// `exposure` is passed as adapters.exposure (see fakeExposure). The logger
+// records every line, then throws on one that matches `logThrowsOn`.
 // Each pane "app" is a real loopback server, so the pane proxies can be
 // exercised.
 function makeWorld({
   hang = {}, failAt = null, sweepGate = null, sweepFails = false, provisioner: provisionerOverrides = {},
-  cfg: cfgOverrides = {}, readBaseEnv: readBaseEnvOverride = null,
+  cfg: cfgOverrides = {}, readBaseEnv: readBaseEnvOverride = null, exposure = null, logThrowsOn = null,
 } = {}) {
   const calls = []
   // '/page' answers HTML, so the proxy injects the bridge; anything else is text.
@@ -70,6 +73,7 @@ function makeWorld({
     seed: { databases: ['idp'], seedPane: async () => {} },
     envTransform: { derivePaneEnv: ({ pane }) => ({ app: { DSN: pane.dsn } }) },
     auth: { requiresDb: false, establishSession: async ({ pane }) => ({ landingUrl: `login-${pane.ref.role}`, cookies: [] }) },
+    ...(exposure ? { exposure } : {}),
   }
   // Ungated: these https origins would otherwise put it in tailscale mode.
   const cfg = {
@@ -90,8 +94,16 @@ function makeWorld({
   const readBaseEnv = readBaseEnvOverride ?? (async () => { calls.push(['readBaseEnv']); return { A: '1' } })
   const logLines = []
   const errorLines = []
-  const quiet = { log: (...a) => logLines.push(a.join(' ')), error: (...a) => errorLines.push(a.join(' ')) }
+  const lines = [] // both, in order
+  const record = into => (...a) => {
+    const line = a.join(' ')
+    into.push(line)
+    lines.push(line)
+    if (logThrowsOn?.test(line)) throw new Error('the logger failed')
+  }
+  const quiet = { log: record(logLines), error: record(errorLines) }
   const conductor = startConductor({ cfg, github, fsx, adapters, readBaseEnv, log: quiet })
+  if (exposure) exposure.servers = conductor.servers
   const closeApps = () => { for (const s of Object.values(apps)) s.close() }
   // stop() leaves open connections alone; an idle keep-alive socket fetch()
   // opened would hold the test process up to its 4s idle timeout.
@@ -103,7 +115,7 @@ function makeWorld({
       closeApps()
     },
   }
-  return { c, conductor, closeApps, calls, adapters, github, cfg, logLines, errorLines }
+  return { c, conductor, closeApps, calls, adapters, github, cfg, logLines, errorLines, lines }
 }
 
 async function proxyPort(server) {
@@ -713,7 +725,7 @@ test('a pane 421 carries the pane frame-ancestors', async () => {
 // startConductor for a check that must throw before anything starts. Should
 // a check regress, the conductor it starts is stopped at once, so the test
 // fails instead of its servers and reaper holding the process open.
-function startOnly(cfgOverrides) {
+function startOnly(cfgOverrides, adapterOverrides = {}) {
   const c = startConductor({
     cfg: {
       publicHost: 'h.ts.net', ports: { harness: 0, base: 0, pr: 0 }, idleMinutes: 30,
@@ -722,7 +734,7 @@ function startOnly(cfgOverrides) {
     },
     github: {},
     fsx: {},
-    adapters: { provisioner: { sweep: () => { throw new Error('ran') } }, build: {} },
+    adapters: { provisioner: { sweep: () => { throw new Error('ran') } }, build: {}, ...adapterOverrides },
     log: { log() {}, error() {} },
   })
   c.stop()
@@ -1398,4 +1410,438 @@ test('the harness shows the sweep wait only while the sweep is pending', async (
     assert.deepEqual(buildMessages(second), [])
     assert.equal((await api(port, 'GET', '/api/state')).buildRun, null)
   } finally { c.stop() }
+})
+
+// --- 0.3.0: the exposure reconcile loop ------------------------------------------
+
+// A fake Exposure adapter. By default `ensure` writes every mount it is given
+// and `check` finds nothing drifted; a test passes its own to script a pass,
+// each called with the mounts and the pass number (1 for the first ensure).
+// `calls` records each call with its mounts and, for ensure, whether all
+// three servers were listening by then.
+function fakeExposure({ ensure = mounts => ({ added: mounts, ok: [] }), check = () => ({ ok: true, drift: [] }) } = {}) {
+  const fake = {
+    calls: [],
+    servers: null, // set by makeWorld
+    ensures: () => fake.calls.filter(([fn]) => fn === 'ensure').length,
+    ensure: async mounts => {
+      fake.calls.push(['ensure', mounts, fake.servers !== null && Object.values(fake.servers).every(s => s.listening)])
+      return ensure(mounts, fake.ensures())
+    },
+    check: async mounts => {
+      fake.calls.push(['check', mounts])
+      return check(mounts, fake.ensures())
+    },
+  }
+  return fake
+}
+
+// The mounts makeWorld's layout declares: the harness at the origin derived
+// from its public host, each pane at its own origin, all on the bound ports.
+function mountsAt(ports) {
+  const target = port => `http://127.0.0.1:${port}`
+  return [
+    { name: 'harness', host: 'h.ts.net', port: 8444, path: '/qa', target: target(ports.harness) },
+    { name: 'base', host: 'h', port: 8443, path: '/', target: target(ports.base) },
+    { name: 'pr', host: 'h', port: 10000, path: '/', target: target(ports.pr) },
+  ]
+}
+
+const exposureLines = lines => lines.filter(l => l.startsWith('[qa] exposure'))
+const mountedLine = (verb, m) => `[qa] exposure ${verb} ${m.port}${m.path} -> ${m.target}`
+const UNMANAGED = { managed: false, ok: null, checkedAt: null, drift: [], added: [], error: null }
+const MANAGED_OUTSIDE = '[qa] exposure: tailscale serve mounts are managed outside the conductor'
+
+test('the first reconcile runs after all three servers listen: harness 8444 /qa, base 8443 /, pr 10000 /, targets on the bound ports', async t => {
+  // On an IP host all three bind within a tick of each other, so hold the
+  // last one (the PR pane proxy; makeWorld's two apps listen first) back.
+  const listen = net.Server.prototype.listen
+  let n = 0
+  t.mock.method(net.Server.prototype, 'listen', function (...args) {
+    if (++n !== 5) return listen.apply(this, args)
+    setTimeout(() => listen.apply(this, args), 50)
+    return this
+  })
+  const exposure = fakeExposure()
+  const { c, lines } = makeWorld({ cfg: GATED, exposure })
+  try {
+    const state = await c.exposure.ready
+    const mounts = mountsAt(await allPorts(c))
+    assert.deepEqual(exposure.calls, [['ensure', mounts, true], ['check', mounts]])
+    assert.equal(state.ok, true)
+    assert.deepEqual(exposureLines(lines), [...mounts.map(m => mountedLine('mounted', m)), '[qa] exposure ok'])
+  } finally { c.stop() }
+})
+
+test('GET /api/exposure reports mode, managed, ok, checkedAt, drift, added and error', async () => {
+  // a pass that writes the harness mount, then finds the PR pane's handler
+  // pointing elsewhere
+  const exposure = fakeExposure({
+    ensure: mounts => ({ added: [mounts[0]], ok: mounts.slice(1) }),
+    check: mounts => ({ ok: false, drift: [{ mount: mounts[2], actual: 'http://127.0.0.1:9' }] }),
+  })
+  const before = Date.now()
+  const { c } = makeWorld({ cfg: GATED, exposure })
+  try {
+    await c.exposure.ready
+    const ports = await allPorts(c)
+    const mounts = mountsAt(ports)
+    const calls = exposure.calls.length
+    const res = await raw(ports.harness, { path: '/qa/api/exposure', headers: ALLOWED })
+    assert.equal(res.status, 200)
+    assert.match(res.headers['content-type'], /^application\/json/)
+    const body = JSON.parse(res.body)
+    assert.ok(body.checkedAt >= before && body.checkedAt <= Date.now(), String(body.checkedAt))
+    assert.deepEqual({ ...body, checkedAt: 0 }, {
+      mode: 'tailscale', managed: true, ok: false, checkedAt: 0,
+      drift: [{ mount: mounts[2], actual: 'http://127.0.0.1:9' }], added: [mounts[0]], error: null,
+    })
+    assert.deepEqual(c.exposure.state(), body, 'state() is the same report')
+    assert.deepEqual(JSON.parse((await raw(ports.harness, { path: '/api/exposure', headers: ALLOWED })).body), body)
+    assert.equal(exposure.calls.length, calls, 'read-only: it never calls the adapter')
+    // state() is a copy
+    c.exposure.state().drift.length = 0
+    assert.equal(c.exposure.state().drift.length, 1)
+
+    // behind the identity gate, the Host check and the API guard
+    assert.equal((await raw(ports.harness, { path: '/qa/api/exposure' })).status, 403)
+    assert.equal((await raw(ports.harness, { path: '/qa/api/exposure', headers: { ...ALLOWED, host: 'attacker.example' } })).status, 421)
+    const crossSite = await raw(ports.harness, { path: '/qa/api/exposure', headers: { ...ALLOWED, 'sec-fetch-site': 'same-site', origin: 'https://h:10000' } })
+    assert.deepEqual([crossSite.status, JSON.parse(crossSite.body).error], [403, 'cross-site request refused'])
+    const elsewhere = await raw(ports.harness, { path: '/qa/api/exposure', headers: { ...ALLOWED, host: 'h.ts.net:9999', 'sec-fetch-site': 'same-origin' } })
+    assert.deepEqual([elsewhere.status, JSON.parse(elsewhere.body).error], [403, 'not the harness origin'])
+  } finally { c.stop() }
+
+  // with no adapter: unmanaged, never checked
+  for (const [cfg, mode] of [[{}, 'none'], [GATED, 'tailscale']]) {
+    const { c: w } = makeWorld({ cfg })
+    try {
+      const { harness } = await allPorts(w)
+      assert.deepEqual(JSON.parse((await raw(harness, { path: '/qa/api/exposure', headers: ALLOWED })).body), { mode, ...UNMANAGED })
+    } finally { w.stop() }
+  }
+})
+
+test('an exposure failure is recorded and logged once, and a session still boots to ready', async () => {
+  let failure = 'tailscale: connection refused'
+  const exposure = fakeExposure({ ensure: () => { throw new Error(failure) } })
+  const { c, lines } = makeWorld({ cfg: GATED, exposure })
+  try {
+    const state = await c.exposure.ready
+    assert.deepEqual([state.ok, state.error, state.drift, state.added], [false, failure, [], []])
+    assert.equal(typeof state.checkedAt, 'number')
+    await c.exposure.reconcile()
+    await c.exposure.reconcile()
+    assert.equal(exposure.ensures(), 3)
+    assert.deepEqual(exposureLines(lines), ['[qa] exposure failed: tailscale: connection refused'])
+
+    // the conductor is unaffected
+    const { harness } = await allPorts(c)
+    assert.equal((await api(harness, 'POST', '/api/session', { pr: 7 }, ALLOWED)).ok, true)
+    await waitFor(async () => (await api(harness, 'GET', '/api/state', undefined, ALLOWED)).status === 'ready')
+
+    // another failure is news
+    failure = 'tailscale: timed out'
+    await c.exposure.reconcile()
+    assert.deepEqual(exposureLines(lines).slice(1), ['[qa] exposure failed: tailscale: timed out'])
+  } finally { c.stop() }
+
+  // a layout no front door can publish is recorded the same way, and no
+  // adapter call is made
+  const unused = fakeExposure()
+  const { c: w, errorLines } = makeWorld({ cfg: { ...GATED, paneOrigins: LOOPBACK_PANES }, exposure: unused })
+  try {
+    const state = await w.exposure.ready
+    assert.equal(state.ok, false)
+    assert.match(state.error, /^the base pane origin \(QA_BASE_ORIGIN\) http:\/\/127\.0\.0\.1:3101 is not https/)
+    assert.deepEqual(unused.calls, [])
+    assert.deepEqual(exposureLines(errorLines), [`[qa] exposure failed: ${state.error}`])
+  } finally { w.stop() }
+
+  // a check that says not ok, naming no drift, is never logged as ok
+  const vague = fakeExposure({ check: () => ({ ok: false, drift: [] }) })
+  const v = makeWorld({ cfg: GATED, exposure: vague })
+  try {
+    assert.equal((await v.c.exposure.ready).ok, false)
+    assert.deepEqual(exposureLines(v.lines).slice(-1), ['[qa] exposure drift remains: (the adapter named no mount)'])
+  } finally { v.c.stop() }
+})
+
+// The adapter is platform code. A value no Mount holds (a URL object as the
+// target, a function, a Symbol) once made structuredClone throw inside the
+// loop, and the unhandled rejection took the whole process down.
+test('an adapter that reports values no Mount holds can\'t take the conductor down', async () => {
+  const exposure = fakeExposure({
+    ensure: mounts => ({ added: mounts.map(m => ({ ...m, target: new URL(m.target), extra: () => {} })), ok: [] }),
+    check: mounts => ({
+      ok: false,
+      drift: [{ mount: { ...mounts[0], name: Symbol('harness'), port: 8444n, path: () => '/qa' }, actual: new URL('http://127.0.0.1:9') }],
+    }),
+  })
+  const { c } = makeWorld({ cfg: GATED, exposure })
+  try {
+    const state = await c.exposure.ready
+    const ports = await allPorts(c)
+    const mounts = mountsAt(ports)
+    // only the Mount type's own values survive: a string, or an integer port
+    assert.deepEqual(state.added, mounts.map(m => ({ ...m, target: null })))
+    assert.deepEqual(state.drift, [{ mount: { ...mounts[0], name: null, port: null, path: null }, actual: null }])
+    const res = await raw(ports.harness, { path: '/qa/api/exposure', headers: ALLOWED })
+    assert.equal(res.status, 200)
+    assert.deepEqual(JSON.parse(res.body), state)
+    assert.deepEqual(c.exposure.state(), state)
+    await c.exposure.reconcile()
+    assert.equal(exposure.ensures(), 2, 'the loop runs on')
+  } finally { c.stop() }
+
+  // a logger that throws can't either: the pass is still recorded, and the
+  // next one runs
+  const loud = fakeExposure()
+  const w = makeWorld({ cfg: GATED, exposure: loud, logThrowsOn: /^\[qa\] exposure/ })
+  try {
+    assert.equal((await w.c.exposure.ready).ok, true)
+    assert.equal((await w.c.exposure.reconcile()).ok, true)
+    assert.equal(loud.ensures(), 2)
+    const { harness } = await allPorts(w.c)
+    assert.equal((await raw(harness, { path: '/qa/api/exposure', headers: ALLOWED })).status, 200)
+  } finally { w.c.stop() }
+})
+
+test('every exposureIntervalMinutes another pass runs (default 5; an override is honoured)', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  for (const [cfg, ms] of [[GATED, 5 * 60_000], [{ ...GATED, exposureIntervalMinutes: 0.5 }, 30_000], [{ ...GATED, exposureIntervalMinutes: 90 }, 90 * 60_000]]) {
+    const exposure = fakeExposure()
+    const { c } = makeWorld({ cfg, exposure })
+    try {
+      await c.exposure.ready
+      assert.equal(exposure.ensures(), 1)
+      t.mock.timers.tick(ms - 1)
+      assert.equal(exposure.ensures(), 1, `nothing before ${ms} ms`)
+      t.mock.timers.tick(1)
+      assert.equal(exposure.ensures(), 2, `a pass at ${ms} ms`)
+      await c.exposure.reconcile() // joins the pass the tick started
+      t.mock.timers.tick(ms)
+      assert.equal(exposure.ensures(), 3)
+      await c.exposure.reconcile()
+      assert.equal(exposure.ensures(), 3)
+    } finally { c.stop() }
+  }
+})
+
+test('a tick while a pass hangs starts no second one', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const release = deferred()
+  const exposure = fakeExposure({
+    ensure: async (mounts, pass) => {
+      if (pass === 1) await release.promise
+      return { added: [], ok: mounts }
+    },
+  })
+  const { c } = makeWorld({ cfg: GATED, exposure })
+  try {
+    await waitFor(() => exposure.ensures() === 1)
+    const inFlight = c.exposure.reconcile()
+    assert.equal(c.exposure.reconcile(), inFlight, 'reconcile() joins the pass in flight')
+    for (let i = 0; i < 3; i++) t.mock.timers.tick(5 * 60_000)
+    assert.equal(exposure.ensures(), 1, 'no second pass while the first hangs')
+    assert.equal(c.exposure.state().checkedAt, null)
+
+    release.resolve()
+    assert.equal((await inFlight).ok, true)
+    assert.equal((await c.exposure.ready).ok, true)
+    t.mock.timers.tick(5 * 60_000)
+    assert.equal(exposure.ensures(), 2, 'the next tick runs a pass')
+  } finally { c.stop() }
+})
+
+test('after stop() or shutdown() a tick runs nothing', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const setIntervalSpy = t.mock.method(globalThis, 'setInterval')
+  const clearIntervalSpy = t.mock.method(globalThis, 'clearInterval')
+  for (const end of ['stop', 'shutdown']) {
+    const exposure = fakeExposure()
+    const { c, conductor } = makeWorld({ cfg: GATED, exposure })
+    try {
+      await c.exposure.ready
+      const loop = setIntervalSpy.mock.calls.findLast(call => call.arguments[1] === 5 * 60_000).result
+      if (end === 'stop') conductor.stop()
+      else await conductor.shutdown()
+      assert.ok(clearIntervalSpy.mock.calls.some(call => call.arguments[0] === loop), `${end} clears the loop's timer`)
+      t.mock.timers.tick(3 * 5 * 60_000)
+      const state = await c.exposure.reconcile()
+      assert.equal(exposure.ensures(), 1, `${end}: no pass after it, from a tick or reconcile()`)
+      assert.equal(state.ok, true, `${end}: the last report stands`)
+    } finally { c.stop() }
+  }
+
+  // shutdown() doesn't wait for a pass in flight, and ready settles
+  const release = deferred()
+  const hung = fakeExposure({ ensure: async mounts => { await release.promise; return { added: [], ok: mounts } } })
+  const w = makeWorld({ cfg: GATED, exposure: hung })
+  try {
+    await waitFor(() => hung.ensures() === 1)
+    await w.conductor.shutdown()
+    assert.equal((await w.c.exposure.ready).checkedAt, null)
+    t.mock.timers.tick(3 * 5 * 60_000)
+    assert.equal(hung.ensures(), 1)
+  } finally { release.resolve(); w.closeApps() }
+
+  // ready settles even when shutdown() runs before the servers listen
+  const early = fakeExposure()
+  const e = makeWorld({ cfg: GATED, exposure: early })
+  try {
+    await e.conductor.shutdown()
+    assert.deepEqual(await e.c.exposure.ready, { mode: 'tailscale', ...UNMANAGED, managed: true })
+    await new Promise(r => setTimeout(r, 20))
+    assert.deepEqual(early.calls, [])
+  } finally { e.closeApps() }
+})
+
+test('a mount that drifts back is logged as restored', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  // pass 1 writes all three; pass 2 rewrites the PR pane's handler, which
+  // had gone; passes 3 and 4 find a handler that shadows the harness, which
+  // ensure leaves alone; pass 5 finds everything in place
+  const shadowed = [3, 4]
+  const exposure = fakeExposure({
+    ensure: (mounts, pass) => ({ added: pass === 1 ? mounts : pass === 2 ? [mounts[2]] : [], ok: [] }),
+    check: (mounts, pass) => (shadowed.includes(pass)
+      ? { ok: false, drift: [{ mount: mounts[0], actual: '/qa/ -> http://127.0.0.1:9' }, { mount: mounts[0], actual: '/qa/api (not a proxy)' }] }
+      : { ok: true, drift: [] }),
+  })
+  const { c, lines, errorLines } = makeWorld({ cfg: GATED, exposure })
+  const tick = async () => {
+    t.mock.timers.tick(5 * 60_000)
+    await c.exposure.reconcile()
+  }
+  try {
+    await c.exposure.ready
+    const mounts = mountsAt(await allPorts(c))
+    assert.deepEqual(exposureLines(lines), [...mounts.map(m => mountedLine('mounted', m)), '[qa] exposure ok'])
+    await tick()
+    assert.deepEqual(exposureLines(lines).slice(4), [mountedLine('restored', mounts[2])], 'still ok: no second ok line')
+    await tick()
+    await tick()
+    assert.deepEqual(exposureLines(lines).slice(5), ['[qa] exposure drift remains: 8444/qa'], 'once, and once per mount')
+    assert.ok(errorLines.includes('[qa] exposure drift remains: 8444/qa'))
+    await tick()
+    await tick()
+    assert.deepEqual(exposureLines(lines).slice(6), ['[qa] exposure ok'])
+  } finally { c.stop() }
+
+  // a mount first written on a later pass is mounted, not restored
+  const partial = fakeExposure({
+    ensure: (mounts, pass) => {
+      if (pass === 1) throw Object.assign(new Error('could not mount 10000/'), { added: mounts.slice(0, 2) })
+      return { added: [mounts[2]], ok: mounts.slice(0, 2) }
+    },
+  })
+  const w = makeWorld({ cfg: GATED, exposure: partial })
+  try {
+    await w.c.exposure.ready
+    const mounts = mountsAt(await allPorts(w.c))
+    await w.c.exposure.reconcile()
+    await w.c.exposure.reconcile()
+    assert.deepEqual(exposureLines(w.lines), [
+      mountedLine('mounted', mounts[0]), mountedLine('mounted', mounts[1]), '[qa] exposure failed: could not mount 10000/',
+      mountedLine('mounted', mounts[2]), '[qa] exposure ok',
+      mountedLine('restored', mounts[2]),
+    ])
+  } finally { w.c.stop() }
+
+  // a restart onto mounts already in place (a fixed-port deploy): pass 1
+  // writes nothing, so a mount that goes later and comes back is restored
+  const deployed = fakeExposure({ ensure: (mounts, pass) => ({ added: pass === 2 ? [mounts[1]] : [], ok: [] }) })
+  const d = makeWorld({ cfg: GATED, exposure: deployed })
+  try {
+    await d.c.exposure.ready
+    const mounts = mountsAt(await allPorts(d.c))
+    await d.c.exposure.reconcile()
+    assert.deepEqual(exposureLines(d.lines), ['[qa] exposure ok', mountedLine('restored', mounts[1])])
+  } finally { d.c.stop() }
+})
+
+// A platform may assign cfg.paneOrigins after start, so no pass reuses the
+// mounts an earlier one derived.
+test('every pass derives the mounts afresh from cfg', async () => {
+  const exposure = fakeExposure()
+  const { c, cfg } = makeWorld({ cfg: GATED, exposure })
+  try {
+    await c.exposure.ready
+    const ports = await allPorts(c)
+    cfg.paneOrigins = { ...cfg.paneOrigins, pr: 'https://h:10001' }
+    await c.exposure.reconcile()
+    const ensures = exposure.calls.filter(([fn]) => fn === 'ensure')
+    assert.equal(ensures.length, 2)
+    assert.deepEqual(ensures[1][1][2], { name: 'pr', host: 'h', port: 10001, path: '/', target: `http://127.0.0.1:${ports.pr}` })
+  } finally { c.stop() }
+})
+
+// Before the servers listen there are no targets to mount, so reconcile()
+// runs nothing of its own: it returns `ready`, the first pass.
+test('reconcile() before the servers listen returns ready, and runs no pass of its own', async () => {
+  const exposure = fakeExposure()
+  const { c, lines } = makeWorld({ cfg: GATED, exposure })
+  try {
+    const early = c.exposure.reconcile()
+    assert.equal(early, c.exposure.ready)
+    assert.equal((await early).ok, true)
+    assert.equal(exposure.ensures(), 1)
+    assert.deepEqual(exposureLines(lines).filter(l => l.startsWith('[qa] exposure failed')), [])
+  } finally { c.stop() }
+})
+
+test('an adapter with QA_EXPOSURE=none refuses to start', () => {
+  const message = 'adapters.exposure needs QA_EXPOSURE=tailscale: an ungated conductor must not publish itself'
+  // set, or defaulted from a loopback layout
+  for (const cfg of [{ exposure: 'none' }, { exposure: undefined, publicHost: null, paneOrigins: LOOPBACK_PANES }]) {
+    const exposure = fakeExposure()
+    assert.throws(() => startOnly(cfg, { exposure }), { message }, JSON.stringify(cfg))
+    assert.deepEqual(exposure.calls, [])
+  }
+  // none mode without one, and tailscale mode with one, start
+  startOnly({ exposure: 'none' }, { exposure: null })
+  startOnly(GATED, { exposure: fakeExposure() })
+})
+
+test('tailscale mode without an adapter: managed false, the managed-outside line, no timer', async t => {
+  const setIntervalSpy = t.mock.method(globalThis, 'setInterval')
+  const delays = () => setIntervalSpy.mock.calls.map(call => call.arguments[1])
+  for (const [cfg, mode, outside] of [[GATED, 'tailscale', true], [{}, 'none', false]]) {
+    setIntervalSpy.mock.resetCalls()
+    const { c, logLines } = makeWorld({ cfg })
+    try {
+      await allPorts(c)
+      const state = await c.exposure.ready
+      assert.deepEqual(state, { mode, ...UNMANAGED })
+      assert.deepEqual(await c.exposure.reconcile(), state, 'reconcile() runs nothing')
+      assert.equal(logLines.includes(MANAGED_OUTSIDE), outside, mode)
+      assert.deepEqual(delays(), [60_000], `${mode}: only the idle reaper`)
+    } finally { c.stop() }
+  }
+  // with an adapter, the loop's timer is the only other one
+  setIntervalSpy.mock.resetCalls()
+  const { c, logLines } = makeWorld({ cfg: GATED, exposure: fakeExposure() })
+  try {
+    await c.exposure.ready
+    assert.deepEqual(delays(), [60_000, 5 * 60_000])
+    assert.equal(logLines.includes(MANAGED_OUTSIDE), false)
+  } finally { c.stop() }
+})
+
+test('startConductor refuses exposureIntervalMinutes 0, -1, NaN and 35792', async () => {
+  for (const bad of [0, -1, NaN, 35792, Infinity, '5', true]) {
+    assert.throws(() => startOnly({ exposureIntervalMinutes: bad }), err => {
+      assert.match(err.message, /^startConductor: cfg\.exposureIntervalMinutes must be a number of minutes above 0 and at most 35791 \(the longest a timer can wait\), got /)
+      return true
+    }, String(bad))
+  }
+  // in any mode, with an adapter or without
+  assert.throws(() => startOnly({ ...GATED, exposureIntervalMinutes: -1 }, { exposure: fakeExposure() }), /cfg\.exposureIntervalMinutes/)
+  for (const minutes of [35791, 0.5, undefined, null]) {
+    const { c } = makeWorld({ cfg: { ...GATED, exposureIntervalMinutes: minutes }, exposure: fakeExposure() })
+    try {
+      assert.equal((await c.exposure.ready).ok, true, String(minutes))
+    } finally { c.stop() }
+  }
 })

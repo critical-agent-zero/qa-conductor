@@ -37,7 +37,7 @@ const conductor = startConductor({
   cfg,
   github,
   fsx: { readFile: p => fs.promises.readFile(p) },   // serves the harness UI files
-  adapters: { provisioner, build, seed, envTransform, auth },
+  adapters: { provisioner, build, seed, envTransform, auth },   // and optionally exposure
   readBaseEnv: async () => ({ /* the env the pane env is derived from */ }),
 })
 
@@ -46,12 +46,13 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 }
 ```
 
-`startConductor` serves the harness on `cfg.ports.harness` and one proxy per pane on `cfg.ports.base` / `cfg.ports.pr`, all on `cfg.host` (**`127.0.0.1` by default**). It returns `{ servers, stop(), shutdown() }`:
-- `shutdown()` is the graceful exit. It stops the idle reaper, refuses harness writes from then on (`503`, so no new boot can start), tears the session down (aborting an in-flight boot and tearing down both panes), ends the progress streams, closes every connection and resolves once all three servers are closed. Call it from your signal handlers; calling it again is a no-op.
-- `stop()` only stops the reaper and asks the servers to close.
+`startConductor` serves the harness on `cfg.ports.harness` and one proxy per pane on `cfg.ports.base` / `cfg.ports.pr`, all on `cfg.host` (**`127.0.0.1` by default**). It returns `{ servers, stop(), shutdown(), exposure }`:
+- `shutdown()` is the graceful exit. It stops the idle reaper and the [exposure loop](#exposure-optional), refuses harness writes from then on (`503`, so no new boot can start), tears the session down (aborting an in-flight boot and tearing down both panes), ends the progress streams, closes every connection and resolves once all three servers are closed. Call it from your signal handlers; calling it again is a no-op.
+- `stop()` only stops the reaper and the exposure loop, and asks the servers to close.
+- `exposure` is the exposure loop's handle, `{ ready, state(), reconcile() }`. `ready` resolves with the state after the first pass, or as it stands when `stop()` or `shutdown()` begins first (at once with no Exposure adapter). `state()` is the last pass, as `GET /api/exposure` reports it. `reconcile()` runs a pass now, or joins the one in flight; before all three servers listen there are no targets to mount yet, so it returns `ready`.
 
 `cfg.paneOrigins` must be the URLs viewers actually reach the panes at, and `cfg.harnessOrigin` the one they open the harness at (see [Configuration](#configuration)). To reach the harness from anywhere but the machine it runs on, read [Security](#security) first, then either:
-- put `tailscale serve` on the same host in front of these ports, in tailscale mode (`QA_EXPOSURE=tailscale`, the default for any layout that isn't loopback throughout): every server then answers only the Tailscale logins in `QA_ALLOWED_LOGINS`, and listens on loopback; or
+- put `tailscale serve` on the same host in front of these ports, in tailscale mode (`QA_EXPOSURE=tailscale`, the default for any layout that isn't loopback throughout): every server then answers only the Tailscale logins in `QA_ALLOWED_LOGINS`, and listens on loopback. Pass an [Exposure adapter](#exposure-optional) and the conductor sets up and keeps those mounts itself; or
 - put another TLS front door that authenticates viewers in front of them, and set `QA_EXPOSURE=none`.
 
 ## Security
@@ -215,15 +216,37 @@ The other options are `healthTimeoutMs` (60000, per service), `host` (`127.0.0.1
 
 ### Exposure (optional)
 
-An Exposure adapter publishes the conductor's three servers on a front door, such as `tailscale serve`, and reports when they drift. It is optional, and **the core never constructs one**: a platform builds it, as it does the other adapters. Nothing in the core calls it yet, so run a pass yourself:
+An Exposure adapter publishes the conductor's three servers on a front door, such as `tailscale serve`, and reports when they drift. It is optional, and **the core never constructs one**: a platform builds it and passes it as `adapters.exposure`, as it does the other adapters. Only a gated conductor may have one: in none mode, `startConductor` throws `adapters.exposure needs QA_EXPOSURE=tailscale: an ungated conductor must not publish itself`.
 
 ```js
-import { mountsFor, reconcileExposure } from '@critical-labs/qa-conductor/exposure'
 import { createTailscaleExposure } from '@critical-labs/qa-conductor/adapters/exposure-tailscale'
 import { makeExecFileFn } from '@critical-labs/qa-conductor/exec'
 
+const conductor = startConductor({
+  cfg,                                                  // in tailscale mode
+  github, fsx, readBaseEnv,
+  adapters: { provisioner, build, seed, envTransform, auth, exposure: createTailscaleExposure({ execFileFn: makeExecFileFn() }) },
+})
+const state = await conductor.exposure.ready          // { mode, managed, ok, checkedAt, drift, added, error }
+```
+
+**The reconcile loop.** With an adapter, the conductor owns its mounts:
+- It reconciles once all three servers listen, so the targets are the bound ports, then every `QA_EXPOSURE_INTERVAL_MINUTES` (`cfg.exposureIntervalMinutes`, default 5) on an `unref()`ed timer. Each pass derives the mounts afresh with `mountsFor`, since `cfg.paneOrigins` may be assigned after start, then runs `reconcileExposure`.
+- One pass runs at a time. A tick while a pass is still running, on a hung CLI say, starts nothing, so CLI processes never stack.
+- Once `stop()` or `shutdown()` begins, no pass runs and the timer is cleared. Neither waits for a pass in flight. Nothing ever removes a mount, so after a stop the front door answers `502` until the conductor is back.
+- Nothing a pass does takes the conductor down. Each mount it writes is logged as `[qa] exposure mounted <port><path> -> <target>`, or `restored` when this conductor had it in place before. `[qa] exposure failed: …`, `[qa] exposure drift remains: <port><path>, …` and `[qa] exposure ok` are logged only when they change.
+- `GET /api/exposure` and `conductor.exposure.state()` report the last pass as `{ mode, managed, ok, checkedAt, drift, added, error }`. Neither calls the front door. The mounts in `drift` and `added` are copied from what the adapter returned, keeping only the Mount type's values: a field that isn't a string (for `port`, an integer), such as a `URL` object as the `target`, is reported as `null`.
+- So a deploy needn't touch the mounts: the restarted conductor's first pass restores any that are missing or wrong.
+
+In tailscale mode without an adapter, the mounts are someone else's, such as a deploy script's: startup logs `[qa] exposure: tailscale serve mounts are managed outside the conductor`, and `/api/exposure` reports `managed: false`. In none mode it reports `managed: false` too.
+
+To run a pass yourself, outside a conductor (to see drift from a script, say):
+
+```js
+import { mountsFor, reconcileExposure } from '@critical-labs/qa-conductor/exposure'
+
 const exposure = createTailscaleExposure({ execFileFn: makeExecFileFn() })
-const result = await reconcileExposure(exposure, mountsFor(cfg))   // { ok, checkedAt, drift, added, error }
+const result = await reconcileExposure(exposure, mountsFor(cfg), { checkOnly: true })   // { ok, checkedAt, drift, added, error }
 ```
 
 The contract:
@@ -272,6 +295,7 @@ The contract:
 | `QA_ALLOWED_HOSTS` | *(none)* | extra comma-separated hostnames (no ports) the servers answer to |
 | `QA_EXPOSURE` | `tailscale` if any address the conductor answers to or listens on is off loopback (see below), else `none` | `tailscale`: fronted by `tailscale serve` on this host, so the identity gate is on and the bind must be loopback. `none`: no gate (0.2's behaviour), for loopback or another authenticating front door. Anything else throws |
 | `QA_ALLOWED_LOGINS` | *(none)* | comma-separated Tailscale logins (as `tailscale whois` shows them, e.g. `alice@github`) allowed in when the gate is on; trimmed and lowercased. Required in tailscale mode |
+| `QA_EXPOSURE_INTERVAL_MINUTES` | `5` | minutes between [exposure](#exposure-optional) reconcile passes, when the platform passes an Exposure adapter. Above `0` and at most `35791`, the longest a timer can wait (above it, Node would fire every millisecond); fractions are fine |
 | `QA_HARNESS_PORT` / `QA_BASE_PROXY_PORT` / `QA_PR_PROXY_PORT` | `3100` / `3101` / `3102` | listen ports |
 | `QA_HARNESS_ORIGIN` | `https://<QA_PUBLIC_HOST>:8444`, else `http://<QA_BIND_HOST>:<QA_HARNESS_PORT>` on a loopback bind | the origin viewers open the harness at (any path dropped); the page is under `/qa/`. Required on a non-loopback bind with no public host. On port `0` the conductor derives it from the bound port. Not an IPv6 literal: on a `::1` bind, set `http://localhost:<port>` |
 | `QA_BASE_ORIGIN` / `QA_PR_ORIGIN` | `https://<host>:8443` / `:10000` | public pane origins |
@@ -283,7 +307,7 @@ Every origin key must be an http(s) URL with a plain hostname. It is normalized 
 
 Unset, `QA_EXPOSURE` is `none` only when all of these are loopback, and `tailscale` otherwise: the harness origin (as derived above; when none can be derived, on a loopback bind on port `0` with no `QA_HARNESS_ORIGIN` or `QA_PUBLIC_HOST`, it adds nothing), both pane origins, `QA_PUBLIC_HOST` and every `QA_ALLOWED_HOSTS` entry (both widen the `Host` allowlist), and `QA_BIND_HOST`. So a non-loopback bind alone makes the mode `tailscale`, which then refuses that bind: behind another authenticating front door, set `QA_EXPOSURE=none`. In tailscale mode, `loadConfig` throws on a non-loopback `QA_BIND_HOST` and on an empty `QA_ALLOWED_LOGINS`, and each error says why the mode is `tailscale`.
 
-A platform that builds `cfg` in code instead can leave out `host` (loopback is the default), `allowedHosts`, `harnessOrigin` (derived as above), `frameAncestors`, `exposure` and `allowedLogins`. Without `exposure`, `startConductor` resolves the mode as `loadConfig` does, with `defaultExposure({ harnessOrigin, paneOrigins, publicHost, allowedHosts, host })` from `./config`, where a missing or unparseable pane origin counts as off loopback. The mode is fixed at start, so a `cfg` whose non-loopback origins are assigned after start must set `exposure` itself. `startConductor` refuses an unknown `exposure`, a `host` in brackets (write `::1`, not `[::1]`), tailscale mode on a non-loopback `host`, a `harnessOrigin` or `frameAncestors` entry that isn't an http(s) origin, an `http:` harness origin or pane origin (set at start) whose host isn't loopback, and a harness origin equal to a pane origin. Startup logs whether the gate is on and, for a defaulted mode, what made it `tailscale`. In tailscale mode with no `allowedLogins` it logs an error, and every request is refused. The core reads `cfg.paneOrigins` per request, so it may be assigned once the proxies are listening.
+A platform that builds `cfg` in code instead can leave out `host` (loopback is the default), `allowedHosts`, `harnessOrigin` (derived as above), `frameAncestors`, `exposure`, `allowedLogins` and `exposureIntervalMinutes` (`5`). Without `exposure`, `startConductor` resolves the mode as `loadConfig` does, with `defaultExposure({ harnessOrigin, paneOrigins, publicHost, allowedHosts, host })` from `./config`, where a missing or unparseable pane origin counts as off loopback. The mode is fixed at start, so a `cfg` whose non-loopback origins are assigned after start must set `exposure` itself. `startConductor` refuses an unknown `exposure`, a `host` in brackets (write `::1`, not `[::1]`), tailscale mode on a non-loopback `host`, a `harnessOrigin` or `frameAncestors` entry that isn't an http(s) origin, an `http:` harness origin or pane origin (set at start) whose host isn't loopback, a harness origin equal to a pane origin, an `exposureIntervalMinutes` that isn't a number above `0` and at most `35791`, and an `adapters.exposure` in none mode. Startup logs whether the gate is on and, for a defaulted mode, what made it `tailscale`. In tailscale mode with no `allowedLogins` it logs an error, and every request is refused. The core reads `cfg.paneOrigins` per request, so it may be assigned once the proxies are listening.
 
 ## HTTP API (harness port)
 
@@ -293,13 +317,14 @@ A platform that builds `cfg` in code instead can leave out `host` (loopback is t
 | `GET /api/state` | session status, tags, `buildRun: {url, status, message}`, pane login URLs + origins, `harnessOrigin` |
 | `GET /api/prs` | open PRs with build readiness (`imageStatus`, `runUrl`, `reason`) |
 | `GET /api/build-status?pr=N` | `{pr, status, exists, runUrl}`, plus `reason` when `status` is `blocked` |
+| `GET /api/exposure` | the last [exposure](#exposure-optional) reconcile pass: `{mode, managed, ok, checkedAt, drift, added, error}`. Read-only: it never calls the front door. With no adapter, `managed` is `false` and `ok` and `checkedAt` are `null` |
 | `GET /api/progress` | server-sent boot progress (`step`, `build`, `ready`, `error` with `logTail`, `torn-down`) |
 | `POST /api/session` `{pr, takeover?}` | boot a session (one at a time; `takeover` replaces the current one) |
 | `GET /api/verdict/preview?verdict=accept\|reject&notes=` | the comment + labels that would be posted |
 | `POST /api/verdict` `{verdict, notes}` | post the verdict comment and set the label |
 | `POST /api/teardown` `{}` | tear down the session (cancels an in-flight boot) |
 
-Every path also answers under a `/qa` prefix. In tailscale mode, a request to any of the three ports without an allowed `Tailscale-User-Login` gets `403` before anything else, a plain `curl` from the host included. Every `/api/*` request must come from the harness page itself, and a browser must reach it at the harness origin's host and port (`403`, see [Security](#security)). POSTs must be `application/json` (`415`), and a request to any of the three ports with an unrecognised `Host` gets `421`. A request target the harness can't parse as a URL gets `400`, and once `shutdown()` has begun every harness write gets `503`. While no session is ready, the pane proxies answer `503`.
+Every path also answers under a `/qa` prefix. In tailscale mode, a request to any of the three ports without an allowed `Tailscale-User-Login` gets `403` before anything else, a plain `curl` from the host included: a script on the host can't read `/api/exposure`, so it asks the front door (`tailscale serve status`) instead. Every `/api/*` request must come from the harness page itself, and a browser must reach it at the harness origin's host and port (`403`, see [Security](#security)). POSTs must be `application/json` (`415`), and a request to any of the three ports with an unrecognised `Host` gets `421`. A request target the harness can't parse as a URL gets `400`, and once `shutdown()` has begun every harness write gets `503`. While no session is ready, the pane proxies answer `503`.
 
 ## Demo
 
@@ -321,7 +346,7 @@ Demo mode runs the real conductor with fixture PRs and fake adapters, so you can
 
 ```sh
 echo 'GITHUB_QA_TOKEN=<token>' > .env.qa   # read PRs, comment and label on this repo
-npm run qa                                  # then open http://127.0.0.1:3100/
+npm run qa                                  # then open http://127.0.0.1:3100/qa/
 ```
 
 qa-conductor QAs its own PRs with its own built-in adapters (`qa/self.mjs`):
@@ -330,9 +355,21 @@ qa-conductor QAs its own PRs with its own built-in adapters (`qa/self.mjs`):
 - **Processes.** `provisioner-process` runs each pane on `127.0.0.1` with only `PATH`, `PORT`, `QA_DEMO_SPEED`, `QA_HARNESS_ORIGIN` and `QA_FRAME_ANCESTORS` in its environment.
 - **Nested harnesses.** Each pane's demo harness is seen at the outer pane's origin, inside the outer harness, and CSP `frame-ancestors` checks every ancestor. So each inner demo gets `QA_HARNESS_ORIGIN=<the pane's origin>` and `QA_FRAME_ANCESTORS=<the outer harness origin>`, and its own panes render and mirror inside the outer pane. On `QA_HARNESS_PORT=0` the outer origin is the bound port's, read when a pane boots.
 - **Where things live.** Builds and the pidfile are under `$XDG_CACHE_HOME/qa-conductor/critical-labs-qa-conductor`, defaulting to `~/.cache/...`.
-- **Stopping.** Ctrl-C tears the panes down before exiting.
+- **Stopping.** Ctrl-C tears the panes down before exiting, and on a tailnet then removes the `tailscale serve` mounts (below).
+- **On a tailnet.** To open self-QA from your other devices, set these in `.env.qa`, for a machine whose MagicDNS name is `<machine>.ts.net`:
+  - `QA_PUBLIC_HOST=<machine>.ts.net`;
+  - `QA_BASE_ORIGIN=https://<machine>.ts.net:8443` and `QA_PR_ORIGIN=https://<machine>.ts.net:10000` (self-QA defaults both to loopback, so set both);
+  - `QA_ALLOWED_LOGINS=<your Tailscale login>`.
 
-`.env.qa` accepts the usual configuration keys, plus `QA_BASE_REF`, the branch the base pane runs (default `main`). `QA_ENV_FILE` points at a different file.
+  That layout is tailscale mode, so self-QA passes the conductor the built-in tailscale [Exposure](#exposure-optional) adapter. The conductor mounts the harness at `https://<machine>.ts.net:8444/qa/` and the panes at `:8443` and `:10000` with `tailscale serve`, and restores them every `QA_EXPOSURE_INTERVAL_MINUTES`. `QA_TAILSCALE_BIN` names the CLI (default `tailscale`; on macOS, use the app's `/Applications/Tailscale.app/Contents/MacOS/Tailscale`, since the one on `PATH` may be older than the daemon).
+
+  From another device, the outer harness and each pane's demo harness render, but a demo's own panes are on this machine's loopback (`http://127.0.0.1:<port>`), so they render only in a browser on this machine.
+
+  **Self-QA removes its mounts when it stops**, unlike the conductor itself. On Ctrl-C (or SIGTERM or SIGHUP), once the panes are down, it runs `tailscale serve --https=8444 --set-path=/qa off`, `tailscale serve --https=8443 off` and `tailscale serve --https=10000 off`, skipping any handler that no longer proxies to self-QA. A second Ctrl-C, a crash or a kill leaves them in place, and so does a command that fails, which is logged with the command to run: then remove them yourself with those commands. **Until the mounts are gone, whatever listens on the loopback ports they point at (`3100`–`3102` by default), such as a later loopback self-QA, is reachable from the tailnet with no identity gate.** `tailscale serve` picks the handler by the TLS server name and passes the client's `Host` through, so a tailnet device can send a loopback `Host`, which the `Host` allowlist and the API guard admit.
+
+  **The identity gate is no boundary against the PR here.** The PR's demo runs as you, on this host, so it can reach the conductor on loopback and send any `Tailscale-User-Login` it likes. Only the trust gate keeps untrusted PR code out (see [Security](#security)).
+
+`.env.qa` accepts the usual configuration keys, plus `QA_BASE_REF`, the branch the base pane runs (default `main`), and `QA_TAILSCALE_BIN`. `QA_ENV_FILE` points at a different file.
 
 ## Develop
 
