@@ -987,6 +987,20 @@ test('tailscale mode on a non-loopback host, or an unknown mode, refuses to star
   }
 })
 
+// `[::1]` passed the tailscale bind check as loopback, then listen() failed
+// with ENOTFOUND, which nothing handled: the process crashed.
+test('a bracketed cfg.host refuses to start, in either mode', () => {
+  for (const cfg of [GATED, { exposure: 'none' }, { exposure: undefined }, { publicHost: null, paneOrigins: LOOPBACK_PANES, ports: { harness: 3100, base: 0, pr: 0 } }]) {
+    for (const [host, bare] of [['[::1]', '::1'], ['[::]', '::']]) {
+      assert.throws(
+        () => startOnly({ ...cfg, host }),
+        { message: `startConductor: cfg.host is a listen address, which takes an IPv6 literal without brackets: use "${bare}", not "${host}"` },
+        `${host} ${JSON.stringify(cfg)}`,
+      )
+    }
+  }
+})
+
 test('the identity 403 carries the harness frame headers on the harness, and the pane policy on each pane', async () => {
   const { c } = makeWorld({ cfg: GATED })
   try {

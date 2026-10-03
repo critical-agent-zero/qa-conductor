@@ -108,6 +108,10 @@ test('listens on 127.0.0.1, or on the loopback address QA_BIND_HOST names', () =
   for (const host of ['127.0.0.2', 'localhost']) {
     assert.equal(loadConfig(envFile([...REQUIRED, `QA_BIND_HOST=${host}`])).host, host)
   }
+  // listen() takes no brackets: `[::1]` passed the tailscale bind check, then
+  // failed to listen
+  const c = loadConfig(envFile([...REQUIRED, 'QA_BIND_HOST=[::1]']))
+  assert.deepEqual([c.host, c.exposure], ['::1', 'tailscale'])
 })
 
 test('QA_ALLOWED_HOSTS: comma-separated, trimmed, empties dropped; default none', () => {
@@ -137,6 +141,7 @@ test('without a public host the harness origin is the loopback listen address: h
   assert.equal(load(), 'http://127.0.0.1:3100')
   assert.equal(load('QA_HARNESS_PORT=4100'), 'http://127.0.0.1:4100')
   assert.equal(load('QA_BIND_HOST=::1'), 'http://[::1]:3100')
+  assert.equal(load('QA_BIND_HOST=[::1]'), 'http://[::1]:3100')
   assert.equal(load('QA_BIND_HOST=localhost'), 'http://localhost:3100')
   assert.equal(load('QA_BIND_HOST=127.0.0.2'), 'http://127.0.0.2:3100')
   // the conductor derives it from the bound port instead
@@ -336,6 +341,8 @@ test('tailscale mode refuses a QA_BIND_HOST that is not loopback; none mode acce
       }
     }
   }
+  // a bracketed literal is judged unwrapped, as listen() would take it
+  assert.throws(() => loadConfig(envFile([...REQUIRED, 'QA_BIND_HOST=[::]'])), err => err.message.includes(`${BIND_RULE} (got "::" in `))
   // 0.2 accepted this; none mode still does, behind another front door
   const c = loadConfig(envFile([...REQUIRED, 'QA_BIND_HOST=0.0.0.0', 'QA_EXPOSURE=none']))
   assert.deepEqual([c.host, c.exposure], ['0.0.0.0', 'none'])
