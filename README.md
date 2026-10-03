@@ -243,7 +243,7 @@ The contract:
 - two mounts on one port, which would share an origin;
 - a listen port that isn't an integer from 1 to 65535.
 
-`reconcileExposure(exposure, mounts, { checkOnly })` runs `ensure` then `check`, or only `check` with `checkOnly`. It resolves `{ ok, checkedAt, drift, added, error }` and never rejects: an adapter failure comes back as `ok: false` with its message in `error`, and `added` still lists what `ensure` wrote.
+`reconcileExposure(exposure, mounts, { checkOnly })` runs `ensure` then `check`, or only `check` with `checkOnly`. It resolves `{ ok, checkedAt, drift, added, error }` and never rejects, whatever the adapter throws: a failure comes back as `ok: false` with its message in `error`, and `added` still lists what `ensure` wrote.
 
 **Built in: `adapters/exposure-tailscale`.** `createTailscaleExposure({ execFileFn, bin = 'tailscale', socket = null, timeoutMs = 30000 })` drives `tailscale serve` on the host it runs on:
 - `check` runs `tailscale serve status --json`. A mount is in place when its port serves https and its path proxies to its target (one trailing `/` ignored). It reads the status entry for the mount's `host:port`, else the first entry on that port.

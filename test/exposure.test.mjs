@@ -159,7 +159,37 @@ test('never rejects: an adapter error becomes { ok: false, error }', async () =>
   // whatever is thrown, and whatever the adapter is
   assert.deepEqual(await run(fakeExposure({ ensureFails: 'a string' })), failed('a string'))
   assert.equal((await run(null)).ok, false)
-  assert.match((await run(null)).error, /ensure/)
+  assert.match((await run(null)).error, /reading 'ensure'/)
   assert.match((await run({ ensure: async () => ({ added: [] }), check: async () => undefined })).error, /check/)
   assert.equal((await run({ ensure: () => { throw new Error('sync') }, check: async () => ({ ok: true, drift: [] }) })).error, 'sync')
+  // an ensure or check that resolves without its list
+  const passes = async () => ({ ok: true, drift: [] })
+  for (const ensured of [{ ok: mounts }, { added: null, ok: mounts }, { added: 'all', ok: mounts }, undefined]) {
+    assert.deepEqual(await run({ ensure: async () => ensured, check: passes }), failed("the exposure adapter's ensure returned no added list"), JSON.stringify(ensured))
+  }
+  assert.deepEqual(await run({ ensure: async () => ({ added: [mounts[0]], ok: [] }), check: async () => ({ ok: true }) }), failed("the exposure adapter's check returned no drift list", [mounts[0]]))
+})
+
+test('never rejects, whatever the adapter throws', async () => {
+  const mounts = mountsFor(cfg)
+  const failed = (error, added = []) => ({ ok: false, checkedAt: 1, drift: [], added, error })
+  const run = exposure => reconcileExposure(exposure, mounts, { now: () => 1 })
+  const throwing = value => ({ ensure: async () => { throw value }, check: async () => ({ ok: true, drift: [] }) })
+  const notAnError = 'the exposure adapter threw a value that is not an Error'
+
+  // no primitive form, on the value or on its message
+  assert.deepEqual(await run(throwing(Object.create(null))), failed(notAnError))
+  assert.deepEqual(await run(throwing({ message: Object.create(null) })), failed(notAnError))
+  assert.deepEqual(await run(throwing({ [Symbol.toPrimitive]() { throw new Error('no') } })), failed(notAnError))
+  // getters that throw, on message and on added
+  assert.deepEqual(await run(throwing({ get message() { throw new Error('no') } })), failed(notAnError))
+  const sly = Object.defineProperty(new Error('serve: exit 1'), 'added', { get() { throw new Error('no') } })
+  assert.deepEqual(await run(throwing(sly)), failed('serve: exit 1'))
+  // a revoked Proxy, which even Array.isArray throws on
+  const { proxy, revoke } = Proxy.revocable({}, {})
+  revoke()
+  assert.deepEqual(await run(throwing(proxy)), failed(notAnError))
+  // and the same from check, keeping what ensure added
+  const late = { ensure: async () => ({ added: [mounts[2]], ok: [] }), check: async () => { throw Object.create(null) } }
+  assert.deepEqual(await run(late), failed(notAnError, [mounts[2]]))
 })
