@@ -844,6 +844,57 @@ test('an allowed identity is served on all three, matched ignoring case', async 
   } finally { c.stop() }
 })
 
+// tailscale serve stamps every request from the reviewer's device with the
+// reviewer's login, those PR code makes in the reviewer's browser included.
+// The gate says which device; only the API guard, the Host allowlist and the
+// pane guard say which page, so an allowed identity must not skip them
+// (D10; homefree #329's 'harness writes from another origin are refused even
+// with an allowed identity').
+test('with an allowed identity, another page\'s writes, a foreign Host, another host:port and a cross-site pane navigation are still refused', async () => {
+  const { c, calls } = makeWorld({ cfg: GATED })
+  try {
+    const { harness, base, pr } = await allPorts(c)
+    const session = headers => raw(harness, {
+      method: 'POST', path: '/qa/api/session', body: '{"pr":7}', headers: { 'content-type': 'application/json', ...ALLOWED, ...headers },
+    })
+    // a pane's page, another site, and a page whose Origin isn't a URL
+    for (const headers of [
+      { 'sec-fetch-site': 'same-site', origin: 'https://h:10000' },
+      { 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' },
+      { origin: 'not a url' },
+    ]) {
+      const res = await session(headers)
+      assert.deepEqual([res.status, JSON.parse(res.body)], [403, { error: 'cross-site request refused' }], JSON.stringify(headers))
+    }
+    // a page at another port of the harness hostname
+    for (const headers of [{ 'sec-fetch-site': 'same-origin' }, { origin: 'https://h.ts.net:9999' }]) {
+      const res = await session({ host: 'h.ts.net:9999', ...headers })
+      assert.deepEqual([res.status, JSON.parse(res.body).error], [403, 'not the harness origin'], JSON.stringify(headers))
+    }
+    assert.equal(calls.some(x => x[0] === 'ensureBuilt'), false, 'a refused write starts no boot')
+    // a DNS-rebound page, on all three servers
+    for (const port of [harness, base, pr]) {
+      assert.equal((await raw(port, { path: '/qa/api/state', headers: { ...ALLOWED, host: 'attacker.example' } })).status, 421, String(port))
+    }
+
+    // the harness page itself starts the session
+    assert.equal((await session({ host: 'h.ts.net:8444', 'sec-fetch-site': 'same-origin' })).status, 202)
+    await waitFor(async () => (await api(harness, 'GET', '/api/state', undefined, ALLOWED)).status === 'ready')
+    const navigate = { ...ALLOWED, 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' }
+    for (const port of [base, pr]) {
+      // a link or window.open on another site, which the harness did not make
+      for (const referer of [undefined, 'https://evil.example/']) {
+        const res = await raw(port, { path: '/page', headers: { ...navigate, ...(referer ? { referer } : {}) } })
+        assert.equal(res.status, 403, `${port} ${referer}`)
+        assert.match(res.body, /cross-site navigation refused/)
+        assert.doesNotMatch(res.body, /pane-/)
+      }
+      // the harness opening the pane
+      assert.equal((await raw(port, { path: '/page', headers: { ...navigate, referer: 'https://h.ts.net:8444/qa/' } })).status, 200, String(port))
+    }
+  } finally { c.stop() }
+})
+
 test('with no allowed logins every request is refused, and startup says so', async () => {
   for (const allowedLogins of [[], undefined, [' ']]) {
     const { c, errorLines } = makeWorld({ cfg: { ...GATED, allowedLogins } })
