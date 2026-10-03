@@ -84,9 +84,9 @@ The conductor's own defences in depth:
 - **JSON bodies.** `POST /api/session`, `/api/verdict` and `/api/teardown` require `content-type: application/json` (else `415`). A cross-site form can't send that type, and a cross-site `fetch()` with it needs a CORS preflight the harness never grants.
 - **Inert rendering.** The harness UI renders PR titles, build messages, blocked reasons, errors and log tails as text, and links a build run only when its URL is `https://`.
 
-## The five seams
+## The seams
 
-A boot runs these seams in order: `ensureBuilt` → per pane (`provisionDatabase` → `seedPane` → `reserveServices`) → `derivePaneEnv` (+ `runMigrate`) → `launchServices` → `waitHealthy` → `establishSession`.
+A boot runs these five seams in order: `ensureBuilt` → per pane (`provisionDatabase` → `seedPane` → `reserveServices`) → `derivePaneEnv` (+ `runMigrate`) → `launchServices` → `waitHealthy` → `establishSession`. A sixth, [Exposure](#exposure-optional), is optional and outside the boot: it publishes the conductor itself.
 
 | Seam | Members | Owns |
 |---|---|---|
@@ -212,6 +212,50 @@ The other options are `healthTimeoutMs` (60000, per service), `host` (`127.0.0.1
 - There's no `runMigrate`: process consumers migrate on boot.
 
 **Security.** A PR's code runs as your user, on your machine. The trust gate is the only real boundary between a PR's code and the reviewer's machine: the BuildConvention must refuse to build a PR it doesn't trust. Env scrubbing and loopback binding are defence in depth. The Tailscale identity gate is no boundary against PR code either: a pane process can reach the conductor on loopback and send any `Tailscale-User-Login` it likes (see [Security](#security)).
+
+### Exposure (optional)
+
+An Exposure adapter publishes the conductor's three servers on a front door, such as `tailscale serve`, and reports when they drift. It is optional, and **the core never constructs one**: a platform builds it, as it does the other adapters. Nothing in the core calls it yet, so run a pass yourself:
+
+```js
+import { mountsFor, reconcileExposure } from '@critical-labs/qa-conductor/exposure'
+import { createTailscaleExposure } from '@critical-labs/qa-conductor/adapters/exposure-tailscale'
+import { makeExecFileFn } from '@critical-labs/qa-conductor/exec'
+
+const exposure = createTailscaleExposure({ execFileFn: makeExecFileFn() })
+const result = await reconcileExposure(exposure, mountsFor(cfg))   // { ok, checkedAt, drift, added, error }
+```
+
+The contract:
+- **`Mount = { name, host, port, path, target }`**, one each for `harness`, `base` and `pr`.
+  - `host` and `port` are the mount's public side: the hostname and port of its own origin (`cfg.harnessOrigin`, or the pane's in `cfg.paneOrigins`). A port-less https origin means `443`.
+  - **`host` is not `cfg.host`.** `cfg.host` is the address the conductor binds, and only `target` uses it.
+  - `path` is `/qa` for the harness and `/` for each pane.
+  - `target` is `http://<cfg.host>:<listen port>`, with brackets for IPv6.
+- **`Drift = { mount, actual }`**: `actual` is the proxy target the front door serves at that mount over https now, or `null` when there is none: nothing at that path, no https on the port, or a handler that isn't a proxy. A mount also drifts once for each other handler that takes some of its requests, and `actual` then names that handler, as `<path> -> <target>` or `<path> (not a proxy)`.
+- **`ensure(mounts) → Promise<{ added, ok }>`** creates the missing or mismatched mounts, and only those. **`check(mounts) → Promise<{ ok, drift }>`** changes nothing. Either rejects on failure. An `ensure` that fails part way may list the mounts it did write on its error, as `added`.
+- **An adapter owns exactly the `(port, path)` pairs it is given**, and never touches another handler.
+
+`mountsFor(cfg, { ports = cfg.ports })` derives the mounts from the origins viewers open, so the URL a viewer sees and the mount behind it can't disagree. Pass the bound ports when `cfg.ports` holds `0`. It throws on a layout no front door can publish:
+- no harness origin;
+- a missing or unparseable pane origin;
+- an origin that isn't https, or is on port `0`;
+- two mounts on one port, which would share an origin;
+- a listen port that isn't an integer from 1 to 65535.
+
+`reconcileExposure(exposure, mounts, { checkOnly })` runs `ensure` then `check`, or only `check` with `checkOnly`. It resolves `{ ok, checkedAt, drift, added, error }` and never rejects, whatever the adapter throws: a failure comes back as `ok: false` with its message in `error`, and `added` still lists what `ensure` wrote.
+
+**Built in: `adapters/exposure-tailscale`.** `createTailscaleExposure({ execFileFn, bin = 'tailscale', socket = null, timeoutMs = 30000 })` drives `tailscale serve` on the host it runs on:
+- `check` runs `tailscale serve status --json`. A mount is in place when its port serves https and its path proxies to its target (one trailing `/` ignored). It reads the status entry for the mount's `host:port`, else the first entry on that port.
+- tailscaled hands a request to the deepest handler path that holds it, so a handler under a mount's path takes some of its requests: `/qa/` or `/qa/api` beside the harness's `/qa`, or any other path on a pane's port. `check` reports each one that doesn't proxy to the mount's target as drift.
+- `ensure` reads the same status, then runs `tailscale serve --bg --https=<port> [--set-path=<path>] <target>` for each mount whose own handler is missing or points elsewhere, and only those. `--set-path` is left out for `/`. A handler that shadows a mount stays drift until you remove it: `ensure` never writes or removes it. A mount that fails doesn't stop the others, and `ensure` then rejects, naming each failure, with the mounts it did write as the error's `added`.
+- Every call goes through `execFileFn` (`makeExecFileFn()` from `./exec`) with a `timeoutMs` timeout. With `socket` set, `--socket=<socket>` comes before the subcommand, for a CLI whose daemon's socket is somewhere else, such as one mounted into a container.
+- `bin` is the CLI to run, and it should be no older than the daemon. On macOS, the `tailscale` on `PATH` may lag behind the app's daemon: use the app's bundled CLI, `/Applications/Tailscale.app/Contents/MacOS/Tailscale`.
+
+**What it never touches.** It never runs `tailscale serve reset` or `off`, so it never removes a handler, and it never changes one at a `(port, path)` it wasn't given:
+- Another app's `/` handler on the harness's port stays beside the harness's `/qa`, since `tailscale serve` keeps a port's other paths. Give the harness a port of its own all the same: that app's pages would share the harness origin, so the panes and the harness API would take them for the harness.
+- The flip side: a declared `(port, path)` is the conductor's. A pane origin on a port where another app serves `/` replaces that app's handler.
+- **A changed origin or port leaves the old handler behind.** It keeps proxying to the conductor until you remove it with `tailscale serve --https=<old port> [--set-path=<path>] off`. Until then, browsers that reach the harness through it get `403 not the harness origin` from its API (see [Same-origin API](#security)), but the old URL still answers.
 
 ## Configuration
 

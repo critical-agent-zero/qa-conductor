@@ -1,0 +1,39 @@
+{
+  "TCP": {
+    "10000": {
+      "HTTPS": true
+    },
+    "8443": {
+      "HTTPS": true
+    },
+    "8444": {
+      "HTTPS": true
+    }
+  },
+  "Web": {
+    "qa-box.tail1234.ts.net:10000": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:3102"
+        }
+      }
+    },
+    "qa-box.tail1234.ts.net:8443": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:3101"
+        }
+      }
+    },
+    "qa-box.tail1234.ts.net:8444": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:3001"
+        },
+        "/qa": {
+          "Proxy": "http://127.0.0.1:3100"
+        }
+      }
+    }
+  }
+}
