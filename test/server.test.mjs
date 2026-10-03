@@ -17,12 +17,13 @@ function deferred() {
 // test releases it — modelling a boot stuck waiting on a GHCR image. The
 // startup sweep blocks on `sweepGate` when given, then fails if `sweepFails`;
 // `provisioner` overrides members (`{ sweep: undefined }` removes the sweep).
-// `exposure` is passed as adapters.exposure (see fakeExposure).
+// `exposure` is passed as adapters.exposure (see fakeExposure). The logger
+// records every line, then throws on one that matches `logThrowsOn`.
 // Each pane "app" is a real loopback server, so the pane proxies can be
 // exercised.
 function makeWorld({
   hang = {}, failAt = null, sweepGate = null, sweepFails = false, provisioner: provisionerOverrides = {},
-  cfg: cfgOverrides = {}, readBaseEnv: readBaseEnvOverride = null, exposure = null,
+  cfg: cfgOverrides = {}, readBaseEnv: readBaseEnvOverride = null, exposure = null, logThrowsOn = null,
 } = {}) {
   const calls = []
   // '/page' answers HTML, so the proxy injects the bridge; anything else is text.
@@ -94,10 +95,13 @@ function makeWorld({
   const logLines = []
   const errorLines = []
   const lines = [] // both, in order
-  const quiet = {
-    log: (...a) => { logLines.push(a.join(' ')); lines.push(a.join(' ')) },
-    error: (...a) => { errorLines.push(a.join(' ')); lines.push(a.join(' ')) },
+  const record = into => (...a) => {
+    const line = a.join(' ')
+    into.push(line)
+    lines.push(line)
+    if (logThrowsOn?.test(line)) throw new Error('the logger failed')
   }
+  const quiet = { log: record(logLines), error: record(errorLines) }
   const conductor = startConductor({ cfg, github, fsx, adapters, readBaseEnv, log: quiet })
   if (exposure) exposure.servers = conductor.servers
   const closeApps = () => { for (const s of Object.values(apps)) s.close() }
@@ -1561,6 +1565,46 @@ test('an exposure failure is recorded and logged once, and a session still boots
     assert.equal((await v.c.exposure.ready).ok, false)
     assert.deepEqual(exposureLines(v.lines).slice(-1), ['[qa] exposure drift remains: (the adapter named no mount)'])
   } finally { v.c.stop() }
+})
+
+// The adapter is platform code. A value no Mount holds (a URL object as the
+// target, a function, a Symbol) once made structuredClone throw inside the
+// loop, and the unhandled rejection took the whole process down.
+test('an adapter that reports values no Mount holds can\'t take the conductor down', async () => {
+  const exposure = fakeExposure({
+    ensure: mounts => ({ added: mounts.map(m => ({ ...m, target: new URL(m.target), extra: () => {} })), ok: [] }),
+    check: mounts => ({
+      ok: false,
+      drift: [{ mount: { ...mounts[0], name: Symbol('harness'), port: 8444n, path: () => '/qa' }, actual: new URL('http://127.0.0.1:9') }],
+    }),
+  })
+  const { c } = makeWorld({ cfg: GATED, exposure })
+  try {
+    const state = await c.exposure.ready
+    const ports = await allPorts(c)
+    const mounts = mountsAt(ports)
+    // only the Mount type's own values survive: a string, or an integer port
+    assert.deepEqual(state.added, mounts.map(m => ({ ...m, target: null })))
+    assert.deepEqual(state.drift, [{ mount: { ...mounts[0], name: null, port: null, path: null }, actual: null }])
+    const res = await raw(ports.harness, { path: '/qa/api/exposure', headers: ALLOWED })
+    assert.equal(res.status, 200)
+    assert.deepEqual(JSON.parse(res.body), state)
+    assert.deepEqual(c.exposure.state(), state)
+    await c.exposure.reconcile()
+    assert.equal(exposure.ensures(), 2, 'the loop runs on')
+  } finally { c.stop() }
+
+  // a logger that throws can't either: the pass is still recorded, and the
+  // next one runs
+  const loud = fakeExposure()
+  const w = makeWorld({ cfg: GATED, exposure: loud, logThrowsOn: /^\[qa\] exposure/ })
+  try {
+    assert.equal((await w.c.exposure.ready).ok, true)
+    assert.equal((await w.c.exposure.reconcile()).ok, true)
+    assert.equal(loud.ensures(), 2)
+    const { harness } = await allPorts(w.c)
+    assert.equal((await raw(harness, { path: '/qa/api/exposure', headers: ALLOWED })).status, 200)
+  } finally { w.c.stop() }
 })
 
 test('every exposureIntervalMinutes another pass runs (default 5; an override is honoured)', async t => {

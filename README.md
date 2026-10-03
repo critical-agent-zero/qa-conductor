@@ -235,7 +235,7 @@ const state = await conductor.exposure.ready          // { mode, managed, ok, ch
 - One pass runs at a time. A tick while a pass is still running, on a hung CLI say, starts nothing, so CLI processes never stack.
 - Once `stop()` or `shutdown()` begins, no pass runs and the timer is cleared. Neither waits for a pass in flight. Nothing ever removes a mount, so after a stop the front door answers `502` until the conductor is back.
 - Nothing a pass does takes the conductor down. Each mount it writes is logged as `[qa] exposure mounted <port><path> -> <target>`, or `restored` when this conductor had it in place before. `[qa] exposure failed: …`, `[qa] exposure drift remains: <port><path>, …` and `[qa] exposure ok` are logged only when they change.
-- `GET /api/exposure` and `conductor.exposure.state()` report the last pass as `{ mode, managed, ok, checkedAt, drift, added, error }`. Neither calls the front door.
+- `GET /api/exposure` and `conductor.exposure.state()` report the last pass as `{ mode, managed, ok, checkedAt, drift, added, error }`. Neither calls the front door. The mounts in `drift` and `added` are copied from what the adapter returned, keeping only the Mount type's values: a field that isn't a string (for `port`, an integer), such as a `URL` object as the `target`, is reported as `null`.
 - So a deploy needn't touch the mounts: the restarted conductor's first pass restores any that are missing or wrong.
 
 In tailscale mode without an adapter, the mounts are someone else's, such as a deploy script's: startup logs `[qa] exposure: tailscale serve mounts are managed outside the conductor`, and `/api/exposure` reports `managed: false`. In none mode it reports `managed: false` too.
