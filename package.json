@@ -1,7 +1,7 @@
 {
   "name": "@critical-labs/qa-conductor",
-  "version": "0.2.1",
-  "description": "Side-by-side PR-QA harness: boots base-vs-PR app panes against cloned data behind mirrored proxies, with a pluggable five-seam adapter interface (Provisioner, BuildConvention, Seed, EnvTransform, AuthBootstrap).",
+  "version": "0.3.0",
+  "description": "Side-by-side PR-QA harness: boots base-vs-PR app panes against cloned data behind mirrored proxies, with a pluggable five-seam adapter interface (Provisioner, BuildConvention, Seed, EnvTransform, AuthBootstrap) plus an optional Exposure seam.",
   "type": "module",
   "license": "MIT",
   "engines": {

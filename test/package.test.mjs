@@ -17,6 +17,14 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
 const WORKFLOW = path.join(ROOT, '.github/workflows/publish.yml')
 const TAG_CHECK = 'Check the tag matches package.json'
+const CHANGELOG = readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8')
+
+// The CHANGELOG's second-level headings: `## Unreleased` while changes wait
+// for a release, then one `## X.Y.Z` per release, optionally dated
+// (`## 0.3.0 — 2026-10-03`), newest first.
+const changelogHeadings = () => [...CHANGELOG.matchAll(/^## (.*)$/gm)].map(match => match[1])
+const RELEASE_HEADING = /^(\d+\.\d+\.\d+)(?: — \d{4}-\d{2}-\d{2})?$/
+const releases = () => changelogHeadings().map(heading => RELEASE_HEADING.exec(heading)?.[1]).filter(Boolean)
 
 // npm packs these whatever `files` says.
 const ALWAYS_PACKED = /^(package\.json|README(\.[^/]*)?|LICEN[CS]E(\.[^/]*)?|CHANGELOG(\.[^/]*)?)$/i
@@ -190,6 +198,25 @@ test('the package is publishable: not private, public access, provenance from th
   assert.match(pkg.repository?.url ?? '', /github\.com\/critical-labs\/qa-conductor(\.git)?$/)
 })
 
+test('a release names one version: package.json, the CHANGELOG\'s newest release and the README\'s git-tag pin', () => {
+  // A tag stages package.json's version, so the notes and the install line
+  // a consumer reads must be that version's.
+  const headings = changelogHeadings()
+  headings.forEach((heading, i) => {
+    assert.ok(RELEASE_HEADING.test(heading) || (heading === 'Unreleased' && i === 0), `CHANGELOG heading "## ${heading}" is a version (or Unreleased, first)`)
+  })
+  const versions = releases()
+  for (let i = 1; i < versions.length; i++) {
+    // numeric collation compares 0.10.0 and 0.9.0 field by field
+    assert.ok(versions[i - 1].localeCompare(versions[i], 'en', { numeric: true }) > 0, `${versions[i - 1]} is newer than ${versions[i]}`)
+  }
+  assert.equal(versions[0], pkg.version, 'the newest CHANGELOG release is the package.json version')
+  const README = readFileSync(path.join(ROOT, 'README.md'), 'utf8')
+  const pins = [...README.matchAll(/github:critical-labs\/qa-conductor#(\S+)/g)].map(match => match[1])
+  assert.ok(pins.length > 0, 'the README shows a git-tag pin')
+  for (const pin of pins) assert.equal(pin, `v${pkg.version}`, 'the README\'s git-tag pin is this version\'s tag')
+})
+
 test('every exports and bin target exists and is inside a files entry', () => {
   assert.ok(Array.isArray(pkg.files) && pkg.files.length > 0, 'without files, npm packs the whole repo')
   for (const entry of pkg.files) assert.doesNotMatch(entry, /[*?[{!]/, `files entry ${entry}: this test reads entries literally`)
@@ -306,7 +333,10 @@ test('the workflow\'s tag check passes only for v<package.json version>', { time
       env: { PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}`, GITHUB_REF_NAME: tag },
     })
   await run(`v${pkg.version}`)
-  for (const tag of ['v9.9.9', pkg.version, `v${pkg.version}-rc.1`, `v${pkg.version}.1`, `xv${pkg.version}`, '']) {
+  // The release before this one: its tag, pushed again, must not stage this.
+  const previous = releases().find(version => version !== pkg.version)
+  assert.ok(previous, 'the CHANGELOG has an earlier release')
+  for (const tag of [`v${previous}`, 'v9.9.9', pkg.version, `v${pkg.version}-rc.1`, `v${pkg.version}.1`, `xv${pkg.version}`, '']) {
     await assert.rejects(run(tag), err => err.code === 1 && /does not match/.test(err.stdout + err.stderr), `tag "${tag}" is refused`)
   }
 })

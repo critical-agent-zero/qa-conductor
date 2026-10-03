@@ -2,13 +2,11 @@
 
 A side-by-side PR-QA harness. For a pull request it boots two copies of your app: **base** (what's live now) and **PR** (the branch). Each runs against its own clone of real data, behind proxies that mirror scrolling and navigation between the two panes. A reviewer drives both at once and posts a verdict (a comment plus a label) back to the PR.
 
-The conductor owns the choreography: session state, cancellation, the harness UI and API, the pane proxies and the verdict. Everything about *your* app and infrastructure comes from five adapters you supply.
+The conductor owns the choreography: session state, cancellation, the harness UI and API, the pane proxies and the verdict. Everything about *your* app and infrastructure comes from five adapters you supply, plus an optional sixth, [Exposure](#exposure-optional), through which the conductor publishes itself on a front door such as `tailscale serve`.
 
-> **Status: 0.x, pre-release.** The interface may still change while a second consumer is integrated. It is published to npm from 0.3.0; until then, install from a git tag. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+> **Status: 0.x.** The interface may still change while a second consumer is integrated, and a 0.x minor version may break it: read the migration notes in [CHANGELOG.md](CHANGELOG.md) before upgrading.
 
 ## Install
-
-From npm, from 0.3.0:
 
 ```sh
 npm install @critical-labs/qa-conductor
@@ -17,10 +15,32 @@ npm install @critical-labs/qa-conductor
 Consumers that pin a git tag may keep doing so:
 
 ```sh
-npm install github:critical-labs/qa-conductor#v0.2.1
+npm install github:critical-labs/qa-conductor#v0.3.0
 ```
 
 Node ≥ 22. There are no runtime dependencies.
+
+### Entry points
+
+| Import | Exports | |
+|---|---|---|
+| `@critical-labs/qa-conductor` | `startConductor` | the conductor: harness, pane proxies, sessions, the exposure loop ([Use](#use)) |
+| `@critical-labs/qa-conductor/config` | `loadConfig`, `parseEnvFile`, `defaultExposure`, `defaultHarnessOrigin`, `isExposureInterval`, `EXPOSURE_MODES`, `EXPOSURE_INTERVAL_RULE`, `MAX_EXPOSURE_INTERVAL_MINUTES`, `HARNESS_PATH` | reading `.env.qa` into `cfg` ([Configuration](#configuration)), and the rules it checks |
+| `@critical-labs/qa-conductor/session` | `bootSession`, `teardownSession`, `createSession`, `reduce`, `touch`, `isIdle`, `ROLES`, `PANE_STAGES`, `parseEnv`, `renderEnv`, `migrateImageFor` | the boot sequence and session state the conductor runs, and helpers for adapters: parsing and rendering env file text, and the `migrate-<tag>` image beside an app image |
+| `@critical-labs/qa-conductor/github` | `createGithub` | the GitHub effect wrapper |
+| `@critical-labs/qa-conductor/docker` | `createDocker` | the Docker effect wrapper |
+| `@critical-labs/qa-conductor/exec` | `makeExecFileFn` | the `execFile` effect wrapper |
+| `@critical-labs/qa-conductor/identity` | `normalizeLogins`, `refusalReason`, `isAllowed`, `identityGate` | the [Tailscale identity gate](#security) |
+| `@critical-labs/qa-conductor/exposure` | `mountsFor`, `reconcileExposure`, `runExpose` | one [exposure](#exposure-optional) pass, outside a conductor |
+| `@critical-labs/qa-conductor/proxy` | `createPaneProxy`, `panePolicy`, `parseSetCookie`, `isAllowedHost`, `requestHostname`, `misdirected` | the pane proxy, and the [Host allowlist](#security) check every server runs |
+| `@critical-labs/qa-conductor/verdict` | `formatVerdict`, `postVerdict` | the verdict comment and label |
+| `@critical-labs/qa-conductor/adapters/provisioner-docker` | `createDockerProvisioner` | a Provisioner for docker-sibling deployments |
+| `@critical-labs/qa-conductor/adapters/provisioner-process` | `createProcessProvisioner` | a Provisioner for local process groups |
+| `@critical-labs/qa-conductor/adapters/build-worktree` | `createWorktreeBuild`, `trustDecision` | a BuildConvention that runs PRs from git worktrees, behind a trust gate |
+| `@critical-labs/qa-conductor/adapters/exposure-tailscale` | `createTailscaleExposure` | an Exposure adapter on `tailscale serve` |
+| `@critical-labs/qa-conductor/package.json` | *(the manifest)* | |
+
+Each row lists every name its entry point exports, and no other entry point is exported. The package also installs one bin, `qa-conductor-expose`, the [expose CLI](#expose-cli), for operators.
 
 ## Use
 
@@ -60,7 +80,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 **The trust gate is the only real boundary between a PR's code and the reviewer's machine.** Booting a PR runs its code. A BuildConvention that checks out and installs PRs must refuse untrusted ones in `ensureBuilt`, before any git call. **Env scrubbing and loopback binding are defence in depth**, not a boundary.
 
 The conductor's own defences in depth:
-- **Tailscale identity gate.** In tailscale mode (`QA_EXPOSURE=tailscale`), the harness and both pane proxies answer `403` to any request whose `Tailscale-User-Login` isn't in `QA_ALLOWED_LOGINS` (matched ignoring case), before anything else runs. The gate wraps each whole server, so no route, present or future, runs for such a request, upgrades included, and the `403` still carries the harness frame lock or the pane's frame policy. `tailscale serve` sets that header from the device the request came from, strips any copy the client sent, and sets none for tagged devices, which are refused. An empty allowlist refuses everyone, so `loadConfig` refuses one in tailscale mode (`startConductor` only logs an error). The pane proxies drop every `Tailscale-*` header before the pane app sees the request.
+- **Tailscale identity gate.** In tailscale mode (`QA_EXPOSURE=tailscale`), the harness and both pane proxies answer `403` to any request whose `Tailscale-User-Login` isn't in `QA_ALLOWED_LOGINS` (matched ignoring case), before anything else runs. The gate wraps each whole server, so no route, present or future, runs for such a request, upgrades included, and the `403` still carries the harness frame lock or the pane's frame policy. `tailscale serve` sets that header from the device the request came from, strips any copy the client sent, and sets none for tagged devices, which are refused. An empty allowlist refuses everyone, so `loadConfig` refuses one in tailscale mode (`startConductor` only logs an error). The pane proxies drop every `Tailscale-*` header before the pane app sees the request. Other front-door headers pass through, such as `X-Forwarded-For`, which `tailscale serve` sets to the viewer's tailnet address: the pane app, PR code included, still sees which device is viewing.
 
   `QA_EXPOSURE` defaults to `tailscale` when anything the conductor answers to or listens on is off loopback: the harness origin, either pane origin, `QA_PUBLIC_HOST`, a `QA_ALLOWED_HOSTS` entry or `QA_BIND_HOST` (see [Configuration](#configuration)). Loopback layouts, such as `npm run qa` and the demo, stay ungated with no config.
 
@@ -298,6 +318,7 @@ The contract:
 | `QA_EXPOSURE` | `tailscale` if any address the conductor answers to or listens on is off loopback (see below), else `none` | `tailscale`: fronted by `tailscale serve` on this host, so the identity gate is on and the bind must be loopback. `none`: no gate (0.2's behaviour), for loopback or another authenticating front door. Anything else throws |
 | `QA_ALLOWED_LOGINS` | *(none)* | comma-separated Tailscale logins (as `tailscale whois` shows them, e.g. `alice@github`) allowed in when the gate is on; trimmed and lowercased. Required in tailscale mode |
 | `QA_EXPOSURE_INTERVAL_MINUTES` | `5` | minutes between [exposure](#exposure-optional) reconcile passes, when the platform passes an Exposure adapter. Above `0` and at most `35791`, the longest a timer can wait (above it, Node would fire every millisecond); fractions are fine |
+| `QA_TAILSCALE_BIN` | `tailscale` | the tailscale CLI the [expose CLI](#expose-cli) and self-QA run, for an env file they read. On macOS, use the app's `/Applications/Tailscale.app/Contents/MacOS/Tailscale` when the one on `PATH` is older than the daemon. The conductor never reads it: a platform passes `bin` to `createTailscaleExposure` |
 | `QA_HARNESS_PORT` / `QA_BASE_PROXY_PORT` / `QA_PR_PROXY_PORT` | `3100` / `3101` / `3102` | listen ports |
 | `QA_HARNESS_ORIGIN` | `https://<QA_PUBLIC_HOST>:8444`, else `http://<QA_BIND_HOST>:<QA_HARNESS_PORT>` on a loopback bind | the origin viewers open the harness at (any path dropped); the page is under `/qa/`. Required on a non-loopback bind with no public host. On port `0` the conductor derives it from the bound port. Not an IPv6 literal: on a `::1` bind, set `http://localhost:<port>` |
 | `QA_BASE_ORIGIN` / `QA_PR_ORIGIN` | `https://<host>:8443` / `:10000` | public pane origins |
@@ -413,7 +434,7 @@ The suite runs on `node:test` with injected effects, so it needs no Docker, netw
 
 ## Releasing
 
-1. Bump `version` in `package.json`, and turn the CHANGELOG's `Unreleased` heading into that version.
+1. Bump `version` in `package.json`, turn the CHANGELOG's `Unreleased` heading into that version, and move the git-tag example under [Install](#install) to its tag. `test/package.test.mjs` fails until all three agree.
 2. Once that is on `main`, tag it `vX.Y.Z` and push the tag.
 3. The [publish workflow](.github/workflows/publish.yml) refuses a tag that isn't `v` plus the `package.json` version. Then it runs the tests and `npm pack --dry-run`, and stages the version on npm with provenance (`npm stage publish`).
 4. A maintainer approves the staged version on npmjs.com. Only then does it go live.
