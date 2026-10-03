@@ -120,6 +120,33 @@ test('proxies method, path, body and headers; host stripped; accept-encoding for
   assert.equal(seen.headers.host, `127.0.0.1:${upstreamPort}`)
 })
 
+// tailscale serve adds the reviewer's login, name and picture to every
+// request it proxies. The gate has read them; PR code must not.
+test('Tailscale identity headers never reach the pane app', async (t) => {
+  const seen = []
+  const { proxyPort } = await setup(t, (req, res) => {
+    seen.push(req.headers)
+    res.end('ok')
+  })
+  const identity = {
+    'Tailscale-User-Login': 'alice@github',
+    'Tailscale-User-Name': 'Alice Example',
+    'Tailscale-User-Profile-Pic': 'https://example.com/a.png',
+    'Tailscale-Headers-Info': 'https://tailscale.com/s/serve-headers',
+    'tailscale-app-capabilities': '{}',
+  }
+  for (const method of ['GET', 'POST']) {
+    const res = await request(proxyPort, '/x', { method, headers: { ...identity, 'x-kept': '1', 'x-tailscale-user-login': 'kept too' }, body: method === 'POST' ? 'b' : null })
+    assert.equal(res.status, 200)
+  }
+  assert.equal(seen.length, 2)
+  for (const headers of seen) {
+    assert.deepEqual(Object.keys(headers).filter(k => k.startsWith('tailscale-')), [])
+    assert.equal(headers['x-kept'], '1')
+    assert.equal(headers['x-tailscale-user-login'], 'kept too')
+  }
+})
+
 // --- cookie jar -----------------------------------------------------------
 
 test('absorbs Set-Cookie into the jar, replays it upstream, honors deletions', async (t) => {

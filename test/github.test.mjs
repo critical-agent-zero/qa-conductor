@@ -467,3 +467,47 @@ test('awaitPreviewImage stops promptly when its signal is aborted', async () => 
   )
   assert.equal(polls, 2)
 })
+
+// A fine-grained PAT cannot call the Packages API, so the package versions
+// listing can take its own token (a classic PAT with read:packages).
+test('packagesToken authorizes only the package versions listing; token every repo call', async () => {
+  const sha = 'a'.repeat(40)
+  const { calls, fetchFn } = makeFetch((url, options) => {
+    if (url.startsWith(`${API}/user/packages/`)) return response(200, [version(1, ['1.4.0-rc.1', `pr-41-${sha.slice(0, 12)}`], '2026-09-01T00:00:00Z')])
+    if (url.endsWith('/dispatches')) return response(204, '')
+    if (url.includes('/runs?')) return response(200, { workflow_runs: [] })
+    if (url.includes('/pulls/')) return response(200, { number: 41, head: { sha } })
+    if (url.endsWith('/comments')) return response(201, { html_url: 'https://github.com/acme/widget/pull/41#issuecomment-1' })
+    if (options.method === 'DELETE') return response(404, { message: 'Label does not exist' })
+    return response(200, [])
+  })
+  const gh = createGithub({ token: 'repo-token', packagesToken: 'packages-token', repo: REPO, fetchFn, packageName: 'app' })
+
+  await gh.listOpenPrs()
+  await gh.prHead(41)
+  await gh.dispatchPreviewBuild(41)
+  await gh.findPreviewRun(41)
+  await gh.postComment(41, 'QA verdict body')
+  await gh.setQaLabel(41, 'qa-approved')
+  const repoCalls = calls.length
+  await gh.ghcrTagExists('pr-41-000000000000')
+  await gh.latestRcTag()
+  await gh.listPrImageTags()
+  await gh.awaitPreviewImage(41, sha, { sleepFn: async () => {} })
+
+  assert.equal(repoCalls, 7)
+  assert.equal(calls.length, 11)
+  for (const [i, { url, options }] of calls.entries()) {
+    const packages = url.startsWith(`${API}/user/packages/container/app/versions?`)
+    assert.equal(packages, i >= repoCalls, url)
+    assert.equal(options.headers.Authorization, `Bearer ${packages ? 'packages-token' : 'repo-token'}`, `${options.method} ${url}`)
+  }
+})
+
+test('without a packagesToken, token authorizes the package versions listing too', async () => {
+  const { calls, fetchFn } = makeFetch(() => response(200, []))
+  const gh = createGithub({ token: TOKEN, repo: REPO, fetchFn, packageName: 'app' })
+  await gh.listPrImageTags()
+  await gh.listOpenPrs()
+  assert.deepEqual(calls.map(c => c.options.headers.Authorization), [`Bearer ${TOKEN}`, `Bearer ${TOKEN}`])
+})

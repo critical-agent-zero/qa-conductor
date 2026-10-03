@@ -234,6 +234,22 @@ test('startDemo({ harnessOrigin, frameAncestors }) puts both in the pane policy'
   } finally { await demo.stop() }
 })
 
+// Nested in self-QA on a tailnet, an inner demo's harness origin is the outer
+// pane's https origin, which would make the default mode tailscale. The demo
+// binds loopback and sits behind the outer conductor's gate, whose pane proxy
+// strips the Tailscale headers anyway.
+test('a non-loopback harnessOrigin leaves the demo ungated', async () => {
+  const { lines, log } = captureLog()
+  const demo = await startDemo({ port: 0, speed: 0, log, harnessOrigin: 'https://box.ts.net:8443' })
+  try {
+    assert.ok(lines.includes('[qa] identity gate off (QA_EXPOSURE=none)'), lines.join('\n'))
+    assert.equal((await get(demo.ports.harness, '/')).status, 200)
+    assert.equal((await state(demo.ports.harness)).harnessOrigin, 'https://box.ts.net:8443')
+    // the panes answer too: no session yet
+    assert.equal((await get(demo.ports.base, '/')).status, 503)
+  } finally { await demo.stop() }
+})
+
 test('#104 fails at starting and reports the pane log tail', async () => {
   const { log } = captureLog()
   const demo = await startDemo({ port: 0, speed: 0, log })
