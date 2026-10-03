@@ -2,13 +2,11 @@
 
 A side-by-side PR-QA harness. For a pull request it boots two copies of your app: **base** (what's live now) and **PR** (the branch). Each runs against its own clone of real data, behind proxies that mirror scrolling and navigation between the two panes. A reviewer drives both at once and posts a verdict (a comment plus a label) back to the PR.
 
-The conductor owns the choreography: session state, cancellation, the harness UI and API, the pane proxies and the verdict. Everything about *your* app and infrastructure comes from five adapters you supply.
+The conductor owns the choreography: session state, cancellation, the harness UI and API, the pane proxies and the verdict. Everything about *your* app and infrastructure comes from five adapters you supply, plus an optional sixth, [Exposure](#exposure-optional), through which the conductor publishes itself on a front door such as `tailscale serve`.
 
-> **Status: 0.x, pre-release.** The interface may still change while a second consumer is integrated. It is published to npm from 0.3.0; until then, install from a git tag. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+> **Status: 0.x.** The interface may still change while a second consumer is integrated, and a 0.x minor version may break it: read the migration notes in [CHANGELOG.md](CHANGELOG.md) before upgrading.
 
 ## Install
-
-From npm, from 0.3.0:
 
 ```sh
 npm install @critical-labs/qa-conductor
@@ -17,7 +15,7 @@ npm install @critical-labs/qa-conductor
 Consumers that pin a git tag may keep doing so:
 
 ```sh
-npm install github:critical-labs/qa-conductor#v0.2.1
+npm install github:critical-labs/qa-conductor#v0.3.0
 ```
 
 Node ≥ 22. There are no runtime dependencies.
@@ -436,7 +434,7 @@ The suite runs on `node:test` with injected effects, so it needs no Docker, netw
 
 ## Releasing
 
-1. Bump `version` in `package.json`, and turn the CHANGELOG's `Unreleased` heading into that version.
+1. Bump `version` in `package.json`, turn the CHANGELOG's `Unreleased` heading into that version, and move the git-tag example under [Install](#install) to its tag. `test/package.test.mjs` fails until all three agree.
 2. Once that is on `main`, tag it `vX.Y.Z` and push the tag.
 3. The [publish workflow](.github/workflows/publish.yml) refuses a tag that isn't `v` plus the `package.json` version. Then it runs the tests and `npm pack --dry-run`, and stages the version on npm with provenance (`npm stage publish`).
 4. A maintainer approves the staged version on npmjs.com. Only then does it go live.
