@@ -71,11 +71,13 @@ function makeWorld({
     envTransform: { derivePaneEnv: ({ pane }) => ({ app: { DSN: pane.dsn } }) },
     auth: { requiresDb: false, establishSession: async ({ pane }) => ({ landingUrl: `login-${pane.ref.role}`, cookies: [] }) },
   }
+  // Ungated: these https origins would otherwise put it in tailscale mode.
   const cfg = {
     publicHost: 'h.ts.net', operatorEmail: 'op@homefree.local', idleMinutes: 30,
     ports: { harness: 0, base: 0, pr: 0 },
     paneOrigins: { base: 'https://h:8443', pr: 'https://h:10000' },
     verdictLabels: { accept: 'ok', reject: 'nope' },
+    exposure: 'none',
     ...cfgOverrides,
   }
   const github = {
@@ -121,11 +123,12 @@ async function allPorts(c) {
   }
 }
 
-// POSTs always carry a JSON content type (the harness requires it).
-async function api(port, method, path, body) {
+// POSTs always carry a JSON content type (the harness requires it). `headers`
+// adds to them, e.g. ALLOWED on a gated conductor.
+async function api(port, method, path, body, headers = {}) {
   const post = method === 'POST'
   const res = await fetch(`http://127.0.0.1:${port}${path}`, {
-    method, headers: post ? { 'content-type': 'application/json' } : {}, body: post ? JSON.stringify(body ?? {}) : undefined,
+    method, headers: { ...(post ? { 'content-type': 'application/json' } : {}), ...headers }, body: post ? JSON.stringify(body ?? {}) : undefined,
   })
   return res.json()
 }
@@ -766,6 +769,207 @@ test('startConductor refuses a harness origin, explicit or derived from publicHo
     try {
       const port = await harnessPort(c)
       assert.equal((await api(port, 'GET', '/api/state')).status, 'idle', JSON.stringify(paneOrigins))
+    } finally { c.stop() }
+  }
+})
+
+// --- 0.3.0: the Tailscale identity gate (#307) ------------------------------------
+
+// tailscale serve in front, and the allowlist loadConfig requires there.
+const GATED = { exposure: 'tailscale', allowedLogins: ['alice@github'] }
+// What tailscale serve adds for a request from an allowed user's own device.
+const ALLOWED = { 'tailscale-user-login': 'alice@github' }
+const UPGRADE = { connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-version': '13', 'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==' }
+const LOOPBACK_PANES = { base: 'http://127.0.0.1:3101', pr: 'http://127.0.0.1:3102' }
+
+test('the harness refuses every route without an allowed identity, leaking nothing', async () => {
+  const { c, calls } = makeWorld({ cfg: GATED })
+  try {
+    const port = await harnessPort(c)
+    const requests = [
+      { path: '/qa' }, { path: '/qa/harness.js' }, { path: '/qa/api/state' }, { path: '/api/state' },
+      { path: '/qa/api/prs' }, { path: '/qa/api/progress' }, { path: '/qa/api/verdict/preview?verdict=accept' },
+      { path: '/qa/api/nope' },
+      { method: 'POST', path: '/qa/api/session', headers: { 'content-type': 'application/json' }, body: '{"pr":7}' },
+      { method: 'POST', path: '/qa/api/verdict', headers: { 'content-type': 'application/json' }, body: '{"verdict":"accept"}' },
+      { method: 'POST', path: '/qa/api/teardown' },
+      { path: '/qa/api/state', headers: UPGRADE },
+      // before the Host check and the URL parse, too
+      { path: '/qa/api/state', headers: { host: 'attacker.example' } },
+      { path: '//x:99999' },
+    ]
+    for (const identity of [{}, { 'tailscale-user-login': 'mallory@github' }]) {
+      for (const r of requests) {
+        const res = await raw(port, { ...r, headers: { ...r.headers, ...identity } })
+        assert.equal(res.status, 403, `${r.method ?? 'GET'} ${r.path} ${JSON.stringify(identity)}`)
+        assert.match(res.headers['content-type'], /^text\/plain/)
+        assert.doesNotMatch(res.body, /login-|status|idle|ok|nope/)
+      }
+    }
+    // nothing ran on the refused writes
+    assert.equal((await api(port, 'GET', '/api/state', undefined, ALLOWED)).status, 'idle')
+    assert.deepEqual(calls.filter(x => !x[0].startsWith('sweep')), [])
+  } finally { c.stop() }
+})
+
+test('both pane proxies refuse every route, the bridge and upgrades without an allowed identity', async () => {
+  const { c } = makeWorld({ cfg: GATED })
+  try {
+    const { harness, base, pr } = await allPorts(c)
+    await api(harness, 'POST', '/api/session', { pr: 7 }, ALLOWED)
+    await waitFor(async () => (await api(harness, 'GET', '/api/state', undefined, ALLOWED)).status === 'ready')
+    for (const port of [base, pr]) {
+      for (const identity of [{}, { 'tailscale-user-login': 'mallory@github' }]) {
+        for (const r of [{ path: '/x' }, { path: '/__qa/bridge.js' }, { method: 'POST', path: '/api/x', body: '{}' }, { path: '/x', headers: UPGRADE }, { path: '/x', headers: { host: 'attacker.example' } }]) {
+          const res = await raw(port, { ...r, headers: { ...r.headers, ...identity } })
+          assert.equal(res.status, 403, `${port} ${r.path} ${JSON.stringify(identity)}`)
+          assert.doesNotMatch(res.body, /pane-|bridge/)
+        }
+      }
+    }
+    assert.equal((await raw(base, { path: '/x', headers: ALLOWED })).body, 'pane-base')
+    assert.equal((await raw(pr, { path: '/x', headers: ALLOWED })).body, 'pane-pr')
+  } finally { c.stop() }
+})
+
+test('an allowed identity is served on all three, matched ignoring case', async () => {
+  const { c } = makeWorld({ cfg: { ...GATED, allowedLogins: ['bob@homefree.local', 'Alice@github '] } })
+  try {
+    const { harness, base, pr } = await allPorts(c)
+    const res = await raw(harness, { path: '/qa/api/state', headers: { 'tailscale-user-login': 'Alice@GitHub' } })
+    assert.equal(res.status, 200)
+    assert.equal(JSON.parse(res.body).status, 'idle')
+    assert.equal((await raw(base, { path: '/x', headers: { 'tailscale-user-login': 'bob@homefree.local' } })).status, 503)
+    assert.equal((await raw(pr, { path: '/x', headers: { 'tailscale-user-login': 'BOB@homefree.local' } })).status, 503)
+  } finally { c.stop() }
+})
+
+test('with no allowed logins every request is refused, and startup says so', async () => {
+  for (const allowedLogins of [[], undefined, [' ']]) {
+    const { c, errorLines } = makeWorld({ cfg: { ...GATED, allowedLogins } })
+    try {
+      const { harness, base, pr } = await allPorts(c)
+      for (const port of [harness, base, pr]) assert.equal((await raw(port, { path: '/', headers: ALLOWED })).status, 403)
+      assert.ok(errorLines.includes('[qa] QA_ALLOWED_LOGINS is empty: every request will be refused'), errorLines.join('\n'))
+    } finally { c.stop() }
+  }
+})
+
+test('refused requests do not count as pane activity', async () => {
+  const { c } = makeWorld({ cfg: GATED })
+  try {
+    const { harness, base } = await allPorts(c)
+    const before = (await api(harness, 'GET', '/api/state', undefined, ALLOWED)).lastActivity
+    await new Promise(r => setTimeout(r, 5))
+    assert.equal((await raw(base, { path: '/x' })).status, 403)
+    assert.equal((await api(harness, 'GET', '/api/state', undefined, ALLOWED)).lastActivity, before)
+  } finally { c.stop() }
+})
+
+// Is a request with no Tailscale identity served? On all three servers alike.
+async function gated(c) {
+  const ports = Object.values(await allPorts(c))
+  const statuses = []
+  for (const port of ports) statuses.push((await raw(port, { path: '/qa/api/state' })).status)
+  assert.equal(new Set(statuses.map(s => s === 403)).size, 1, `all three agree: ${statuses}`)
+  return statuses[0] === 403
+}
+
+// A cfg built in code, with no `exposure`, resolves the mode as loadConfig
+// does: any address it answers to or listens on that is off loopback means
+// it is meant to be reached from another machine.
+test('a cfg without exposure is gated when an origin is not loopback and not when all are', async () => {
+  const loopback = { exposure: undefined, publicHost: null, paneOrigins: LOOPBACK_PANES, allowedLogins: ['alice@github'] }
+  for (const [cfg, want] of [
+    [loopback, false],
+    [{ ...loopback, harnessOrigin: 'http://localhost:3100', allowedHosts: ['localhost'] }, false],
+    [{ ...loopback, harnessOrigin: 'https://h.ts.net:8444' }, true],
+    [{ ...loopback, paneOrigins: { ...LOOPBACK_PANES, pr: 'https://h.ts.net:10000' } }, true],
+    [{ ...loopback, paneOrigins: { pr: LOOPBACK_PANES.pr } }, true],
+    [{ ...loopback, paneOrigins: { ...LOOPBACK_PANES, base: 'not yet' } }, true],
+    [{ ...loopback, allowedHosts: ['box.ts.net'] }, true],
+    // makeWorld's https layout
+    [{ exposure: undefined, allowedLogins: ['alice@github'] }, true],
+  ]) {
+    const { c } = makeWorld({ cfg })
+    try {
+      assert.equal(await gated(c), want, JSON.stringify(cfg))
+    } finally { c.stop() }
+  }
+})
+
+test('a cfg without exposure, with publicHost and loopback pane origins, is gated (the derived harness origin counts)', async () => {
+  const { c } = makeWorld({ cfg: { exposure: undefined, publicHost: 'h.ts.net', paneOrigins: LOOPBACK_PANES, allowedLogins: ['alice@github'] } })
+  try {
+    assert.equal(await gated(c), true)
+    const { harness } = await allPorts(c)
+    assert.equal((await api(harness, 'GET', '/api/state', undefined, ALLOWED)).harnessOrigin, 'https://h.ts.net:8444')
+  } finally { c.stop() }
+})
+
+test('tailscale mode on a non-loopback host, or an unknown mode, refuses to start', async () => {
+  const loopback = { publicHost: null, paneOrigins: LOOPBACK_PANES, harnessOrigin: 'http://127.0.0.1:3100', allowedLogins: ['alice@github'] }
+  for (const [cfg, why] of [
+    [{ ...loopback, exposure: 'tailscale', host: '0.0.0.0' }, "cfg.exposure is 'tailscale'"],
+    // a non-loopback bind alone makes the default tailscale
+    [{ ...loopback, host: '0.0.0.0' }, 'exposure defaults to tailscale because QA_BIND_HOST=0.0.0.0 is not loopback'],
+    [{ ...loopback, host: '::' }, 'exposure defaults to tailscale because QA_BIND_HOST=:: is not loopback'],
+    [{ host: '192.168.1.5', allowedLogins: ['alice@github'] }, 'exposure defaults to tailscale because QA_PUBLIC_HOST=h.ts.net is not loopback'],
+  ]) {
+    assert.throws(() => startOnly(cfg), err => {
+      assert.ok(err.message.startsWith(`startConductor: ${why}, so cfg.host must be a loopback address: tailscale serve on this host is the only supported front (got ${JSON.stringify(cfg.host)})`), err.message)
+      assert.ok(err.message.endsWith(", or set exposure: 'none' if another front door authenticates"), err.message)
+      return true
+    }, JSON.stringify(cfg))
+  }
+  for (const exposure of ['Tailscale', 'off', '', 0, true, {}]) {
+    assert.throws(() => startOnly({ ...loopback, exposure }), /^Error: startConductor: cfg\.exposure must be 'none' or 'tailscale', got /, JSON.stringify(exposure))
+  }
+  // none mode still binds anywhere (behind another front door), and
+  // tailscale mode any loopback address (not 127.0.0.2: macOS has only .1)
+  for (const [cfg, want] of [[{ exposure: 'none', host: '0.0.0.0' }, ['0.0.0.0']], [{ ...GATED, host: 'localhost' }, ['127.0.0.1', '::1']]]) {
+    const { c } = makeWorld({ cfg })
+    try {
+      await harnessPort(c)
+      assert.ok(want.includes(c.servers.harness.address().address), JSON.stringify(cfg))
+    } finally { c.stop() }
+  }
+})
+
+test('the identity 403 carries the harness frame headers on the harness, and the pane policy on each pane', async () => {
+  const { c } = makeWorld({ cfg: GATED })
+  try {
+    const { harness, base, pr } = await allPorts(c)
+    for (const path of ['/qa', '/qa/api/state']) {
+      const res = await raw(harness, { path })
+      assert.equal(res.status, 403)
+      assert.deepEqual(frameHeaders(res), HARNESS_FRAME, path)
+      assert.equal(res.headers['cache-control'], 'no-store')
+    }
+    for (const port of [base, pr]) {
+      const res = await raw(port, { path: '/x' })
+      assert.equal(res.status, 403)
+      assert.equal(res.headers['content-security-policy'], "frame-ancestors 'self' https://h.ts.net:8444")
+      assert.equal(res.headers['x-content-type-options'], 'nosniff')
+      assert.equal(res.headers['x-frame-options'], undefined)
+    }
+  } finally { c.stop() }
+})
+
+test('startup says whether the gate is on', async () => {
+  for (const [cfg, logged, errored] of [
+    [GATED, '[qa] identity gate on: 1 allowed login', null],
+    [{ ...GATED, allowedLogins: ['alice@github', 'bob@github', ''] }, '[qa] identity gate on: 2 allowed logins', null],
+    [{ ...GATED, allowedLogins: [] }, '[qa] identity gate on: 0 allowed logins', '[qa] QA_ALLOWED_LOGINS is empty: every request will be refused'],
+    [{}, '[qa] identity gate off (QA_EXPOSURE=none)', null],
+    [{ exposure: undefined, publicHost: null, paneOrigins: LOOPBACK_PANES }, '[qa] identity gate off (QA_EXPOSURE=none)', null],
+  ]) {
+    const { c, logLines, errorLines } = makeWorld({ cfg })
+    try {
+      await allPorts(c)
+      assert.ok(logLines.includes(logged), `${JSON.stringify(cfg)}\n${logLines.join('\n')}`)
+      assert.equal(logLines.filter(l => l.startsWith('[qa] identity gate')).length, 1, logLines.join('\n'))
+      assert.deepEqual(errorLines.filter(l => /QA_ALLOWED_LOGINS/.test(l)), errored ? [errored] : [], JSON.stringify(cfg))
     } finally { c.stop() }
   }
 })
