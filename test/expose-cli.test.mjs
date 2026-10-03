@@ -316,6 +316,22 @@ test('--config loads cfg from MODULE#export', async () => {
   assert.deepEqual(w.calls(), [STATUS, STATUS], 'only the two loads that worked called tailscale')
 })
 
+// Self-QA's .env.qa leaves QA_REPO and the pane origins to self-QA's defaults.
+test('--config qa/self.mjs#loadSelfQaConfig reads self-QA\'s .env.qa as npm run qa does', async () => {
+  const w = world()
+  const file = w.envFile([
+    'GITHUB_QA_TOKEN=unused', 'QA_PUBLIC_HOST=h.ts.net', 'QA_BASE_ORIGIN=https://h.ts.net:8443', 'QA_PR_ORIGIN=https://h.ts.net:10000',
+    'QA_ALLOWED_LOGINS=a@github', `QA_TAILSCALE_BIN=${w.shim('tailscale')}`,
+  ])
+  const core = await w.run(['--check', '--env', file], { cwd: ROOT })
+  assert.equal(core.code, 2)
+  assert.match(core.stderr, /QA_REPO missing in /)
+  const self = await w.run(['--check', '--env', file, '--config', 'qa/self.mjs#loadSelfQaConfig'], { cwd: ROOT })
+  assert.equal(self.code, 1, self.stderr)
+  assert.deepEqual(outLines(self.stderr), MISSING)
+  assert.deepEqual(w.calls(), [STATUS])
+})
+
 test('--help and -h print the usage and exit 0 without loading a config or calling tailscale', async () => {
   const w = world() // no .env.qa in its dir
   for (const args of [['--help'], ['-h'], ['--check', '--env', 'absent.env', '--config', './absent.mjs', '--help']]) {

@@ -170,6 +170,19 @@ export function selfQaExposure(cfg, makeExec = makeExecFileFn) {
   }
 }
 
+// Self-QA's config: its .env.qa over this repo and loopback pane origins.
+// Exported for the expose CLI, which reads it as self-QA does with
+// `npm run expose -- --config qa/self.mjs#loadSelfQaConfig`.
+export function loadSelfQaConfig(file) {
+  return loadConfig(file, {
+    defaults: {
+      QA_REPO: SELF_REPO,
+      QA_BASE_ORIGIN: 'http://127.0.0.1:3101',
+      QA_PR_ORIGIN: 'http://127.0.0.1:3102',
+    },
+  })
+}
+
 // `start` is startConductor and `makeExec` makeExecFileFn; a test passes its
 // own.
 export async function runSelfQa({ env = process.env, proc = process, log = console, start = startConductor, makeExec = makeExecFileFn } = {}) {
@@ -177,13 +190,7 @@ export async function runSelfQa({ env = process.env, proc = process, log = conso
   if (!fs.existsSync(file)) {
     throw new Error(`${file} not found: create it with GITHUB_QA_TOKEN=<a token that can read PRs and comment/label on ${SELF_REPO}>`)
   }
-  const cfg = loadConfig(file, {
-    defaults: {
-      QA_REPO: SELF_REPO,
-      QA_BASE_ORIGIN: 'http://127.0.0.1:3101',
-      QA_PR_ORIGIN: 'http://127.0.0.1:3102',
-    },
-  })
+  const cfg = loadSelfQaConfig(file)
   const github = createGithub({
     token: cfg.githubToken,
     repo: cfg.repo,

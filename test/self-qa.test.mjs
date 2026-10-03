@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { SELF_REPO, cacheDirFor, runSelfQa, selfQaAdapters, selfQaCommand, selfQaExposure } from '../qa/self.mjs'
+import { SELF_REPO, cacheDirFor, loadSelfQaConfig, runSelfQa, selfQaAdapters, selfQaCommand, selfQaExposure } from '../qa/self.mjs'
 
 const github = { prInfo: async () => ({}), authorPermission: async () => 'write' }
 const pane = { publicOrigin: 'http://127.0.0.1:3102', services: { app: { url: 'http://127.0.0.1:45678', port: 45678 } } }
@@ -17,6 +17,25 @@ function adapters(overrides = {}) {
 test('cacheDirFor: per repo under XDG_CACHE_HOME, else ~/.cache', () => {
   assert.equal(cacheDirFor('critical-labs/qa-conductor', { XDG_CACHE_HOME: '/x/cache' }, '/home/u'), '/x/cache/qa-conductor/critical-labs-qa-conductor')
   assert.equal(cacheDirFor('critical-labs/qa-conductor', {}, '/home/u'), '/home/u/.cache/qa-conductor/critical-labs-qa-conductor')
+})
+
+// The loader runSelfQa uses, exported so `npm run expose -- --config
+// qa/self.mjs#loadSelfQaConfig` reads self-QA's .env.qa as self-QA does.
+test('loadSelfQaConfig: self-QA\'s .env.qa, with self-QA\'s defaults: this repo and loopback panes', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'self-qa-env-'))
+  const file = join(dir, '.env.qa')
+  writeFileSync(file, 'GITHUB_QA_TOKEN=tok\n')
+  const cfg = loadSelfQaConfig(file)
+  assert.equal(cfg.repo, SELF_REPO)
+  assert.deepEqual(cfg.paneOrigins, { base: 'http://127.0.0.1:3101', pr: 'http://127.0.0.1:3102' })
+  assert.equal(cfg.harnessOrigin, 'http://127.0.0.1:3100')
+  assert.equal(cfg.exposure, 'none')
+  // the file wins
+  writeFileSync(file, ['GITHUB_QA_TOKEN=tok', 'QA_REPO=acme/widget', 'QA_PR_ORIGIN=http://127.0.0.1:4102'].join('\n'))
+  assert.equal(loadSelfQaConfig(file).repo, 'acme/widget')
+  assert.equal(loadSelfQaConfig(file).paneOrigins.pr, 'http://127.0.0.1:4102')
+  writeFileSync(file, 'QA_REPO=acme/widget\n')
+  assert.throws(() => loadSelfQaConfig(file), /GITHUB_QA_TOKEN missing/)
 })
 
 test('selfQaCommand runs demo mode straight from the checkout on the reserved port', () => {
