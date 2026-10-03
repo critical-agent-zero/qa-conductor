@@ -19,8 +19,8 @@ test('cacheDirFor: per repo under XDG_CACHE_HOME, else ~/.cache', () => {
   assert.equal(cacheDirFor('critical-labs/qa-conductor', {}, '/home/u'), '/home/u/.cache/qa-conductor/critical-labs-qa-conductor')
 })
 
-// The loader runSelfQa uses, exported so `npm run expose -- --config
-// qa/self.mjs#loadSelfQaConfig` reads self-QA's .env.qa as self-QA does.
+// The loader runSelfQa uses, exported so `npm run expose` (which passes
+// --config qa/self.mjs#loadSelfQaConfig) reads self-QA's .env.qa as self-QA does.
 test('loadSelfQaConfig: self-QA\'s .env.qa, with self-QA\'s defaults: this repo and loopback panes', () => {
   const dir = mkdtempSync(join(tmpdir(), 'self-qa-env-'))
   const file = join(dir, '.env.qa')

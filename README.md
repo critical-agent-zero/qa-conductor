@@ -333,7 +333,7 @@ Every path also answers under a `/qa` prefix. In tailscale mode, a request to an
 ```sh
 npx qa-conductor-expose --check   # report drift on the conductor's tailscale serve mounts; change nothing
 npx qa-conductor-expose           # put any missing or wrong mount back now
-npm run expose -- --check --config qa/self.mjs#loadSelfQaConfig   # in this repo, for self-QA's .env.qa
+npm run expose -- --check        # in this repo: self-QA's .env.qa, through self-QA's loader
 ```
 
 `qa-conductor-expose` runs one [exposure](#exposure-optional) pass from a shell, through the built-in tailscale adapter. **It is a tool for operators and debugging.** The conductor's reconcile loop owns the mounts: it sets them once its servers listen and restores them every `QA_EXPOSURE_INTERVAL_MINUTES`. So a deploy only restarts the conductor, and runs neither this CLI nor `tailscale serve`. Use the CLI to see drift, or to restore a mount now instead of at the next pass.
@@ -344,7 +344,7 @@ qa-conductor-expose [--check] [--env FILE] [--config MODULE[#export]] [--tailsca
 
 - **One code path.** It runs `runExpose({ cfg, exposure, checkOnly, log })` from `./exposure`, which is the conductor loop's own pass: `mountsFor(cfg)` on the configured ports, then `reconcileExposure`, which runs `ensure` then `check` (`check` alone with `--check`). So the CLI and the loop can't disagree about what should be mounted. Like the loop, it never removes a handler. It targets `cfg.ports`, so a conductor on port `0` can only be mounted by its own loop.
 - **`--env FILE`** is the conductor's own env file: by default `$QA_ENV_FILE`, else `./.env.qa`. The CLI loads it with `loadConfig`, as the conductor does, so the file needs `GITHUB_QA_TOKEN` and `QA_REPO` even though exposure ignores them.
-- **`--config MODULE[#export]`** loads `cfg` with a platform's own loader instead, for an env file that leans on the platform's `defaults`. It imports `MODULE`, a file path from the working directory, and calls `export` (by default, the default export) with the env file's path. For example, `--config qa/self.mjs#loadSelfQaConfig` reads this repo's self-QA `.env.qa`, and a platform's container can pass its own loader the same way.
+- **`--config MODULE[#export]`** loads `cfg` with a platform's own loader instead, for an env file that leans on the platform's `defaults`. It imports `MODULE`, a file path from the working directory, and calls `export` (by default, the default export) with the env file's path. For example, `--config qa/self.mjs#loadSelfQaConfig` reads this repo's self-QA `.env.qa`, and a platform's container can pass its own loader the same way. In this repo, `npm run expose` passes self-QA's loader, since self-QA is the repo's only conductor; a `--config` after `--` overrides it, since the last one wins.
 - **`--tailscale BIN`** is the CLI to run: by default `QA_TAILSCALE_BIN` in the env file, else `tailscale` on `PATH`. On macOS, use the app's `/Applications/Tailscale.app/Contents/MacOS/Tailscale` when the one on `PATH` is older than the daemon. **`--socket PATH`** passes `--socket=PATH` before the subcommand, for a daemon whose socket is elsewhere, such as one mounted into a container.
 - **`--help`** or **`-h`** prints the usage and exits `0` before loading anything.
 
@@ -391,7 +391,7 @@ qa-conductor QAs its own PRs with its own built-in adapters (`qa/self.mjs`):
   - `QA_BASE_ORIGIN=https://<machine>.ts.net:8443` and `QA_PR_ORIGIN=https://<machine>.ts.net:10000` (self-QA defaults both to loopback, so set both);
   - `QA_ALLOWED_LOGINS=<your Tailscale login>`.
 
-  That layout is tailscale mode, so self-QA passes the conductor the built-in tailscale [Exposure](#exposure-optional) adapter. The conductor mounts the harness at `https://<machine>.ts.net:8444/qa/` and the panes at `:8443` and `:10000` with `tailscale serve`, and restores them every `QA_EXPOSURE_INTERVAL_MINUTES`. `QA_TAILSCALE_BIN` names the CLI (default `tailscale`; on macOS, use the app's `/Applications/Tailscale.app/Contents/MacOS/Tailscale`, since the one on `PATH` may be older than the daemon). To see drift from a shell, run `npm run expose -- --config qa/self.mjs#loadSelfQaConfig --check`: the loader reads `.env.qa` with self-QA's defaults, which the core `loadConfig` lacks (see [Expose CLI](#expose-cli)).
+  That layout is tailscale mode, so self-QA passes the conductor the built-in tailscale [Exposure](#exposure-optional) adapter. The conductor mounts the harness at `https://<machine>.ts.net:8444/qa/` and the panes at `:8443` and `:10000` with `tailscale serve`, and restores them every `QA_EXPOSURE_INTERVAL_MINUTES`. `QA_TAILSCALE_BIN` names the CLI (default `tailscale`; on macOS, use the app's `/Applications/Tailscale.app/Contents/MacOS/Tailscale`, since the one on `PATH` may be older than the daemon). To see drift from a shell, run `npm run expose -- --check`: the script passes `--config qa/self.mjs#loadSelfQaConfig`, which reads `.env.qa` with self-QA's defaults, such as `QA_REPO`, that the core `loadConfig` lacks (see [Expose CLI](#expose-cli)).
 
   From another device, the outer harness and each pane's demo harness render, but a demo's own panes are on this machine's loopback (`http://127.0.0.1:<port>`), so they render only in a browser on this machine.
 

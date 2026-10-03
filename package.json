@@ -44,6 +44,6 @@
     "test": "node --test test/*.test.mjs",
     "demo": "node demo/server.mjs",
     "qa": "node qa/self.mjs",
-    "expose": "node bin/qa-conductor-expose.mjs"
+    "expose": "node bin/qa-conductor-expose.mjs --config qa/self.mjs#loadSelfQaConfig"
   }
 }

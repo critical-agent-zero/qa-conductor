@@ -172,7 +172,7 @@ export function selfQaExposure(cfg, makeExec = makeExecFileFn) {
 
 // Self-QA's config: its .env.qa over this repo and loopback pane origins.
 // Exported for the expose CLI, which reads it as self-QA does with
-// `npm run expose -- --config qa/self.mjs#loadSelfQaConfig`.
+// `--config qa/self.mjs#loadSelfQaConfig`, as `npm run expose` passes it.
 export function loadSelfQaConfig(file) {
   return loadConfig(file, {
     defaults: {

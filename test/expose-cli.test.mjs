@@ -351,6 +351,12 @@ test('--config loads cfg from MODULE#export', async () => {
   assert.equal(readFileSync(path.join(w.dir, 'called-with'), 'utf8'), 'platform.env')
   assert.equal(outLines(named.stderr)[0], 'qa exposure: drift 8445/qa: want http://127.0.0.1:3100, have nothing')
 
+  // the last --config wins, so `npm run expose -- --config ...` overrides the
+  // script's own (there is no qa/self.mjs in this dir)
+  const later = await w.run(['--config', 'qa/self.mjs#loadSelfQaConfig', '--check', '--env', 'platform.env', '--config', './loader.mjs#loadMine'])
+  assert.equal(later.code, 1, later.stderr)
+  assert.equal(outLines(later.stderr)[0], 'qa exposure: drift 8445/qa: want http://127.0.0.1:3100, have nothing')
+
   // MODULE alone calls its default export, which may be async; an absolute path works too
   const fallback = await w.run(['--check', '--env', file, '--config', path.join(w.dir, 'loader.mjs')])
   assert.equal(fallback.code, 1, fallback.stderr)
@@ -362,11 +368,12 @@ test('--config loads cfg from MODULE#export', async () => {
     assert.equal(r.code, 2, spec)
     assert.ok(r.stderr.includes(USAGE_LINE), spec)
   }
-  assert.deepEqual(w.calls(), [STATUS, STATUS], 'only the two loads that worked called tailscale')
+  assert.deepEqual(w.calls(), [STATUS, STATUS, STATUS], 'only the three loads that worked called tailscale')
 })
 
-// Self-QA's .env.qa leaves QA_REPO and the pane origins to self-QA's defaults.
-test('--config qa/self.mjs#loadSelfQaConfig reads self-QA\'s .env.qa as npm run qa does', async () => {
+// Self-QA's .env.qa leaves QA_REPO and the pane origins to self-QA's defaults,
+// so `npm run expose` passes self-QA's loader.
+test('--config qa/self.mjs#loadSelfQaConfig, as npm run expose passes it, reads self-QA\'s .env.qa as npm run qa does', async () => {
   const w = world()
   const file = w.envFile([
     'GITHUB_QA_TOKEN=unused', 'QA_PUBLIC_HOST=h.ts.net', 'QA_BASE_ORIGIN=https://h.ts.net:8443', 'QA_PR_ORIGIN=https://h.ts.net:10000',
@@ -378,7 +385,14 @@ test('--config qa/self.mjs#loadSelfQaConfig reads self-QA\'s .env.qa as npm run 
   const self = await w.run(['--check', '--env', file, '--config', 'qa/self.mjs#loadSelfQaConfig'], { cwd: ROOT })
   assert.equal(self.code, 1, self.stderr)
   assert.deepEqual(outLines(self.stderr), MISSING)
-  assert.deepEqual(w.calls(), [STATUS])
+
+  // `npm run expose -- --check --env FILE`: the script's own argv, then these
+  const [node, bin, ...scriptArgs] = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).scripts.expose.split(' ')
+  assert.deepEqual([node, bin], ['node', 'bin/qa-conductor-expose.mjs'])
+  const script = await w.run([...scriptArgs, '--check', '--env', file], { cwd: ROOT })
+  assert.equal(script.code, 1, script.stderr)
+  assert.deepEqual(outLines(script.stderr), MISSING)
+  assert.deepEqual(w.calls(), [STATUS, STATUS])
 })
 
 test('--help and -h print the usage and exit 0 without loading a config or calling tailscale', async () => {

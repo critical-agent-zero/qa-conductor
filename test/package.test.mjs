@@ -209,7 +209,10 @@ test('the bin is the expose CLI, run by node from npx and by npm run expose', ()
   for (const target of Object.values(pkg.bin)) {
     assert.match(readFileSync(path.join(ROOT, target), 'utf8'), /^#!\/usr\/bin\/env node\n/, `${target} starts with #!/usr/bin/env node`)
   }
-  assert.equal(pkg.scripts.expose, 'node bin/qa-conductor-expose.mjs')
+  // In this repo it is self-QA's, the repo's only conductor: self-QA's .env.qa
+  // leaves QA_REPO to its loader, so the core loadConfig would refuse it. A
+  // later --config wins (test/expose-cli.test.mjs).
+  assert.equal(pkg.scripts.expose, 'node bin/qa-conductor-expose.mjs --config qa/self.mjs#loadSelfQaConfig')
 })
 
 test('npm pack --dry-run packs lib/, public/ and bin/, and no test/, demo/, qa/, docs/ or .github files', { timeout: 90_000 }, async () => {
