@@ -895,13 +895,15 @@ test('with an allowed identity, another page\'s writes, a foreign Host, another 
   } finally { c.stop() }
 })
 
+const EMPTY_LOGINS = "[qa] QA_ALLOWED_LOGINS is empty: every request will be refused; set cfg.allowedLogins, or exposure: 'none' if another front door authenticates"
+
 test('with no allowed logins every request is refused, and startup says so', async () => {
   for (const allowedLogins of [[], undefined, [' ']]) {
     const { c, errorLines } = makeWorld({ cfg: { ...GATED, allowedLogins } })
     try {
       const { harness, base, pr } = await allPorts(c)
       for (const port of [harness, base, pr]) assert.equal((await raw(port, { path: '/', headers: ALLOWED })).status, 403)
-      assert.ok(errorLines.includes('[qa] QA_ALLOWED_LOGINS is empty: every request will be refused'), errorLines.join('\n'))
+      assert.ok(errorLines.includes(EMPTY_LOGINS), errorLines.join('\n'))
     } finally { c.stop() }
   }
 })
@@ -1025,9 +1027,18 @@ test('startup says whether the gate is on', async () => {
   for (const [cfg, logged, errored] of [
     [GATED, '[qa] identity gate on: 1 allowed login', null],
     [{ ...GATED, allowedLogins: ['alice@github', 'bob@github', ''] }, '[qa] identity gate on: 2 allowed logins', null],
-    [{ ...GATED, allowedLogins: [] }, '[qa] identity gate on: 0 allowed logins', '[qa] QA_ALLOWED_LOGINS is empty: every request will be refused'],
+    [{ ...GATED, allowedLogins: [] }, '[qa] identity gate on: 0 allowed logins', EMPTY_LOGINS],
     [{}, '[qa] identity gate off (QA_EXPOSURE=none)', null],
     [{ exposure: undefined, publicHost: null, paneOrigins: LOOPBACK_PANES }, '[qa] identity gate off (QA_EXPOSURE=none)', null],
+    // a defaulted mode says why, a pane origin left unset at start included
+    [
+      { exposure: undefined, publicHost: null, paneOrigins: { pr: LOOPBACK_PANES.pr } },
+      '[qa] identity gate on (exposure defaults to tailscale because QA_BASE_ORIGIN (unset) is not loopback): 0 allowed logins', EMPTY_LOGINS,
+    ],
+    [
+      { exposure: undefined, allowedLogins: ['alice@github'] },
+      '[qa] identity gate on (exposure defaults to tailscale because QA_PUBLIC_HOST=h.ts.net is not loopback): 1 allowed login', null,
+    ],
   ]) {
     const { c, logLines, errorLines } = makeWorld({ cfg })
     try {
