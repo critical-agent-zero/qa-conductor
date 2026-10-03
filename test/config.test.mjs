@@ -86,6 +86,16 @@ test('required: a platform can re-require keys; token and repo stay required', (
   }
 })
 
+// A fine-grained GITHUB_QA_TOKEN cannot call the Packages API; a classic PAT
+// with read:packages in QA_GHCR_TOKEN takes the GHCR calls over.
+test('the GHCR token is QA_GHCR_TOKEN, falling back to GITHUB_QA_TOKEN', () => {
+  assert.equal(loadConfig(envFile(REQUIRED)).ghcrToken, 'tok')
+  assert.equal(loadConfig(envFile([...REQUIRED, 'QA_GHCR_TOKEN='])).ghcrToken, 'tok')
+  const c = loadConfig(envFile([...REQUIRED, 'QA_GHCR_TOKEN=ghcr-tok']))
+  assert.equal(c.ghcrToken, 'ghcr-tok')
+  assert.equal(c.githubToken, 'tok', 'the repo token is unchanged')
+})
+
 test('QA_BIND_HOST: the listen host defaults to loopback', () => {
   assert.equal(loadConfig(envFile(REQUIRED)).host, '127.0.0.1')
   assert.equal(loadConfig(envFile([...REQUIRED, 'QA_BIND_HOST=0.0.0.0'])).host, '0.0.0.0')
