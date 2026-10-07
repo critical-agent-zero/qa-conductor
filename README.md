@@ -110,7 +110,7 @@ The conductor's own defences in depth:
 
 ## The seams
 
-A boot runs these five seams in order: `ensureBuilt` → per pane (`provisionDatabase` → `seedPane` → `reserveServices`) → `derivePaneEnv` (+ `runMigrate`) → `launchServices` → `waitHealthy` → `establishSession`. A sixth, [Exposure](#exposure-optional), is optional and outside the boot: it publishes the conductor itself.
+A boot runs these five seams in order: `ensureBuilt` → per pane (`provisionDatabase` → `seedPane` → `reserveServices`) → `derivePaneEnv` (+ `runMigrate`) → `launchServices` → `waitHealthy` → `establishSession`. A sixth, [Exposure](#exposure-optional), is optional and outside the boot: it publishes the conductor itself. The shapes they pass each other are under [Types](#types).
 
 | Seam | Members | Owns |
 |---|---|---|
@@ -118,7 +118,7 @@ A boot runs these five seams in order: `ensureBuilt` → per pane (`provisionDat
 | **BuildConvention** | `migrationStrategy` (`'one-shot-image' \| 'on-boot' \| 'none'`), `ensureBuilt(pr, {signal})`, `resolvePrImages(pr)`, `resolveBaseImages()` → `{services: {name: ref}, migrate?, label?}`; optional `subscribeBuild(cb)` with `cb({runUrl?, runStatus?, message?})`, `describePrs(prs) → [{number, status: 'built'\|'building'\|'none'\|'blocked', runUrl, reason?}]` | What gets run for base and PR, whether it's ready, and whether it may run at all |
 | **Seed** | `databases`, `seedPane({paneRef, db, databases})` | Where each pane's data comes from and how it moves |
 | **EnvTransform** | `derivePaneEnv({prodEnv, pane}) → {service: env}` (pure) | Pointing a pane at its own DB and origin, and neutralizing side effects (email, payments, storage) |
-| **AuthBootstrap** | `requiresDb`, `establishSession({pane, operator, db?}) → {landingUrl, cookies?, replay?}`; optional `envContributions()` | Getting the reviewer logged in to each pane |
+| **AuthBootstrap** | `requiresDb`, `establishSession({pane, operator, db?}) → {landingUrl}`; optional `envContributions() → {service: env}` | Getting the reviewer logged in to each pane |
 
 The optional members degrade gracefully when absent:
 - With no `sweep`, nothing is cleaned up at startup.
@@ -126,6 +126,19 @@ The optional members degrade gracefully when absent:
 - With no `describePrs`, every PR shows as `none`.
 
 The one exception: a build that declares `one-shot-image` migrations with a Provisioner that can't `runMigrate` fails the boot with a clear error.
+
+### Types
+
+What the seams pass each other. Any member above may return a promise of its result.
+
+- **PaneRef**: `{ role, slug, publicOrigin }` during a boot. `role` is `'base'` or `'pr'`, `slug` is `qa-<pr>-<role>`, and `publicOrigin` is the pane's origin from `cfg.paneOrigins`. `teardown` and `logs` get only `{ role }`, since they also run outside a boot.
+- **ImageSet**: `{ services: { name: ref }, migrate?: { image }, label? }`, from `resolveBaseImages()` and `resolvePrImages(pr)`. A `ref` is whatever the Provisioner launches, such as an image name or a checkout directory.
+- **Reserved**: `{ name: { url, port } }`, from `reserveServices`: where each service will listen. **Only the primary service is proxied**, `app` when there is one, else the first: the pane proxy forwards to `127.0.0.1:<port>` of that service, so it must listen there. Any other service is the app's own business.
+- **Pane**: `{ ref, dsn, db, services, publicOrigin, env }`. `ref` is the PaneRef, `dsn` and `db` come from `provisionDatabase`, `services` is the Reserved map, and `env` is the pane's env. `derivePaneEnv` gets the pane before it has an `env`; `establishSession` gets it whole.
+- **PaneEnv**: `{ service: { KEY: value } }`, from `derivePaneEnv`. **EnvContributions**, the same shape from `auth.envContributions()`, is merged over it service by service. `runMigrate` and `launchServices` get the result as `env`.
+- **SessionResult**: `{ landingUrl }`, from `establishSession`: the URL the harness loads in the pane's frame. The core reads nothing else from it, so a session cookie must reach the pane's jar as a `Set-Cookie` the landing URL answers with (see below).
+- **BuildEvent**: `{ runUrl?, runStatus?, message? }`, what `subscribeBuild`'s callback gets.
+- **Readiness**: `{ number, status, runUrl, reason? }`, one per PR from `describePrs`, with `status` one of `'built'`, `'building'`, `'none'` and `'blocked'`.
 
 ### Contracts between the seams
 
@@ -138,12 +151,6 @@ The one exception: a build that declares `one-shot-image` migrations with a Prov
 - **Failure log tails.** When a boot fails at a pane stage (`cloning`, `migrating`, `starting`), the core calls `logs({paneRef: {role}, stage, lines: 40})` for the failing pane *before* tearing the panes down, and attaches the result to the error as `err.logTail` (with the pane's role as `err.failedRole`). An error that already carries a string `logTail` keeps it, so a BuildConvention can attach its own tail to an `ensuring-image` failure (for example, installer output). The harness shows the tail under the error.
 - **Landing flows stay on the pane origin (AuthBootstrap).** The harness loads each `landingUrl` as given; the bridge learns the harness origin from the proxy, not from the URL. A pane serves a navigation from another site only when its `Referer` is the harness origin, so a sign-in step on another site, such as an external identity provider's form, comes back with that site's `Referer` and is refused. Keep landing flows on the pane origin. Redirects within it are fine, whatever their `Referrer-Policy`: the proxy drops that header from a redirect that stays on the pane, so the next hop still carries the harness `Referer`.
 - **Sessions live in the jar (AuthBootstrap).** The pane app gets the cookies its own responses set this session, which the proxy keeps, and not the browser's. So the session must reach the jar in a `Set-Cookie`: have the `landingUrl`, or a redirect it makes, set it server-side. A session cookie the app's scripts write can't be kept apart for two panes on one hostname, `QA_FORWARD_CLIENT_COOKIES` or not. Cookies ignore ports, so both panes' pages write the same browser cookie, whichever pane signs in last overwrites it, and both proxies would pass that one value on: one pane's app would get the other pane's session (see [Security](#security)).
-
-**Built in:** `adapters/provisioner-docker` is a Provisioner that runs each pane as containers on the host's Docker daemon. It creates the pane postgres containers, one app container per pane, `0600` env files under `workDir`, registry login and a labelled-orphan sweep. The `docker`, `github` and `exec` modules are the effect wrappers it and the reference adapters use.
-
-**Effect wrappers:**
-- `github`: `listOpenPrs()` items are `{number, title, headSha, headRef, author, authorAssociation, headRepo, headOwner}`. `prInfo(num)` returns `{number, headSha, author, authorAssociation, isDraft, headRepo, headOwner}`, where `headRepo` (`owner/name`) and `headOwner` are `null` when the head repository was deleted. `authorPermission(login)` returns the login's `admin|write|read|none` permission on the repo and throws on a non-2xx response. `author_association` alone is no access check: `COLLABORATOR` includes read-only outside collaborators.
-- `exec`: `makeExecFileFn()` resolves `{stdout}` and rejects with an Error whose message is unchanged and which also carries `stdout`, `stderr` and the exit `code`.
 
 **Reference consumers:** this repository's self-QA ([`qa/self.mjs`](qa/self.mjs): `build-worktree` and `provisioner-process`), the demo's fake adapters ([`demo/fake-adapters.mjs`](demo/fake-adapters.mjs)), and agent-identity's [`packages/qa`](https://github.com/critical-labs/agent-identity/tree/main/packages/qa), a 0.2-era consumer that seeds each pane's DynamoDB Local from a redacted snapshot.
 
@@ -203,7 +210,25 @@ How it works:
 A Provisioner for local processes. It runs each pane's services, and optionally a per-pane database, as process groups on `127.0.0.1`, with a scrubbed env, a pidfile and a start-time-checked orphan sweep. Its launch contract is below.
 
 ```js
+import net from 'node:net'
+import os from 'node:os'
+import path from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { createProcessProvisioner } from '@critical-labs/qa-conductor/adapters/provisioner-process'
+
+const ddbDir = '/opt/dynamodb-local'   // where DynamoDBLocal.jar is unpacked
+
+// Resolves once something accepts connections on the port.
+async function waitForPort(port, { signal }) {
+  while (!signal.aborted) {
+    const open = await new Promise(resolve => {
+      const socket = net.connect(port, '127.0.0.1', () => { socket.end(); resolve(true) })
+      socket.on('error', () => resolve(false))
+    })
+    if (open) return
+    await sleep(250)
+  }
+}
 
 const provisioner = createProcessProvisioner({
   stateDir: path.join(os.homedir(), '.cache/qa-conductor/acme-widget'),  // holds pids.json
@@ -237,6 +262,87 @@ The other options are `healthTimeoutMs` (60000, per service), `host` (`127.0.0.1
 - There's no `runMigrate`: process consumers migrate on boot.
 
 **Security.** A PR's code runs as your user, on your machine. The trust gate is the only real boundary between a PR's code and the reviewer's machine: the BuildConvention must refuse to build a PR it doesn't trust. Env scrubbing and loopback binding are defence in depth. The Tailscale identity gate is no boundary against PR code either: a pane process can reach the conductor on loopback and send any `Tailscale-User-Login` it likes (see [Security](#security)).
+
+### Built in: `adapters/provisioner-docker` (Docker Provisioner)
+
+A Provisioner that runs each pane as two containers on the host's Docker daemon, a postgres one and an app one, on a network both panes share. It writes each pane's env to an owner-only file for `docker run --env-file`, logs in to the registry, runs one-shot migrations, and at startup removes whatever an earlier run left behind.
+
+```js
+import fs from 'node:fs'
+import { createDocker } from '@critical-labs/qa-conductor/docker'
+import { makeExecFileFn } from '@critical-labs/qa-conductor/exec'
+import { createDockerProvisioner } from '@critical-labs/qa-conductor/adapters/provisioner-docker'
+
+const provisioner = createDockerProvisioner({
+  docker: createDocker({ execFileFn: makeExecFileFn() }),
+  fsx: fs.promises,
+  workDir: '/var/lib/qa-conductor',
+  registry: { user: 'acme-bot', token: cfg.ghcrToken },
+})
+```
+
+| Option | Default | |
+|---|---|---|
+| `docker` | *(required)* | a `createDocker(...)` ([Effect wrappers](#effect-wrappers)) |
+| `fsx` | *(required)* | `{ writeFile, unlink }`, such as `fs.promises`: writes the env files, mode `0600`, and removes them at teardown |
+| `workDir` | *(required)* | the directory the env files go in, as `.env.qa-base` and `.env.qa-pr`. The `docker` CLI reads them by path, so it must see the same directory |
+| `network` | `'qa-session'` | the Docker network both panes' containers join |
+| `postgres` | `{ user: 'qa', password: 'qa', db: 'postgres' }` | the credentials and admin database in the `dsn` it returns: match `createDocker`'s `postgres` |
+| `hostPorts` | `{ base: 3111, pr: 3112 }` | the loopback host port each pane's app container is published on |
+| `registry` | `null` | `{ user, token }`: log in to `ghcr.io` before pulling, and again before each retry |
+
+For each pane:
+- `provisionDatabase` starts `qa-pg-<role>` on the network, waits until it answers twice in a row, creates each of the Seed's `databases`, and returns the `dsn` `postgresql://<user>:<password>@qa-pg-<role>:5432` and a `db` of `{ dsn, query(sql, { database }) }`, which runs `psql` in the container.
+- `runMigrate` runs `migrate.image` once on the network, with the pane's `app` env (else its first service's), and removes the container after.
+- `launchServices` pulls each image that's missing (three tries), then runs it as `qa-app-<role>`, with its port `3000` published on `127.0.0.1:<hostPorts[role]>`.
+- `waitHealthy` polls `http://127.0.0.1:<port>/api/health` until it answers `200`, for up to a minute.
+- `logs` tails the app container at `starting`, else the postgres one.
+- `teardown` removes both containers and their volumes, the network once no pane uses it, and the env file. `sweep` removes every container with `createDocker`'s `label`, and the network.
+
+Its limits:
+- **One service per pane.** Every service would run as `qa-app-<role>` with the same env file.
+- **Fixed names and ports.** The containers, the network and the host ports are the same on every run, so run one conductor per Docker host.
+- **The app's side:** listen on port `3000` in the container, and answer `GET /api/health` with `200`.
+- **The registry login is to `ghcr.io` only.**
+- **It ignores `signal`**, so a teardown waits for a Docker call in flight.
+
+### Effect wrappers
+
+**`github`.** The core calls only these, so anything that has them will do:
+- `listOpenPrs()` → `[{ number, title, headSha, headRef, author, authorAssociation, headRepo, headOwner }]`, for the picker;
+- `prInfo(num)` → `{ number, headSha, author, authorAssociation, isDraft, headRepo, headOwner }`, or without it `prHead(num)` → `headSha`, for `/api/build-status`;
+- `postComment(num, body)` → the comment's URL, and `setQaLabel(num, label)`, for the verdict.
+
+`adapters/build-worktree` also needs `prInfo` and `authorPermission(login)`. `createGithub(options)` makes one on GitHub's REST API:
+
+| Option | Default | |
+|---|---|---|
+| `token` | *(required)* | every call but the package listing ([Tokens](#tokens)) |
+| `repo` | *(required)* | `owner/name` |
+| `qaLabels` | `['qa-approved', 'qa-changes-requested']` | the accept and reject labels, `[cfg.verdictLabels.accept, cfg.verdictLabels.reject]`: `setQaLabel` adds one and removes the other |
+| `packagesToken` | `token` | the GHCR package version listing only (`cfg.ghcrToken`) |
+| `packageName` | `null` | the container package the GHCR helpers read; they throw without it |
+| `rcTagPattern` | `/-rc\.\d+$/` | which tags `latestRcTag()` counts as release candidates |
+| `previewWorkflow` | `'pr-preview.yml'` | the workflow `dispatchPreviewBuild(num)` runs, with the input `pr`, and `findPreviewRun(num)` reads |
+| `previewRef` | `'main'` | the ref that workflow is dispatched on |
+| `fetchFn` | `fetch` | |
+
+- `listOpenPrs()` returns at most the 50 most recently opened PRs: it reads one page.
+- `headRepo` (`owner/name`) and `headOwner` are `null` when the head repository was deleted.
+- `authorPermission(login)` returns the login's `admin`, `write`, `read` or `none` permission on the repo, and throws on a non-2xx response. `author_association` alone is no access check: `COLLABORATOR` includes read-only outside collaborators.
+- The GHCR and preview-build helpers are for a BuildConvention that runs CI-built images: `ghcrTagExists(tag)`, `latestRcTag()`, `listPrImageTags()`, `awaitPreviewImage(num, sha, { timeoutMs, pollMs, signal })`, which waits for the tag `pr-<num>-<the sha's first 12 characters>`, `dispatchPreviewBuild(num)` and `findPreviewRun(num)`. They read a package that the token's own user owns, not an organization's.
+
+**`docker`.** `createDocker({ execFileFn, label, postgres })` runs the `docker` CLI for the Docker Provisioner, and for a Seed that copies databases between containers:
+
+| Option | Default | |
+|---|---|---|
+| `execFileFn` | *(required)* | `makeExecFileFn()` from `./exec` |
+| `label` | `'qa-conductor-session'` | put on every container and network it creates; `sweepQaContainers()` removes whatever carries it |
+| `postgres` | `{ image: 'postgres:16', user: 'qa', password: 'qa', db: 'postgres' }` | the pane database containers; keys you leave out keep these values |
+
+Its members are `run(argv)`, `login(user, token)` (to `ghcr.io`, with the token in the environment, never in argv), `imagePresent`, `ensureImage(image, { retries, relogin })`, `runPg`, `waitHealthyPg`, `createDatabase`, `pipeDump(from, to, db)` and `cloneDb(from, to, db)` (a host-side `pg_dump | psql` between two containers), `runMigrate`, `runApp`, `waitHealthyApp`, `psql`, `rmForce`, `createNetwork`, `rmNetwork`, `sweepQaContainers`, `inspectImageOf` and `logsTail`. `login`, `createDatabase`, `pipeDump`, `cloneDb` and `logsTail` throw on a name that isn't letters, digits, `_` and `-`.
+
+**`exec`.** `makeExecFileFn()` resolves `{stdout}` and rejects with an Error whose message is unchanged and which also carries `stdout`, `stderr` and the exit `code`.
 
 ### Exposure (optional)
 
@@ -280,7 +386,7 @@ The contract:
   - `path` is `/qa` for the harness and `/` for each pane.
   - `target` is `http://<cfg.host>:<listen port>`, with brackets for IPv6.
 - **`Drift = { mount, actual }`**: `actual` is the proxy target the front door serves at that mount over https now, or `null` when there is none: nothing at that path, no https on the port, or a handler that isn't a proxy. A mount also drifts once for each other handler that takes some of its requests, and `actual` then names that handler, as `<path> -> <target>` or `<path> (not a proxy)`.
-- **`ensure(mounts) → Promise<{ added, ok }>`** creates the missing or mismatched mounts, and only those. **`check(mounts) → Promise<{ ok, drift }>`** changes nothing. Either rejects on failure. An `ensure` that fails part way may list the mounts it did write on its error, as `added`.
+- **`ensure(mounts) → Promise<{ added: Mount[], ok: Mount[] }>`** creates the missing or mismatched mounts, and only those: `added` lists the mounts it wrote, `ok` the ones already in place. **`check(mounts) → Promise<{ ok: boolean, drift: Drift[] }>`** changes nothing. Either rejects on failure. An `ensure` that fails part way may list the mounts it did write on its error, as `added`.
 - **An adapter owns exactly the `(port, path)` pairs it is given**, and never touches another handler.
 
 `mountsFor(cfg, { ports = cfg.ports })` derives the mounts from the origins viewers open, so the URL a viewer sees and the mount behind it can't disagree. Pass the bound ports when `cfg.ports` holds `0`. It throws on a layout no front door can publish:
