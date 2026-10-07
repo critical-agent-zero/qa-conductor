@@ -23,6 +23,36 @@ test('parseEnvFile: KEY=value lines, comments/blanks ignored, values may contain
   assert.deepEqual(parseEnvFile(envFile(['# c', '', '   ', 'A=1', 'B=x=y=='])), { A: '1', B: 'x=y==' })
 })
 
+// A shell or dotenv habit must not end up inside a value: a quoted token or
+// login would never match, and the error would show up far from the file.
+test('parseEnvFile: a value in a matching pair of quotes loses them, and nothing inside is unescaped', () => {
+  assert.deepEqual(parseEnvFile(envFile([
+    'A="x y"', "B='x'", 'C="a # b"', 'D=""', "E=''", 'F="a"b"', 'G="\\n $PATH"',
+    'H="unbalanced', "I='mixed\"", 'J=x"y"', 'K="', '  L = " padded "  ',
+  ])), {
+    A: 'x y', B: 'x', C: 'a # b', D: '', E: '', F: 'a"b', G: '\\n $PATH',
+    H: '"unbalanced', I: "'mixed\"", J: 'x"y"', K: '"', L: ' padded ',
+  })
+  // so a quoted loopback bind is loopback, and a quoted login matches
+  const c = loadConfig(envFile([...withoutLogins(REQUIRED), 'QA_BIND_HOST="127.0.0.1"', "QA_ALLOWED_LOGINS='alice@github'"]))
+  assert.equal(c.host, '127.0.0.1')
+  assert.deepEqual(c.allowedLogins, ['alice@github'])
+})
+
+test('parseEnvFile: an inline comment is refused, naming the file, line and key but never the value', () => {
+  for (const line of ['GITHUB_QA_TOKEN=s3cret # mine', 'GITHUB_QA_TOKEN=s3cret\t# mine', 'GITHUB_QA_TOKEN= # s3cret', 'GITHUB_QA_TOKEN="s3cret" # mine']) {
+    const file = envFile(['# the token', line])
+    assert.throws(() => parseEnvFile(file), err => {
+      assert.equal(err.message, `${file}:2: GITHUB_QA_TOKEN has an inline comment, and .env.qa takes comments only on lines of their own: move it, or quote the value if the # is part of it`)
+      assert.doesNotMatch(err.message, /s3cret|mine/)
+      return true
+    }, JSON.stringify(line))
+    assert.throws(() => loadConfig(file), /:2: GITHUB_QA_TOKEN has an inline comment/)
+  }
+  // A # with no space before it is part of the value, as it always was.
+  assert.deepEqual(parseEnvFile(envFile(['A=x#y', 'B=#x'])), { A: 'x#y', B: '#x' })
+})
+
 test('generic defaults: ports, pane origins from public host, verdict labels', () => {
   const c = loadConfig(envFile(REQUIRED))
   assert.equal(c.githubToken, 'tok')
@@ -127,7 +157,7 @@ test('QA_FORWARD_CLIENT_COOKIES: comma-separated cookie names, trimmed, empties 
   assert.deepEqual(loadConfig(envFile([...REQUIRED, 'QA_FORWARD_CLIENT_COOKIES='])).forwardClientCookies, [])
   const c = loadConfig(envFile([...REQUIRED, 'QA_FORWARD_CLIENT_COOKIES= csrftoken ,, __Host-locale,csrftoken']))
   assert.deepEqual(c.forwardClientCookies, ['csrftoken', '__Host-locale'], 'listed once each')
-  for (const [value, shown] of [['*', '*'], ['csrftoken, *', '*'], ['sess*', 'sess*'], ['a b', 'a b'], ['a=b', 'a=b'], ['a;b', 'a;b'], ['"sid"', '"sid"'], ['séance', 'séance']]) {
+  for (const [value, shown] of [['*', '*'], ['csrftoken, *', '*'], ['sess*', 'sess*'], ['a b', 'a b'], ['a=b', 'a=b'], ['a;b', 'a;b'], ['locale, "sid"', '"sid"'], ['séance', 'séance']]) {
     const file = envFile([...REQUIRED, `QA_FORWARD_CLIENT_COOKIES=${value}`])
     assert.throws(() => loadConfig(file), err => {
       assert.equal(err.message, `QA_FORWARD_CLIENT_COOKIES must be comma-separated cookie names (RFC 6265 tokens; no wildcards: list each name), got ${JSON.stringify(shown)} in ${file}`)
@@ -342,7 +372,7 @@ test('defaultExposure: a missing or unparseable pane origin counts as non-loopba
 test('tailscale mode refuses a QA_BIND_HOST that is not loopback; none mode accepts 0.0.0.0', () => {
   // Off loopback, anyone who reaches the port can send their own
   // Tailscale-User-Login.
-  for (const host of ['0.0.0.0', '::', '*', '100.64.0.1', '"127.0.0.1"', '127.0.0.1.nip.io', '::ffff:127.0.0.1', 'example.com']) {
+  for (const host of ['0.0.0.0', '::', '*', '100.64.0.1', '"127.0.0.1', '127.0.0.1.nip.io', '::ffff:127.0.0.1', 'example.com']) {
     for (const [extra, why] of [
       [[], 'QA_EXPOSURE defaults to tailscale because QA_PUBLIC_HOST=w.ts.net is not loopback'],
       [['QA_EXPOSURE=tailscale'], 'QA_EXPOSURE=tailscale is set'],
