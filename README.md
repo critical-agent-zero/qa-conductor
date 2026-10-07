@@ -4,7 +4,7 @@ A side-by-side PR-QA harness. For a pull request it boots two copies of your app
 
 The conductor owns the choreography: session state, cancellation, the harness UI and API, the pane proxies and the verdict. Everything about *your* app and infrastructure comes from five adapters you supply, plus an optional sixth, [Exposure](#exposure-optional), through which the conductor publishes itself on a front door such as `tailscale serve`.
 
-> **Status: 0.x.** The interface may still change, and a 0.x minor version may break it: read the migration notes in [CHANGELOG.md](CHANGELOG.md) before upgrading.
+> **Status: 0.x.** The interface may still change: a 0.x minor version may break it, and so may a patch release when a fix needs to. Read the migration notes in [CHANGELOG.md](CHANGELOG.md) before upgrading, and to choose when that happens, install with `--save-exact`: the `^` range npm saves by default takes patch releases.
 
 ## Contents
 
