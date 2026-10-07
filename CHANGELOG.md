@@ -1,8 +1,12 @@
 # Changelog
 
-What changed in each release, newest first. A 0.x minor version may break the interface, and says how to migrate when it does.
+What changed in each release, newest first. A 0.x minor version may break the interface, and so may a patch release when a fix needs to. A release that breaks it says how to migrate.
 
 ## [Unreleased]
+
+## [0.3.1] — 2026-10-07
+
+Cookie isolation for the panes, a stricter `.env.qa` parser, seams that may be async, and the documentation a public package needs: a README to start from, `CONTRIBUTING.md` and `SECURITY.md`. It is a patch release, but its cookie and `.env.qa` fixes break consumers that relied on what 0.3.0 did: read [Migrating from 0.3.0](#migrating-from-030) before upgrading.
 
 ### Security
 
@@ -17,20 +21,45 @@ What changed in each release, newest first. A 0.x minor version may break the in
 
 - **Any seam method may be async.** The core spread the results of `derivePaneEnv` and `auth.envContributions` without awaiting them, so an async one left both panes without its env: no DSN or origin, and none of the EnvTransform's side-effect neutralisation, with nothing to say why. Both are now awaited, and so is `subscribeBuild`, whose rejection went unhandled. A Provisioner `teardown` that returned no promise, or threw before returning one, ended `teardownSession` at the base pane and left the PR pane up: now the PR pane is torn down whatever the base pane's `teardown` does.
 
-### Known limits
-
-- **The panes' pages share the browser's cookies with every app on their hostname.** The proxies no longer send those cookies to the pane apps, but a pane's scripts (PR code) still run on that hostname. They can read its cookies that aren't `HttpOnly`, and set cookies the browser then sends to every app on it, including one named in `QA_FORWARD_CLIENT_COOKIES`, which the other pane's app then gets. They can also send those apps requests that carry their cookies, `HttpOnly` and `SameSite=Strict` ones included, because every port of the hostname, and every host in a tailnet, is same-site: PR code can act on the reviewer's session in another app on that hostname without reading it. Serve the panes on a hostname no other app uses. That stops the cookie sharing, not those requests, so another app the reviewer is signed in to must not rely on `SameSite` alone against the panes.
-
 ### Documentation
 
 - **The published text describes the general case.** The README, the code comments and the expose CLI's help named the app the conductor was first built for, its deployment and its issue numbers. A Provisioner "for docker-sibling deployments" is now one that runs each pane as containers on the host's Docker daemon, and the README's reference consumers are public: self-QA (`qa/self.mjs`), the demo's fake adapters and agent-identity's `packages/qa`. The design and plan notes for 0.2 and 0.3 are gone from `main`; they remain at the `v0.3.0` tag.
 - **A README a newcomer can start from.** It opens with a table of contents, **Try it** (clone, then `npm run demo`), **Requirements** (Node 22, Linux or macOS, the tools each built-in runs, and no TypeScript declarations yet) and **Quickstart: QA your own app**, a whole conductor in one script, cut down from self-QA. It now also documents `startConductor`'s options, the seams' types, the Docker Provisioner's, `createGithub`'s and `createDocker`'s options and the `github` members the core calls, the env file's format with two sample files, the token's permissions, each key's `cfg` field and the fields a code-built `cfg` must set, the harness's controls, and the known limits. AuthBootstrap's result is documented as `{ landingUrl }`: the `cookies` and `replay` it used to list were never read. `test/docs.test.mjs` now also checks the examples' imports, loads the sample files, and follows every relative link and anchor in the README, the CHANGELOG, `CONTRIBUTING.md` and `SECURITY.md`.
 - **Where the identity gate holds.** The README said container panes can't reach the host's loopback, which holds only on native Linux Docker: Docker Desktop (through `host.docker.internal`) and some rootless runtimes forward to it, so there a container pane can send any `Tailscale-User-Login` too. It now also says the gate works only behind `tailscale serve --https`: never behind Funnel, `--tcp` or `--tls-terminated-tcp`, and never with `tailscale serve` in front of a conductor in none mode.
 - **The CHANGELOG** dates every release, links each one to its changes on GitHub, and gains an entry for 0.1.0.
+- **A patch release may break the interface too, when a fix needs to.** The README's status note and the CHANGELOG's opening said only a 0.x minor version might, but the cookie and `.env.qa` fixes above break consumers that relied on the old behaviour, and they ship in a patch release. Both now say so, and the README suggests `npm install --save-exact`, since the `^` range npm saves by default takes patch releases.
 - **The npm page.** `package.json` gains `keywords`, `"author": "Critical Labs"`, and an explicit `homepage` and `bugs`, as agent-identity has, and its `description` is down to one line a search result shows whole.
-- **`CONTRIBUTING.md`** takes the README's sections on developing, QA-ing this repository's own pull requests and releasing, and adds the tests that guard the repository, the commit style and signed commits. The README links to it.
+- **`CONTRIBUTING.md`** takes the README's sections on developing, QA-ing this repository's own pull requests and releasing, and adds the tests that guard the repository, the commit style and signed commits. The README links to it. Its release steps also cover the release's opening lines and migration list, a check that the packed tarball installs and loads, and a signed tag.
 - **`SECURITY.md`** says how to report a vulnerability privately, through GitHub's private vulnerability reporting or, where the repository shows no button for it, an issue that asks for a private advisory and says nothing more. It also says which versions get fixes (the latest 0.x) and what is in scope.
 - **A hygiene test keeps private details out of the repository.** `test/hygiene.test.mjs` fails on any tracked file that names a tailnet other than the placeholder `tail1234.ts.net`, a tailnet address (`100.64.0.0/10`) other than `100.64.0.1`, an absolute path into a home directory, or, outside this CHANGELOG, the app the conductor was first built for. Three fixtures named a real tailnet and one a real device's tailnet address: they now use the placeholders.
+
+### Migrating from 0.3.0
+
+1. **The pane apps no longer get the browser's cookies.** A pane app gets only its jar's cookies, the ones its own responses set this session, and no `Cookie` header at all while the jar is empty.
+   - An app that reads a cookie its own scripts set, such as a locale, gets it only when `QA_FORWARD_CLIENT_COOKIES`, a comma-separated list of names, names it. A code-built `cfg` sets `forwardClientCookies` to an array of names, and so does a platform that calls `createPaneProxy` itself (or `false`, the default). On one hostname both pane apps get the browser's one value of each, so name only a cookie both panes may share, never a session.
+   - Each name must be an RFC 6265 token: `*` or any other wildcard, or a name with a separator in it, such as a space, `,`, `;`, `=` or a double quote, throws in `loadConfig`, `startConductor` and `createPaneProxy`. A single quote is a token character, so quote the whole list or nothing, never each name: `QA_FORWARD_CLIENT_COOKIES='a','b'` loads without an error and names `a'` and `'b`. The last two also throw on `true`, a string, or anything else but an array, `false`, `null` or unset.
+   - A named cookie whose value isn't an RFC 6265 cookie-value, such as one with a space, a comma, a backslash or a stray double quote, isn't passed. The jar's cookies come first, and the jar's value wins on a name both have.
+   - A session cookie the app's scripts write no longer reaches the app: have the AuthBootstrap's `landingUrl`, or a redirect it makes, set it in a `Set-Cookie`.
+2. **Each session starts with empty jars.**
+   - The conductor gives both panes fresh jars when a session is torn down, when the next one starts booting and when it is ready, the same PR opened again included. So a cookie an earlier session's app set, such as one that skips a first-run screen, doesn't reach the next session's app: the AuthBootstrap's `landingUrl` must set whatever each session needs.
+   - A boot no longer leaves the previous session's apps behind the panes. From the start of a boot until it is ready, both panes answer `503`, as they always did before a first boot. The built-in Provisioners' `waitHealthy` polls each service's own port, not its pane, so it is unaffected.
+   - A platform that calls `createPaneProxy` itself still gets one jar for the proxy's life: call the handler's new `clearJar()` between sessions.
+3. **`.env.qa` values lose their quotes, and an inline comment is refused.** This is `parseEnvFile`, so `loadConfig`, the expose CLI and any platform loader that calls it.
+   - A value in a matching pair of double or single quotes loses them, with nothing inside unescaped or expanded: `GITHUB_QA_TOKEN="<token>"` now sends the token without them. A value that really starts and ends with the same quote needs another pair of quotes around it.
+   - An unquoted value with a `#` after whitespace (`KEY=value # note`), or a `#` after a quoted value's closing quote (`KEY="value" # note`), throws, naming the file, the line and the key: move the comment to a line of its own, or quote the value if the `#` is part of it. A `#` with no whitespace before it (`a#b`) is still part of the value. The expose CLI exits `2` on such a file.
+   - A platform that checks its own keys' values, from `cfg.env` or its own `parseEnvFile` call, now gets this error first for a value with a comment after it: update any test that expected its own.
+4. **AuthBootstrap's result is `{ landingUrl }`.** 0.3.0's README listed `cookies?` and `replay?` beside it, but the core never read them, so nothing changes at runtime: drop them from an adapter, and set a session as note 1 says.
+5. **Every seam method is awaited.**
+   - An async `derivePaneEnv` or `auth.envContributions` now takes effect. 0.3.0 dropped its result, so the panes got none of its env, side-effect neutralisation included; now they get what it returns.
+   - `subscribeBuild` is awaited before `ensureBuilt`. One that rejects now fails the boot at its first step, where 0.3.0 left the rejection unhandled, which by default ends the Node process; one that never settles holds the boot there.
+   - `teardownSession` tears the PR pane down whatever the base pane's `teardown` does. 0.3.0 stopped at the base pane when its `teardown` threw synchronously or returned no promise.
+6. **Additive.** No export is gone or renamed.
+   - Config: `QA_FORWARD_CLIENT_COOKIES` (`cfg.forwardClientCookies`).
+   - `createPaneProxy`: the `forwardClientCookies` option, and the handler's `clearJar()`.
+
+### Known limits
+
+- **The panes' pages share the browser's cookies with every app on their hostname.** The proxies no longer send those cookies to the pane apps, but a pane's scripts (PR code) still run on that hostname. They can read its cookies that aren't `HttpOnly`, and set cookies the browser then sends to every app on it, including one named in `QA_FORWARD_CLIENT_COOKIES`, which the other pane's app then gets. They can also send those apps requests that carry their cookies, `HttpOnly` and `SameSite=Strict` ones included, because every port of the hostname, and every host in a tailnet, is same-site: PR code can act on the reviewer's session in another app on that hostname without reading it. Serve the panes on a hostname no other app uses. That stops the cookie sharing, not those requests, so another app the reviewer is signed in to must not rely on `SameSite` alone against the panes.
 
 ## [0.3.0] — 2026-10-03
 
@@ -130,7 +159,8 @@ The first standalone release, extracted from homefree's platform code. It instal
 - **`loadConfig`** reads `.env.qa` into the settings the core needs, with a platform's own `defaults`. It has no app defaults, and the verdict labels are configurable.
 - **Built in:** a Docker Provisioner (`adapters/provisioner-docker`): a postgres container and an app container per pane, `0600` env files, registry login and a sweep of labelled orphans. And the effect wrappers for it: `docker`, `github` and `exec`.
 
-[Unreleased]: https://github.com/critical-labs/qa-conductor/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/critical-labs/qa-conductor/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/critical-labs/qa-conductor/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/critical-labs/qa-conductor/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/critical-labs/qa-conductor/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/critical-labs/qa-conductor/compare/v0.1.0...v0.2.0

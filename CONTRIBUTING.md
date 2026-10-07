@@ -18,7 +18,7 @@ The suite runs on `node:test` with injected effects, so it needs no Docker, netw
 
 Every change comes with tests, written first: a failing test, then the change that makes it pass. A few tests guard the repository itself, and fail on purpose when a change forgets something:
 - `test/docs.test.mjs` keeps the README in step with the code: every entry point and every name it exports, every env file key the published code reads, every in-page link, the imports in its examples and its sample `.env.qa` files;
-- `test/package.test.mjs` pins what the npm tarball carries, the CHANGELOG's release headings and links, and the publish workflow;
+- `test/package.test.mjs` pins what the npm tarball carries, the CHANGELOG's release headings and links, and the publish workflow, and runs the tarball check in [Releasing](#releasing);
 - `test/hygiene.test.mjs` refuses a real tailnet, a tailnet address, a path into a home directory, or the name of the private app the conductor was first built for. Fixtures use `tail1234.ts.net`, `100.64.0.1` and `/fake-home/...`.
 
 ## Commits and pull requests
@@ -61,9 +61,27 @@ The token reads PRs and comments and labels on this repository; the README's [To
 
 ## Releasing
 
-1. Bump `version` in `package.json`, turn the CHANGELOG's `## [Unreleased]` heading into `## [X.Y.Z] — YYYY-MM-DD` with its compare link at the end of the file, add a new, empty `## [Unreleased]` heading above it and point the `[Unreleased]` link at the new tag (`compare/vX.Y.Z...HEAD`), and move the git-tag example under the README's [Install](README.md#install) to its tag. `test/package.test.mjs` fails until all of them agree, and on an `[Unreleased]` link with no heading of that name.
-2. Once that is on `main`, tag it `vX.Y.Z` and push the tag.
-3. The [publish workflow](.github/workflows/publish.yml) refuses a tag that isn't `v` plus the `package.json` version. Then it runs the tests and `npm pack --dry-run`, and stages the version on npm with provenance (`npm stage publish`).
-4. A maintainer approves the staged version on npmjs.com. Only then does it go live.
+1. Bump `version` in `package.json` (there is no lockfile), turn the CHANGELOG's `## [Unreleased]` heading into `## [X.Y.Z] — YYYY-MM-DD` with its compare link (`compare/v<previous>...vX.Y.Z`) at the end of the file, add a new, empty `## [Unreleased]` heading above it and point the `[Unreleased]` link at the new tag (`compare/vX.Y.Z...HEAD`), and move the git-tag example under the README's [Install](README.md#install) to its tag. `test/package.test.mjs` fails until all of them agree, and on an `[Unreleased]` link with no heading of that name.
+2. Open the release's section with a few lines on what it brings. If it can break a consumer, or changes what one sees, say so there, and after its changes add a `### Migrating from <previous>` list those lines link to: one numbered item per change, with what to do about it. Build the list from what ships, not from the CHANGELOG's lines alone: `git log v<previous>..main`, and `git diff v<previous>..main -- bin lib public package.json`.
+3. Check the tarball itself, since the tests import the package from the checkout. `npm pack --dry-run` lists what it holds. Then run this block from the checkout: it packs the tarball into a fresh private directory, installs it in an empty project, loads every entry point and runs the bin, and stops at the first step that fails.
+   ```sh
+   (
+     set -e
+     dest="$(mktemp -d)"
+     npm pack --pack-destination "$dest"
+     consumer="$(mktemp -d)"
+     cd "$consumer"
+     npm init -y > /dev/null
+     npm install --offline "$dest"/critical-labs-qa-conductor-*.tgz
+     node -e 'const { exports } = require("@critical-labs/qa-conductor/package.json")
+       Promise.all(Object.keys(exports).filter(key => key !== "./package.json").map(key => import(`@critical-labs/qa-conductor${key.slice(1)}`)))
+         .then(() => console.log("every entry point loads"))'
+     ./node_modules/.bin/qa-conductor-expose --help
+   )
+   ```
+   It runs the bin from `node_modules/.bin`, never through `npx`. If the tarball lacked the bin, `npx` would look the name up on the registry, where anyone can claim it, and run what it found as you, without asking when stdin isn't a terminal. A fixed path in the shared `/tmp` is no safer: another local user could put a tarball there first. `test/package.test.mjs` runs this block too.
+4. Once the release pull request is merged, tag `main`'s merge commit, as every earlier tag is, with a signed, annotated tag. Run `git fetch origin` and check that `git log -1 origin/main` is that merge, then `git tag -s vX.Y.Z origin/main -m "qa-conductor X.Y.Z: <what it brings>"` and `git push origin vX.Y.Z`. Name `origin/main`: without it the tag goes on whatever is checked out, such as the release branch's own commit, which differs from `main` whenever `main` merged anything else meanwhile, and the workflow stages the tagged tree.
+5. The [publish workflow](.github/workflows/publish.yml) refuses a tag that isn't `v` plus the `package.json` version. Then it runs the tests and `npm pack --dry-run`, and stages the version on npm with provenance (`npm stage publish`).
+6. A maintainer approves the staged version on npmjs.com. Only then does it go live.
 
 Nothing publishes directly: the workflow's npm token can only stage, and only the stage step gets it. `test/package.test.mjs` pins the workflow's trigger and steps. It fails on any npm or npx command other than the four the workflow runs (npm expands abbreviations such as `npm pub`), on a gate that could be skipped or allowed to fail, and on the token anywhere but the stage step. It reads the file as text, so it catches mistakes, not every way a shell can spell a command: the stage-only token is what refuses a plain publish.

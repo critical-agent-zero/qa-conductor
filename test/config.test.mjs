@@ -196,6 +196,17 @@ test('QA_FORWARD_CLIENT_COOKIES: comma-separated cookie names, trimmed, empties 
   }
 })
 
+// What the CHANGELOG's migration note warns of: a single quote is a token
+// character, so no error catches a list whose names are quoted one by one.
+test('QA_FORWARD_CLIENT_COOKIES: a single quote is part of a name, so quoting each name keeps its quotes; quoting the whole list drops them', () => {
+  const names = value => loadConfig(envFile([...REQUIRED, `QA_FORWARD_CLIENT_COOKIES=${value}`])).forwardClientCookies
+  assert.deepEqual(names(`it's`), [`it's`])
+  assert.deepEqual(names(`'a','b'`), [`a'`, `'b`])
+  assert.deepEqual(names(`'a,b'`), ['a', 'b'])
+  assert.deepEqual(names(`"a,b"`), ['a', 'b'])
+  assert.throws(() => names(`"a","b"`), /^Error: QA_FORWARD_CLIENT_COOKIES must be comma-separated cookie names .*, got "a\\""/)
+})
+
 // --- 0.3.0: the harness origin --------------------------------------------------
 
 const NO_HOST = REQUIRED.filter(l => !l.startsWith('QA_PUBLIC_HOST='))

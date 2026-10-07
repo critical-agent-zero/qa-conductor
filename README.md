@@ -4,7 +4,7 @@ A side-by-side PR-QA harness. For a pull request it boots two copies of your app
 
 The conductor owns the choreography: session state, cancellation, the harness UI and API, the pane proxies and the verdict. Everything about *your* app and infrastructure comes from five adapters you supply, plus an optional sixth, [Exposure](#exposure-optional), through which the conductor publishes itself on a front door such as `tailscale serve`.
 
-> **Status: 0.x.** The interface may still change, and a 0.x minor version may break it: read the migration notes in [CHANGELOG.md](CHANGELOG.md) before upgrading.
+> **Status: 0.x.** The interface may still change: a 0.x minor version may break it, and so may a patch release when a fix needs to. Read the migration notes in [CHANGELOG.md](CHANGELOG.md) before upgrading, and to choose when that happens, install with `--save-exact`: the `^` range npm saves by default takes patch releases.
 
 ## Contents
 
@@ -46,7 +46,7 @@ The demo runs the real conductor against fixture PRs and fake adapters, so it ne
 npm install @critical-labs/qa-conductor
 ```
 
-To pin a git tag instead: `npm install github:critical-labs/qa-conductor#v0.3.0`.
+To pin a git tag instead: `npm install github:critical-labs/qa-conductor#v0.3.1`.
 
 ## Quickstart: QA your own app
 
@@ -607,7 +607,7 @@ Some built-ins need more than this token:
 | `QA_HARNESS_ORIGIN` | `harnessOrigin` | `https://<QA_PUBLIC_HOST>:8444`, else `http://<QA_BIND_HOST>:<QA_HARNESS_PORT>` on a loopback bind | the origin viewers open the harness at (any path dropped); the page is under `/qa/`. Required on a non-loopback bind with no public host. On port `0` the conductor derives it from the bound port. Not an IPv6 literal: on a `::1` bind, set `http://localhost:<port>` |
 | `QA_BASE_ORIGIN` / `QA_PR_ORIGIN` | `paneOrigins.base` / `paneOrigins.pr` | `https://<QA_PUBLIC_HOST>:8443` / `https://<QA_PUBLIC_HOST>:10000` | the origins viewers reach the panes at |
 | `QA_FRAME_ANCESTORS` | `frameAncestors` | *(none)* | extra comma-separated origins allowed to frame the panes, for a harness nested in a pane (self-QA's inner demos). CSP only: they pass no `Referer` check, and the bridge never talks to them |
-| `QA_FORWARD_CLIENT_COOKIES` | `forwardClientCookies` | *(none)* | comma-separated names of the browser's own cookies the pane proxies pass to the pane apps, beside each pane's jar, whose value wins on a name both have. Unset, the apps get only the jar's cookies (see [Security](#security)). Each must be a cookie name (an RFC 6265 token); `*` and other wildcards throw. Any page on the panes' hostname can set these cookies, the other pane's scripts included, so a value that isn't an RFC 6265 cookie-value (one with a space, a comma, a backslash or a stray double quote) isn't passed. On one hostname both pane apps get the browser's one value of each, so name only cookies both panes may share, such as a preference, never a session |
+| `QA_FORWARD_CLIENT_COOKIES` | `forwardClientCookies` | *(none)* | comma-separated names of the browser's own cookies the pane proxies pass to the pane apps, beside each pane's jar, whose value wins on a name both have. Unset, the apps get only the jar's cookies (see [Security](#security)). Each must be a cookie name (an RFC 6265 token); `*` and other wildcards throw. A single quote is part of a name, so quote the whole list or nothing, never each name: `'a','b'` names `a'` and `'b`. Any page on the panes' hostname can set these cookies, the other pane's scripts included, so a value that isn't an RFC 6265 cookie-value (one with a space, a comma, a backslash or a stray double quote) isn't passed. On one hostname both pane apps get the browser's one value of each, so name only cookies both panes may share, such as a preference, never a session |
 | `QA_LABEL_ACCEPT` / `QA_LABEL_REJECT` | `verdictLabels.accept` / `verdictLabels.reject` | `qa-approved` / `qa-changes-requested` | verdict label pair |
 | `QA_IDLE_MINUTES` | `idleMinutes` | `30` | idle sessions are torn down |
 

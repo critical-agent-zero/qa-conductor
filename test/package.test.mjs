@@ -7,7 +7,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import http from 'node:http'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -294,6 +296,120 @@ test('npm pack --dry-run packs lib/, public/ and bin/, and no test/, demo/, qa/,
     assert.doesNotMatch(file, /(^|\/)(\.env|\.npmrc)/, `${file} must not be published`)
     assert.ok(inFiles(file), `${file} is outside files ${JSON.stringify(pkg.files)}`)
   }
+})
+
+// CONTRIBUTING.md's tarball check (Releasing, step 3): the one sh block in
+// that section, dedented. A maintainer runs it on the machine that holds the
+// tag-signing key and the npm and GitHub credentials, often from an agent's
+// shell, whose stdin is no terminal.
+function tarballCheck() {
+  const text = readFileSync(path.join(ROOT, 'CONTRIBUTING.md'), 'utf8')
+  const at = text.indexOf('\n## Releasing\n')
+  assert.ok(at >= 0, 'CONTRIBUTING.md has a Releasing section')
+  const blocks = [...text.slice(at).matchAll(/^( *)```sh\n([\s\S]*?)^\1```$/gm)]
+  assert.equal(blocks.length, 1, 'the Releasing section has one sh block, the tarball check')
+  const [, indent, body] = blocks[0]
+  return body.split('\n').map(line => line.slice(indent.length)).join('\n').trimEnd()
+}
+
+// A registry that answers 404 to everything, and records what it was asked.
+async function recordingRegistry(t) {
+  const asked = []
+  const server = http.createServer((req, res) => {
+    asked.push(`${req.method} ${req.url}`)
+    res.writeHead(404, { 'content-type': 'application/json' }).end('{"error":"Not found"}')
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => {
+    server.closeAllConnections()
+    server.close()
+  })
+  return { url: `http://127.0.0.1:${server.address().port}/`, asked }
+}
+
+// Runs the tarball check from `dir` with bash, stdin no terminal, and npm's
+// registry, cache, config, home and temp dirs all of the test's own.
+function runTarballCheck(script, dir, registry, scratch) {
+  const home = mkdtempSync(path.join(scratch, 'home-'))
+  const env = {
+    PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}`,
+    HOME: home,
+    TMPDIR: home,
+    npm_config_registry: registry,
+    npm_config_cache: path.join(home, '.npm'),
+    npm_config_userconfig: path.join(home, '.npmrc'),
+    npm_config_update_notifier: 'false',
+  }
+  return new Promise(resolve => {
+    execFile('bash', ['-c', script], { cwd: dir, env, timeout: 120_000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
+      resolve({ code: err ? (err.code ?? err.signal) : 0, stdout, stderr })
+    })
+  })
+}
+
+// The files npm packs, copied to a directory of their own, with package.json
+// edited.
+function packageCopy(scratch, name, edit) {
+  const dir = path.join(scratch, name)
+  for (const entry of [...pkg.files, 'package.json', 'README.md', 'LICENSE', 'CHANGELOG.md']) {
+    cpSync(path.join(ROOT, entry), path.join(dir, entry), { recursive: true })
+  }
+  const json = structuredClone(pkg)
+  edit(json, dir)
+  writeFileSync(path.join(dir, 'package.json'), `${JSON.stringify(json, null, 2)}\n`)
+  return dir
+}
+
+test('the release steps\' tarball check packs into a private directory, stops at the first failure and never runs npx', () => {
+  const script = tarballCheck()
+  // A fixed path in the shared /tmp is one another local user can plant first.
+  assert.doesNotMatch(script, /\/tmp\b/, 'no fixed path in a shared temp dir')
+  const dest = /^ *(\w+)="\$\(mktemp -d\)"$/m.exec(script)?.[1]
+  assert.ok(dest, 'the pack destination is a fresh mktemp -d directory')
+  assert.match(script, new RegExp(`^ *npm pack --pack-destination "\\$${dest}"$`, 'm'))
+  assert.doesNotMatch(script, /X\.Y\.Z/, 'no version placeholder to paste unchanged')
+  // Without set -e, a failed install goes on to the bin, and a check that
+  // failed early can end in a success.
+  assert.match(script, /^\(\n *set -e\n[\s\S]*\n\)$/, 'a ( set -e ... ) subshell, so it stops at the first failure and leaves the shell where it was')
+  // npx looks a bin it can't find up on the registry, and runs what it finds.
+  assert.doesNotMatch(script, /\bnpx\b|\bnpm +(exec|x)\b/, 'no npx or npm exec')
+  for (const bin of Object.keys(pkg.bin)) {
+    assert.match(script, new RegExp(`^ *\\./node_modules/\\.bin/${bin} --help$`, 'm'), `runs ${bin} from node_modules/.bin`)
+  }
+})
+
+test('the release steps\' tarball check loads every entry point and runs the bin, fails on a tarball without either, and never asks the registry', { timeout: 240_000 }, async (t) => {
+  const script = tarballCheck()
+  const registry = await recordingRegistry(t)
+  const scratch = mkdtempSync(path.join(tmpdir(), 'qa-tarball-check-'))
+  t.after(() => rmSync(scratch, { recursive: true, force: true }))
+  const USAGE = /^Usage: qa-conductor-expose /m
+  const LOADS = /^every entry point loads$/m
+
+  const noBin = packageCopy(scratch, 'no-bin', json => delete json.bin)
+  const brokenExport = packageCopy(scratch, 'broken-export', (json, dir) => {
+    json.exports = { ...json.exports, './broken': './lib/broken.mjs' }
+    writeFileSync(path.join(dir, 'lib/broken.mjs'), 'throw new Error("this entry point fails to load")\n')
+  })
+  const [ok, withoutBin, withBrokenExport] = await Promise.all(
+    [ROOT, noBin, brokenExport].map(dir => runTarballCheck(script, dir, registry.url, scratch)),
+  )
+  const shown = run => `exit ${run.code}\n--- stdout\n${run.stdout}\n--- stderr\n${run.stderr}`
+
+  assert.equal(ok.code, 0, shown(ok))
+  assert.match(ok.stdout, LOADS, shown(ok))
+  assert.match(ok.stdout, USAGE, shown(ok))
+
+  // The case the check exists for: it must fail here, not fetch the name.
+  assert.notEqual(withoutBin.code, 0, shown(withoutBin))
+  assert.match(withoutBin.stdout, LOADS, shown(withoutBin))
+  assert.doesNotMatch(withoutBin.stdout, USAGE, shown(withoutBin))
+
+  // set -e: an entry point that fails to load ends the check there.
+  assert.notEqual(withBrokenExport.code, 0, shown(withBrokenExport))
+  assert.doesNotMatch(withBrokenExport.stdout, USAGE, `the bin ran after an entry point failed\n${shown(withBrokenExport)}`)
+
+  assert.deepEqual(registry.asked, [], 'the check never asks the registry for anything')
 })
 
 test('nothing in the package runs with the publish token, or sends it elsewhere', () => {
