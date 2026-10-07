@@ -467,7 +467,7 @@ Its limits:
 
 Its members are `run(argv)`, `login(user, token)` (to `ghcr.io`, with the token in the environment, never in argv), `imagePresent`, `ensureImage(image, { retries, relogin })`, `runPg`, `waitHealthyPg`, `createDatabase`, `pipeDump(from, to, db)` and `cloneDb(from, to, db)` (a host-side `pg_dump | psql` between two containers), `runMigrate`, `runApp`, `waitHealthyApp`, `psql`, `rmForce`, `createNetwork`, `rmNetwork`, `sweepQaContainers`, `inspectImageOf` and `logsTail`. `login`, `createDatabase`, `pipeDump`, `cloneDb` and `logsTail` throw on a name that isn't letters, digits, `_` and `-`.
 
-**`exec`.** `makeExecFileFn()` resolves `{stdout}` and rejects with an Error whose message is unchanged and which also carries `stdout`, `stderr` and the exit `code`.
+**`exec`.** `makeExecFileFn({ maxBuffer })` returns an `execFileFn(cmd, args, opts)` that runs `execFile` with `maxBuffer` (default 64 MB, which `opts` can override) and resolves `{ stdout }`. It rejects with an Error whose message is `<cmd> <first arg>: <execFile's message>`, then, on the next line, up to 2000 characters of stderr. The original error is its `cause`, and it also carries the whole `stdout` and `stderr` and the exit `code`.
 
 ### Exposure (optional)
 
