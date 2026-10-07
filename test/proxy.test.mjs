@@ -218,6 +218,30 @@ test('clearJar empties the jar, which then fills again from the app\'s Set-Cooki
   assert.equal(await echo(), 'sid=abc; theme=dark; locale=fr')
 })
 
+// A response the old app sends after the jar is cleared belongs to the old
+// session: its Set-Cookie must fill the jar its request started with, never
+// the fresh one the next session's app gets.
+test('a response that lands after clearJar fills only the jar its request started with', async (t) => {
+  let arrived
+  const reached = new Promise(r => { arrived = r })
+  let release
+  const late = new Promise(r => { release = r })
+  const { proxyPort, handler } = await setup(t, (req, res) => {
+    if (req.url === '/slow-login') {
+      arrived()
+      late.then(() => { res.setHeader('set-cookie', 'sid=old-session'); res.end('ok') })
+      return
+    }
+    res.end(req.headers.cookie ?? '(none)')
+  })
+  const pending = request(proxyPort, '/slow-login')
+  await reached
+  handler.clearJar()
+  release()
+  await pending
+  assert.equal((await request(proxyPort, '/echo')).body.toString(), '(none)')
+})
+
 test('forwardClientCookies passes the browser cookies it names, and no others', async (t) => {
   const { proxyPort } = await setup(t, echoCookie, { forwardClientCookies: ['csrftoken', 'locale', 'absent'] })
   const res = await request(proxyPort, '/echo', { headers: { cookie: 'rc_session=secret; csrftoken=c1; Locale=x; locale=fr; csrftoken2=no; =nameless; bare' } })

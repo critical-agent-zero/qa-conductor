@@ -847,6 +847,29 @@ test('a session\'s pane apps never get the cookies an earlier session\'s apps se
   } finally { c.stop() }
 })
 
+// A boot that replaces a session without a teardown (the same PR opened again,
+// or another opened after an error) must not leave the previous session's app
+// or jar reachable while it runs: the new app may be a newer head commit on
+// the same host port.
+test('a new boot detaches both panes until it is ready', async () => {
+  const hang = {}
+  const { c } = makeWorld({ hang })
+  try {
+    const port = await harnessPort(c)
+    const pr = await proxyPort(c.servers.prProxy)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    assert.equal((await raw(pr, { path: '/set?from_pr=7' })).status, 200)
+    hang[7] = deferred()
+    assert.equal((await api(port, 'POST', '/api/session', { pr: 7 })).ok, true)
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status !== 'ready')
+    assert.equal((await raw(pr, { path: '/cookie' })).status, 503, 'no app behind the pane while it boots')
+    hang[7].resolve()
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    assert.equal((await raw(pr, { path: '/cookie' })).body, '(none)')
+  } finally { c.stop() }
+})
+
 test('startConductor refuses a cfg.forwardClientCookies that is not false or an array of cookie names, before anything starts', () => {
   let swept = false
   const provisioner = { sweep: () => { swept = true } }
