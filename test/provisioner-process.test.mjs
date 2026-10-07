@@ -126,7 +126,7 @@ function setup({ pids = [], deps: overrides = {} } = {}) {
     // that has already settled wins a race against a sleep.
     sleepFn: ms => new Promise(resolve => setImmediate(() => { now += ms; resolve() })),
     onExitFn: fn => exitHooks.push(fn),
-    baseEnv: { PATH: '/usr/bin:/bin', HOME: '/home/me', GITHUB_QA_TOKEN: 'ghs_secret', AWS_SECRET_ACCESS_KEY: 'aws' },
+    baseEnv: { PATH: '/usr/bin:/bin', HOME: '/fake-home/me', GITHUB_QA_TOKEN: 'ghs_secret', AWS_SECRET_ACCESS_KEY: 'aws' },
     log: { warn: (...args) => warnings.push(args.join(' ')) },
     ...overrides,
   }
@@ -241,10 +241,10 @@ test('each spawn is persisted to pids.json via a 0600 tmp file and a rename, in 
 test('a file or symlink left at the tmp path is replaced, never written through', async () => {
   const { p, fsx } = setup()
   const tmp = `${PIDFILE}.${process.pid}.tmp`
-  fsx.files.set('/home/me/.ssh/authorized_keys', 'ssh-ed25519 AAAA me')
-  fsx.links.set(tmp, '/home/me/.ssh/authorized_keys')
+  fsx.files.set('/fake-home/me/.ssh/authorized_keys', 'ssh-ed25519 AAAA me')
+  fsx.links.set(tmp, '/fake-home/me/.ssh/authorized_keys')
   await launch(p, BASE)
-  assert.equal(fsx.files.get('/home/me/.ssh/authorized_keys'), 'ssh-ed25519 AAAA me')
+  assert.equal(fsx.files.get('/fake-home/me/.ssh/authorized_keys'), 'ssh-ed25519 AAAA me')
   assert.deepEqual(readPids(fsx).map(e => e.pid), [1001])
   assert.equal(fsx.links.has(tmp), false)
   assert.equal(fsx.files.has(tmp), false)

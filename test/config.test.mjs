@@ -227,7 +227,7 @@ test('the harness and the two panes must be three different origins', () => {
 // Origin, and the guards take it for curl.
 test('an http origin must be loopback: browsers send no Sec-Fetch-* headers to plain http anywhere else', () => {
   for (const [key, guard] of [['QA_HARNESS_ORIGIN', 'harness API guard'], ['QA_BASE_ORIGIN', 'pane request guard'], ['QA_PR_ORIGIN', 'pane request guard']]) {
-    for (const value of ['http://box.lan:3100', 'http://192.168.1.5:3100', 'http://h.tail1.ts.net:3100', 'http://0.0.0.0:3100']) {
+    for (const value of ['http://box.lan:3100', 'http://192.168.1.5:3100', 'http://h.tail1234.ts.net:3100', 'http://0.0.0.0:3100']) {
       assert.throws(() => loadConfig(envFile([...REQUIRED, `${key}=${value}/`])), err => {
         assert.equal(err.message, `${key} ${value}: browsers send no Sec-Fetch-* headers to a plain-http origin off loopback, so the ${guard} can't tell other pages apart; use https or a loopback address`)
         return true
@@ -342,7 +342,7 @@ test('defaultExposure: a missing or unparseable pane origin counts as non-loopba
 test('tailscale mode refuses a QA_BIND_HOST that is not loopback; none mode accepts 0.0.0.0', () => {
   // Off loopback, anyone who reaches the port can send their own
   // Tailscale-User-Login (#307).
-  for (const host of ['0.0.0.0', '::', '*', '100.80.52.18', '"127.0.0.1"', '127.0.0.1.nip.io', '::ffff:127.0.0.1', 'example.com']) {
+  for (const host of ['0.0.0.0', '::', '*', '100.64.0.1', '"127.0.0.1"', '127.0.0.1.nip.io', '::ffff:127.0.0.1', 'example.com']) {
     for (const [extra, why] of [
       [[], 'QA_EXPOSURE defaults to tailscale because QA_PUBLIC_HOST=w.ts.net is not loopback'],
       [['QA_EXPOSURE=tailscale'], 'QA_EXPOSURE=tailscale is set'],

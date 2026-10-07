@@ -15,8 +15,8 @@ function adapters(overrides = {}) {
 }
 
 test('cacheDirFor: per repo under XDG_CACHE_HOME, else ~/.cache', () => {
-  assert.equal(cacheDirFor('critical-labs/qa-conductor', { XDG_CACHE_HOME: '/x/cache' }, '/home/u'), '/x/cache/qa-conductor/critical-labs-qa-conductor')
-  assert.equal(cacheDirFor('critical-labs/qa-conductor', {}, '/home/u'), '/home/u/.cache/qa-conductor/critical-labs-qa-conductor')
+  assert.equal(cacheDirFor('critical-labs/qa-conductor', { XDG_CACHE_HOME: '/x/cache' }, '/fake-home/u'), '/x/cache/qa-conductor/critical-labs-qa-conductor')
+  assert.equal(cacheDirFor('critical-labs/qa-conductor', {}, '/fake-home/u'), '/fake-home/u/.cache/qa-conductor/critical-labs-qa-conductor')
 })
 
 // The loader runSelfQa uses, exported so `npm run expose` (which passes

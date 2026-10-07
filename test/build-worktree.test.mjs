@@ -19,7 +19,7 @@ const BASE = sha('a')
 const PR = sha('b')
 const MOVED = sha('c')
 const INSTALL = { cmd: 'pnpm', args: ['install', '--frozen-lockfile', '--ignore-scripts', '--ignore-pnpmfile'], env: { CI: 'true' } }
-const ENV = { PATH: '/usr/bin:/bin', HOME: '/home/qa', GITHUB_QA_TOKEN: 'ghp_secret', AWS_SECRET_ACCESS_KEY: 'shh' }
+const ENV = { PATH: '/usr/bin:/bin', HOME: '/fake-home/qa', GITHUB_QA_TOKEN: 'ghp_secret', AWS_SECRET_ACCESS_KEY: 'shh' }
 const TRUST = { logins: [], associations: ['OWNER', 'MEMBER', 'COLLABORATOR'], requirePush: true }
 
 function deferred() {
