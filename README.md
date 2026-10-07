@@ -37,7 +37,7 @@ The demo runs the real conductor against fixture PRs and fake adapters, so it ne
   - `adapters/build-worktree`: `git`, with worktree support;
   - `adapters/provisioner-process`: `ps`, and to tell one boot of the machine from the next, `/proc/sys/kernel/random/boot_id` on Linux or `sysctl` on macOS;
   - `adapters/provisioner-docker` and `./docker`: the `docker` CLI and `sh`, and a Docker daemon the conductor's user may use;
-  - `adapters/exposure-tailscale` and the [expose CLI](#expose-cli): a `tailscale` CLI no older than the daemon (on macOS, the app's bundled one), run by a user the daemon lets change `tailscale serve` (on Linux, root or the `--operator`).
+  - `adapters/exposure-tailscale` and the [expose CLI](#expose-cli): a `tailscale` CLI no older than the daemon (on macOS, the app's bundled one), run by a user the daemon lets change `tailscale serve` (on Linux, root or the user `tailscale set --operator` names).
 - **No TypeScript declarations yet.** The package is plain JavaScript (ES modules); the [Types](#types) below describe what the adapters exchange.
 
 ## Install
