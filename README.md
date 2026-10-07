@@ -546,7 +546,7 @@ The contract:
 - One `KEY=value` per line. Blank lines, lines that start with `#` and lines with no `=` are skipped. Spaces around the key and the value are dropped, and a later line wins.
 - A value in a matching pair of double or single quotes loses them. Nothing is unescaped or expanded, quoted or not: `$HOME` stays `$HOME`.
 - No `export`: `export KEY=value` sets a key named `export KEY`, which nothing reads.
-- No comment after a value: a `#` after a space or a tab in an unquoted value throws, naming the file, the line and the key. Put the comment on a line of its own, or quote the value if the `#` is part of it.
+- No comment after a value: a `#` after a space or a tab in an unquoted value throws, naming the file, the line and the key, and so does a `#` after a quoted value's closing quote (`KEY="value" # note`), with a space between or not. Put the comment on a line of its own. A value with a space or a tab before a `#` needs quotes (`KEY="a # b"` is `a # b`), and inside them a `#` mustn't follow the quote character, which would read as the closing quote.
 - **It holds a token.** Keep it out of git (`echo .env.qa >> .gitignore`) and readable by you alone: create it with `(umask 077 && touch .env.qa)`, or `chmod 600` it.
 
 ### Sample `.env.qa` files

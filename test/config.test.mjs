@@ -40,17 +40,47 @@ test('parseEnvFile: a value in a matching pair of quotes loses them, and nothing
 })
 
 test('parseEnvFile: an inline comment is refused, naming the file, line and key but never the value', () => {
-  for (const line of ['GITHUB_QA_TOKEN=s3cret # mine', 'GITHUB_QA_TOKEN=s3cret\t# mine', 'GITHUB_QA_TOKEN= # s3cret', 'GITHUB_QA_TOKEN="s3cret" # mine']) {
-    const file = envFile(['# the token', line])
-    assert.throws(() => parseEnvFile(file), err => {
-      assert.equal(err.message, `${file}:2: GITHUB_QA_TOKEN has an inline comment, and .env.qa takes comments only on lines of their own: move it, or quote the value if the # is part of it`)
-      assert.doesNotMatch(err.message, /s3cret|mine/)
-      return true
-    }, JSON.stringify(line))
-    assert.throws(() => loadConfig(file), /:2: GITHUB_QA_TOKEN has an inline comment/)
+  const refused = (lines, why) => {
+    for (const line of lines) {
+      const file = envFile(['# the token', line])
+      assert.throws(() => parseEnvFile(file), err => {
+        assert.equal(err.message, `${file}:2: GITHUB_QA_TOKEN ${why}`)
+        assert.doesNotMatch(err.message.slice(file.length), /s3|cret|mine/)
+        return true
+      }, JSON.stringify(line))
+      assert.throws(() => loadConfig(file), /:2: GITHUB_QA_TOKEN has /)
+    }
   }
-  // A # with no space before it is part of the value, as it always was.
-  assert.deepEqual(parseEnvFile(envFile(['A=x#y', 'B=#x'])), { A: 'x#y', B: '#x' })
+  refused(
+    ['GITHUB_QA_TOKEN=s3cret # mine', 'GITHUB_QA_TOKEN=s3cret\t# mine', 'GITHUB_QA_TOKEN= # s3cret', 'GITHUB_QA_TOKEN=s3cret # "mine"'],
+    'has an inline comment, and .env.qa takes comments only on lines of their own: move it, or quote the value if the # is part of it',
+  )
+  // After a quoted value, a # starts a comment however the comment ends: one
+  // that ends in a quote must not make the line read as one quoted value.
+  refused(
+    [
+      'GITHUB_QA_TOKEN="s3cret" # mine', 'GITHUB_QA_TOKEN="s3cret" # "mine"', "GITHUB_QA_TOKEN='s3cret'\t# 'mine'",
+      'GITHUB_QA_TOKEN="s3cret"# mine', 'GITHUB_QA_TOKEN="s3cret"#"mine"', 'GITHUB_QA_TOKEN=\'s3cret\' # "mine"',
+      'GITHUB_QA_TOKEN="s3 # cret" # mine',
+    ],
+    'has a comment after its quoted value, and .env.qa takes comments only on lines of their own: move it',
+  )
+  // A # with no space before it is part of an unquoted value, as it always
+  // was, and inside quotes one is part of the value unless it follows the quote.
+  assert.deepEqual(parseEnvFile(envFile(['A=x#y', 'B=#x', 'C="x#y"', 'D=\'x "#" y\''])), { A: 'x#y', B: '#x', C: 'x#y', D: 'x "#" y' })
+})
+
+// Kept, a comment that ends in a quote would join a quoted list's value and
+// add what it names: carol, or evil.example to the Host allowlist.
+test('loadConfig: a comment after a quoted list never adds entries to it', () => {
+  for (const line of [
+    'QA_ALLOWED_LOGINS="alice@github" # later: "bob@github, carol@github"',
+    "QA_ALLOWED_LOGINS='alice@github' # 'carol@github'",
+    'QA_ALLOWED_HOSTS="localhost" # was "old.example, evil.example"',
+  ]) {
+    const file = envFile([...REQUIRED, line])
+    assert.throws(() => loadConfig(file), /:6: QA_ALLOWED_(LOGINS|HOSTS) has a comment after its quoted value/, line)
+  }
 })
 
 test('generic defaults: ports, pane origins from public host, verdict labels', () => {
