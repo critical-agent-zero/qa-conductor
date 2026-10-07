@@ -198,6 +198,17 @@ test('the package is publishable: not private, public access, provenance from th
   assert.match(pkg.repository?.url ?? '', /github\.com\/critical-labs\/qa-conductor(\.git)?$/)
 })
 
+// npm fills in homepage and bugs from repository, but only on the registry:
+// spelled out, they match agent-identity's and show in the tarball too.
+test('the npm page names its author, links back to the repository, and has a description that fits a search result', () => {
+  assert.equal(pkg.author, 'Critical Labs')
+  assert.equal(pkg.homepage, 'https://github.com/critical-labs/qa-conductor#readme')
+  assert.deepEqual(pkg.bugs, { url: 'https://github.com/critical-labs/qa-conductor/issues' })
+  assert.ok(Array.isArray(pkg.keywords) && pkg.keywords.length > 0, 'keywords')
+  for (const keyword of pkg.keywords) assert.match(keyword, /^[a-z0-9-]+$/, `keyword ${keyword}`)
+  assert.ok(pkg.description.length <= 130, `the description is ${pkg.description.length} characters, more than a search result shows`)
+})
+
 test('a release names one version: package.json, the CHANGELOG\'s newest release and the README\'s git-tag pin', () => {
   // A tag stages package.json's version, so the notes and the install line
   // a consumer reads must be that version's.
