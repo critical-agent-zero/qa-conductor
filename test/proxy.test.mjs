@@ -34,7 +34,7 @@ function request(port, path, { method = 'GET', headers = {}, body = null } = {})
   })
 }
 
-async function setup(t, upstreamHandler, { allowedHosts = [], harnessOrigin, frameAncestors } = {}) {
+async function setup(t, upstreamHandler, { allowedHosts = [], harnessOrigin, frameAncestors, forwardClientCookies } = {}) {
   const upstream = http.createServer(upstreamHandler)
   const upstreamPort = await listen(upstream)
   const dir = await mkdtemp(join(tmpdir(), 'qa-proxy-'))
@@ -51,6 +51,7 @@ async function setup(t, upstreamHandler, { allowedHosts = [], harnessOrigin, fra
     allowedHosts,
     harnessOrigin,
     frameAncestors,
+    forwardClientCookies,
   })
   const proxy = http.createServer(handler)
   const proxyPort = await listen(proxy)
@@ -59,7 +60,7 @@ async function setup(t, upstreamHandler, { allowedHosts = [], harnessOrigin, fra
     await new Promise((r) => proxy.close(r))
     await rm(dir, { recursive: true, force: true })
   })
-  return { upstreamPort, proxyPort, activity, bridgePath }
+  return { upstreamPort, proxyPort, activity, bridgePath, handler }
 }
 
 // --- parseSetCookie -------------------------------------------------------
@@ -173,20 +174,146 @@ test('absorbs Set-Cookie into the jar, replays it upstream, honors deletions', a
   assert.equal(third.headers['x-seen-cookie'], 'theme=dark', 'deleted cookie must leave the jar')
 })
 
-test('merges client cookies with the jar, jar wins on conflicts', async (t) => {
-  let seenCookie
-  const { proxyPort } = await setup(t, (req, res) => {
-    if (req.url === '/prime') {
-      res.setHeader('set-cookie', 'sid=abc')
-    } else {
-      seenCookie = req.headers.cookie
+// --- the browser's own cookies --------------------------------------------
+// Cookies ignore ports, so the Cookie header a browser sends a pane carries
+// every cookie for the pane's hostname: another app's on another port (an RC
+// app's session, say), and any the other pane's scripts set. The pane app
+// runs PR code, so by default it gets the jar's cookies and nothing else.
+
+// An upstream that answers with the Cookie header it got, or '(none)'. Its
+// /login fills the jar.
+const echoCookie = (req, res) => {
+  if (req.url === '/login') res.setHeader('set-cookie', ['sid=abc; Path=/; HttpOnly', 'theme=dark'])
+  res.end(req.headers.cookie ?? '(none)')
+}
+const BROWSER_COOKIES = { cookie: 'rc_session=secret; theme=light; csrftoken=c1; locale=fr' }
+
+test('the browser\'s own cookies never reach the pane app by default; with an empty jar it gets no Cookie header at all', async (t) => {
+  for (const forwardClientCookies of [undefined, null, false, []]) {
+    const { proxyPort } = await setup(t, echoCookie, { forwardClientCookies })
+    for (const method of ['GET', 'POST']) {
+      const res = await request(proxyPort, '/echo', { method, headers: BROWSER_COOKIES, body: method === 'POST' ? 'x' : null })
+      assert.deepEqual([res.status, res.body.toString()], [200, '(none)'], `${method} ${JSON.stringify(forwardClientCookies)}`)
     }
-    res.end('ok')
+  }
+})
+
+test('the jar\'s cookies still reach the pane app, and only they', async (t) => {
+  const { proxyPort } = await setup(t, echoCookie)
+  await request(proxyPort, '/login', { headers: BROWSER_COOKIES })
+  assert.equal((await request(proxyPort, '/echo', { headers: BROWSER_COOKIES })).body.toString(), 'sid=abc; theme=dark', 'the jar\'s theme, not the browser\'s')
+  assert.equal((await request(proxyPort, '/echo')).body.toString(), 'sid=abc; theme=dark')
+})
+
+// The jar lasts as long as the proxy; the conductor empties it between
+// sessions (test/server.test.mjs).
+test('clearJar empties the jar, which then fills again from the app\'s Set-Cookie', async (t) => {
+  const { proxyPort, handler } = await setup(t, echoCookie, { forwardClientCookies: ['locale'] })
+  const echo = async () => (await request(proxyPort, '/echo', { headers: BROWSER_COOKIES })).body.toString()
+  await request(proxyPort, '/login')
+  assert.equal(await echo(), 'sid=abc; theme=dark; locale=fr')
+  handler.clearJar()
+  assert.equal(await echo(), 'locale=fr', 'the named browser cookie still passes')
+  await request(proxyPort, '/login')
+  assert.equal(await echo(), 'sid=abc; theme=dark; locale=fr')
+})
+
+// A response the old app sends after the jar is cleared belongs to the old
+// session: its Set-Cookie must fill the jar its request started with, never
+// the fresh one the next session's app gets.
+test('a response that lands after clearJar fills only the jar its request started with', async (t) => {
+  let arrived
+  const reached = new Promise(r => { arrived = r })
+  let release
+  const late = new Promise(r => { release = r })
+  const { proxyPort, handler } = await setup(t, (req, res) => {
+    if (req.url === '/slow-login') {
+      arrived()
+      late.then(() => { res.setHeader('set-cookie', 'sid=old-session'); res.end('ok') })
+      return
+    }
+    res.end(req.headers.cookie ?? '(none)')
   })
-  await request(proxyPort, '/prime')
-  await request(proxyPort, '/page', { headers: { cookie: 'sid=client; other=1' } })
-  const pairs = seenCookie.split('; ').sort()
-  assert.deepEqual(pairs, ['other=1', 'sid=abc'])
+  const pending = request(proxyPort, '/slow-login')
+  await reached
+  handler.clearJar()
+  release()
+  await pending
+  assert.equal((await request(proxyPort, '/echo')).body.toString(), '(none)')
+})
+
+test('forwardClientCookies passes the browser cookies it names, and no others', async (t) => {
+  const { proxyPort } = await setup(t, echoCookie, { forwardClientCookies: ['csrftoken', 'locale', 'absent'] })
+  const res = await request(proxyPort, '/echo', { headers: { cookie: 'rc_session=secret; csrftoken=c1; Locale=x; locale=fr; csrftoken2=no; =nameless; bare' } })
+  assert.equal(res.body.toString(), 'csrftoken=c1; locale=fr', 'names match exactly, case included')
+  // a name sent twice (two paths) reaches the app as the browser sent it
+  assert.equal((await request(proxyPort, '/echo', { headers: { cookie: 'locale=fr-CA; rc_session=secret; locale=fr' } })).body.toString(), 'locale=fr-CA; locale=fr')
+  // none of the named ones sent, and an empty jar: no Cookie header
+  assert.equal((await request(proxyPort, '/echo', { headers: { cookie: 'rc_session=secret' } })).body.toString(), '(none)')
+})
+
+test('the jar wins over a named browser cookie of the same name, and comes first', async (t) => {
+  const { proxyPort } = await setup(t, echoCookie, { forwardClientCookies: ['sid', 'locale'] })
+  await request(proxyPort, '/login')
+  const res = await request(proxyPort, '/echo', { headers: { cookie: 'sid=forged; locale=fr; sid=forged2' } })
+  assert.equal(res.body.toString(), 'sid=abc; theme=dark; locale=fr')
+})
+
+// A browser keeps whatever a page writes with document.cookie, commas and
+// spaces included, and sends it back as is. So any page on the hostname, the
+// PR pane's included, could hide a cookie that isn't named inside one that
+// is, and a parser that splits on commas or spaces would read it.
+test('a named browser cookie whose value is not an RFC 6265 cookie-value is dropped, so no other cookie hides in it', async (t) => {
+  const { proxyPort } = await setup(t, echoCookie, { forwardClientCookies: ['locale'] })
+  const echo = async cookie => (await request(proxyPort, '/echo', { headers: { cookie } })).body.toString()
+  const SMUGGLED = [
+    'locale=fr, sid=evil', 'locale=fr,sid=evil', 'locale=fr sid=evil', 'locale=fr\tsid=evil',
+    'locale="fr, sid=evil"', 'locale="fr sid=evil"', 'locale=fr\\', 'locale="fr', 'locale=fr"', 'locale=a"b', 'locale=""fr""',
+  ]
+  for (const cookie of SMUGGLED) assert.equal(await echo(cookie), '(none)', cookie)
+  for (const value of ['fr', '"fr-CA"', '', '""', 'a=b', "!#$%&'()*+-./:<=>?@[]^_`{|}~09AZaz"]) {
+    assert.equal(await echo(`rc_session=secret; locale=${value}`), `locale=${value}`, value)
+  }
+  // with a session in the jar: the jar's sid, and a clean locale beside a dropped one
+  await request(proxyPort, '/login')
+  for (const cookie of SMUGGLED) assert.equal(await echo(cookie), 'sid=abc; theme=dark', cookie)
+  assert.equal(await echo('locale=fr, sid=evil; locale=de; locale=fr sid=evil'), 'sid=abc; theme=dark; locale=de')
+})
+
+// Both panes are on one hostname, so a cookie the PR pane's scripts set
+// (document.cookie) comes back on the browser's requests to the base pane,
+// and to every other port of that host.
+test('a cookie one pane\'s scripts set never reaches the other pane\'s app', async (t) => {
+  const seen = []
+  const base = await setup(t, (req, res) => { seen.push(req.headers.cookie ?? '(none)'); res.end('base') }, { ...GUARDED, forwardClientCookies: ['locale'] })
+  const pr = await setup(t, (req, res) => {
+    res.setHeader('content-type', 'text/html')
+    res.setHeader('set-cookie', 'pr_sid=1')
+    res.end('<html><head></head><body><script>document.cookie = "planted=1; path=/"</script></body></html>')
+  }, GUARDED)
+  const page = await request(pr.proxyPort, '/', { headers: { ...PANE_HOST, 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' } })
+  assert.deepEqual([page.status, page.headers['set-cookie']], [200, undefined], 'the PR app\'s own cookie stays in its jar')
+  // the PR page's script has run: the browser now sends planted=1 to the base pane too
+  const BASE_HOST = { host: 'h.ts.net:8443' }
+  for (const headers of [
+    { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' },
+    { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' },
+    {},
+  ]) {
+    const res = await request(base.proxyPort, '/api/me', { headers: { ...BASE_HOST, cookie: 'planted=1; locale=fr', ...headers } })
+    assert.equal(res.status, 200, JSON.stringify(headers))
+  }
+  assert.deepEqual(seen, ['locale=fr', 'locale=fr', 'locale=fr'])
+})
+
+test('forwardClientCookies takes false or an array of cookie names; true, a string, a wildcard or a name that is not an RFC 6265 token throws', () => {
+  const make = forwardClientCookies => createPaneProxy({ upstreamPort: () => null, bridgePath: '/nonexistent', httpMod: http, forwardClientCookies })
+  for (const ok of [undefined, null, false, [], ['sid'], ['__Host-sid', 'csrftoken', 'sid'], ["a!#$%&'+-.^_`|~9Z"]]) {
+    assert.equal(typeof make(ok), 'function', JSON.stringify(ok))
+  }
+  for (const bad of [true, 1, '*', 'sid', 'sid,locale', {}, ['*'], ['sid', '*'], ['sess*'], ['a b'], [' sid'], ['a=b'], ['a;b'], ['a,b'], ['"sid"'], ['a\tb'], ['séance'], [''], [42], [null], [['sid']]]) {
+    assert.throws(() => make(bad), /^Error: forwardClientCookies must be false or an array of cookie names \(RFC 6265 tokens; no wildcards: list each name\), got /, JSON.stringify(bad))
+  }
 })
 
 // --- HTML injection -------------------------------------------------------
