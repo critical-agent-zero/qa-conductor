@@ -24,6 +24,7 @@ What changed in each release, newest first. A 0.x minor version may break the in
 - **Where the identity gate holds.** The README said container panes can't reach the host's loopback, which holds only on native Linux Docker: Docker Desktop (through `host.docker.internal`) and some rootless runtimes forward to it, so there a container pane can send any `Tailscale-User-Login` too. It now also says the gate works only behind `tailscale serve --https`: never behind Funnel, `--tcp` or `--tls-terminated-tcp`, and never with `tailscale serve` in front of a conductor in none mode.
 - **The CHANGELOG** dates every release, links each one to its changes on GitHub, and gains an entry for 0.1.0.
 - **The npm page.** `package.json` gains `keywords`, `"author": "Critical Labs"`, and an explicit `homepage` and `bugs`, as agent-identity has, and its `description` is down to one line a search result shows whole.
+- **`SECURITY.md`** says how to report a vulnerability privately, through GitHub's private vulnerability reporting, which versions get fixes (the latest 0.x) and what is in scope.
 - **A hygiene test keeps private details out of the repository.** `test/hygiene.test.mjs` fails on any tracked file that names a tailnet other than the placeholder `tail1234.ts.net`, a tailnet address (`100.64.0.0/10`) other than `100.64.0.1`, an absolute path into a home directory, or, outside this CHANGELOG, the app the conductor was first built for. Three fixtures named a real tailnet and one a real device's tailnet address: they now use the placeholders.
 
 ## [0.3.0] — 2026-10-03

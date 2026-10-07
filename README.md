@@ -730,6 +730,10 @@ The suite runs on `node:test` with injected effects, so it needs no Docker, netw
 
 Nothing publishes directly: the workflow's npm token can only stage, and only the stage step gets it. `test/package.test.mjs` pins the workflow's trigger and steps. It fails on any npm or npx command other than the four the workflow runs (npm expands abbreviations such as `npm pub`), on a gate that could be skipped or allowed to fail, and on the token anywhere but the stage step. It reads the file as text, so it catches mistakes, not every way a shell can spell a command: the stage-only token is what refuses a plain publish.
 
+## Reporting a vulnerability
+
+Please report it privately, as [SECURITY.md](SECURITY.md) describes, not in a public issue.
+
 ## License
 
 [MIT](LICENSE)
