@@ -81,7 +81,7 @@ function makeWorld({
   }
   // Ungated: these https origins would otherwise put it in tailscale mode.
   const cfg = {
-    publicHost: 'h.ts.net', operatorEmail: 'op@homefree.local', idleMinutes: 30,
+    publicHost: 'h.ts.net', operatorEmail: 'op@example.com', idleMinutes: 30,
     ports: { harness: 0, base: 0, pr: 0 },
     paneOrigins: { base: 'https://h:8443', pr: 'https://h:10000' },
     verdictLabels: { accept: 'ok', reject: 'nope' },
@@ -421,7 +421,7 @@ test('allowed Hosts: loopback, the public host, the pane origin hosts, the harne
 // reviewer has open: only the harness page itself may use the API. Another
 // page can't read the answers, but its writes would run, and each read of
 // /api/prs or /api/build-status spends GitHub API calls on the conductor's
-// token (merged from homefree #329's three harness API tests).
+// token.
 test('every /api/* request from another page gets 403, reads and the event stream included; the page itself and non-browser clients pass', async () => {
   const { c, calls, github } = makeWorld()
   try {
@@ -883,7 +883,7 @@ test('startConductor refuses a cfg.forwardClientCookies that is not false or an 
   assert.equal(swept, false, 'refused before the startup sweep')
 })
 
-// --- 0.3.0: the Tailscale identity gate (#307) ------------------------------------
+// --- 0.3.0: the Tailscale identity gate ------------------------------------------
 
 // tailscale serve in front, and the allowlist loadConfig requires there.
 const GATED = { exposure: 'tailscale', allowedLogins: ['alice@github'] }
@@ -943,23 +943,21 @@ test('both pane proxies refuse every route, the bridge and upgrades without an a
 })
 
 test('an allowed identity is served on all three, matched ignoring case', async () => {
-  const { c } = makeWorld({ cfg: { ...GATED, allowedLogins: ['bob@homefree.local', 'Alice@github '] } })
+  const { c } = makeWorld({ cfg: { ...GATED, allowedLogins: ['bob@example.com', 'Alice@github '] } })
   try {
     const { harness, base, pr } = await allPorts(c)
     const res = await raw(harness, { path: '/qa/api/state', headers: { 'tailscale-user-login': 'Alice@GitHub' } })
     assert.equal(res.status, 200)
     assert.equal(JSON.parse(res.body).status, 'idle')
-    assert.equal((await raw(base, { path: '/x', headers: { 'tailscale-user-login': 'bob@homefree.local' } })).status, 503)
-    assert.equal((await raw(pr, { path: '/x', headers: { 'tailscale-user-login': 'BOB@homefree.local' } })).status, 503)
+    assert.equal((await raw(base, { path: '/x', headers: { 'tailscale-user-login': 'bob@example.com' } })).status, 503)
+    assert.equal((await raw(pr, { path: '/x', headers: { 'tailscale-user-login': 'BOB@example.com' } })).status, 503)
   } finally { c.stop() }
 })
 
 // tailscale serve stamps every request from the reviewer's device with the
 // reviewer's login, those PR code makes in the reviewer's browser included.
 // The gate says which device; only the API guard, the Host allowlist and the
-// pane guard say which page, so an allowed identity must not skip them
-// (D10; homefree #329's 'harness writes from another origin are refused even
-// with an allowed identity').
+// pane guard say which page, so an allowed identity must not skip them.
 test('with an allowed identity, another page\'s writes, a foreign Host, another host:port and a cross-site pane navigation are still refused', async () => {
   const { c, calls } = makeWorld({ cfg: GATED })
   try {

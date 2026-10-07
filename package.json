@@ -1,9 +1,24 @@
 {
   "name": "@critical-labs/qa-conductor",
   "version": "0.3.0",
-  "description": "Side-by-side PR-QA harness: boots base-vs-PR app panes against cloned data behind mirrored proxies, with a pluggable five-seam adapter interface (Provisioner, BuildConvention, Seed, EnvTransform, AuthBootstrap) plus an optional Exposure seam.",
+  "description": "Side-by-side pull request QA: runs your app's base and PR builds on cloned data, mirrors both panes, posts a verdict.",
+  "keywords": [
+    "qa",
+    "pull-request",
+    "code-review",
+    "review-app",
+    "side-by-side",
+    "preview",
+    "github",
+    "tailscale"
+  ],
   "type": "module",
   "license": "MIT",
+  "author": "Critical Labs",
+  "homepage": "https://github.com/critical-labs/qa-conductor#readme",
+  "bugs": {
+    "url": "https://github.com/critical-labs/qa-conductor/issues"
+  },
   "engines": {
     "node": ">=22"
   },

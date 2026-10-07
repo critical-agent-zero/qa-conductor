@@ -4,7 +4,41 @@ A side-by-side PR-QA harness. For a pull request it boots two copies of your app
 
 The conductor owns the choreography: session state, cancellation, the harness UI and API, the pane proxies and the verdict. Everything about *your* app and infrastructure comes from five adapters you supply, plus an optional sixth, [Exposure](#exposure-optional), through which the conductor publishes itself on a front door such as `tailscale serve`.
 
-> **Status: 0.x.** The interface may still change while a second consumer is integrated, and a 0.x minor version may break it: read the migration notes in [CHANGELOG.md](CHANGELOG.md) before upgrading.
+> **Status: 0.x.** The interface may still change, and a 0.x minor version may break it: read the migration notes in [CHANGELOG.md](CHANGELOG.md) before upgrading.
+
+## Contents
+
+- [Try it](#try-it), [Requirements](#requirements), [Install](#install)
+- [Quickstart: QA your own app](#quickstart-qa-your-own-app)
+- [Use](#use), with the [Entry points](#entry-points)
+- [Using the harness](#using-the-harness)
+- [Security](#security)
+- [The seams](#the-seams): [Types](#types), [Contracts](#contracts-between-the-seams), the built-in [`build-worktree`](#built-in-adaptersbuild-worktree-git-worktree-buildconvention), [`provisioner-process`](#built-in-adaptersprovisioner-process-process-provisioner) and [`provisioner-docker`](#built-in-adaptersprovisioner-docker-docker-provisioner), the [Effect wrappers](#effect-wrappers), and [Exposure](#exposure-optional)
+- [Configuration](#configuration): [The env file](#the-env-file), [Sample `.env.qa` files](#sample-envqa-files), [Tokens](#tokens), [Keys](#keys), [A `cfg` built in code](#a-cfg-built-in-code)
+- [HTTP API](#http-api-harness-port), [Expose CLI](#expose-cli), [Demo](#demo)
+- [Known limits](#known-limits)
+- [Contributing](#contributing), [Reporting a vulnerability](#reporting-a-vulnerability), [License](#license)
+
+## Try it
+
+```sh
+git clone https://github.com/critical-labs/qa-conductor
+cd qa-conductor
+npm run demo        # then open http://127.0.0.1:4100/
+```
+
+The demo runs the real conductor against fixture PRs and fake adapters, so it needs nothing but Node: no GitHub token, containers or databases. `demo/` is in the repository, not in the npm package. More in [Demo](#demo).
+
+## Requirements
+
+- **Node 22 or later.** The package has no runtime dependencies.
+- **Linux or macOS.** Windows isn't supported: the process Provisioner signals process groups and reads `ps`, and the Docker one runs `sh`.
+- **The tools each built-in adapter runs**, on the conductor's `PATH`:
+  - `adapters/build-worktree`: `git`, with worktree support;
+  - `adapters/provisioner-process`: `ps`, and to tell one boot of the machine from the next, `/proc/sys/kernel/random/boot_id` on Linux or `sysctl` on macOS;
+  - `adapters/provisioner-docker` and `./docker`: the `docker` CLI and `sh`, and a Docker daemon the conductor's user may use;
+  - `adapters/exposure-tailscale` and the [expose CLI](#expose-cli): a `tailscale` CLI no older than the daemon (on macOS, the app's bundled one), run by a user the daemon lets change `tailscale serve` (on Linux, root or the user `tailscale set --operator` names).
+- **No TypeScript declarations yet.** The package is plain JavaScript (ES modules); the [Types](#types) below describe what the adapters exchange.
 
 ## Install
 
@@ -12,35 +46,75 @@ The conductor owns the choreography: session state, cancellation, the harness UI
 npm install @critical-labs/qa-conductor
 ```
 
-Consumers that pin a git tag may keep doing so:
+To pin a git tag instead: `npm install github:critical-labs/qa-conductor#v0.3.0`.
 
-```sh
-npm install github:critical-labs/qa-conductor#v0.3.0
-```
+## Quickstart: QA your own app
 
-Node ≥ 22. There are no runtime dependencies.
+This script is a whole conductor for an app that runs from a checkout with one `node` command and needs no database. It QAs `acme/widget`'s pull requests on this machine: each pane is a git worktree, `main` and the PR head, running `node server.js` on a port of its own. It is this repository's own self-QA, [`qa/self.mjs`](qa/self.mjs), cut down.
 
-### Entry points
+1. Create `.env.qa` beside it, readable by you alone, since it holds a token, and keep it out of git:
+   ```sh
+   (umask 077 && touch .env.qa)
+   echo .env.qa >> .gitignore
+   ```
+   Then put in it a GitHub token for the repository (see [Tokens](#tokens)) and the repository's name:
+   ```
+   GITHUB_QA_TOKEN=<token>
+   QA_REPO=acme/widget
+   ```
+2. Save this as `qa.mjs`:
+   ```js
+   import fs from 'node:fs'
+   import os from 'node:os'
+   import path from 'node:path'
+   import { startConductor } from '@critical-labs/qa-conductor'
+   import { loadConfig } from '@critical-labs/qa-conductor/config'
+   import { createGithub } from '@critical-labs/qa-conductor/github'
+   import { createWorktreeBuild } from '@critical-labs/qa-conductor/adapters/build-worktree'
+   import { createProcessProvisioner } from '@critical-labs/qa-conductor/adapters/provisioner-process'
 
-| Import | Exports | |
-|---|---|---|
-| `@critical-labs/qa-conductor` | `startConductor` | the conductor: harness, pane proxies, sessions, the exposure loop ([Use](#use)) |
-| `@critical-labs/qa-conductor/config` | `loadConfig`, `parseEnvFile`, `defaultExposure`, `defaultHarnessOrigin`, `isExposureInterval`, `EXPOSURE_MODES`, `EXPOSURE_INTERVAL_RULE`, `MAX_EXPOSURE_INTERVAL_MINUTES`, `HARNESS_PATH` | reading `.env.qa` into `cfg` ([Configuration](#configuration)), and the rules it checks |
-| `@critical-labs/qa-conductor/session` | `bootSession`, `teardownSession`, `createSession`, `reduce`, `touch`, `isIdle`, `ROLES`, `PANE_STAGES`, `parseEnv`, `renderEnv`, `migrateImageFor` | the boot sequence and session state the conductor runs, and helpers for adapters: parsing and rendering env file text, and the `migrate-<tag>` image beside an app image |
-| `@critical-labs/qa-conductor/github` | `createGithub` | the GitHub effect wrapper |
-| `@critical-labs/qa-conductor/docker` | `createDocker` | the Docker effect wrapper |
-| `@critical-labs/qa-conductor/exec` | `makeExecFileFn` | the `execFile` effect wrapper |
-| `@critical-labs/qa-conductor/identity` | `normalizeLogins`, `refusalReason`, `isAllowed`, `identityGate` | the [Tailscale identity gate](#security) |
-| `@critical-labs/qa-conductor/exposure` | `mountsFor`, `reconcileExposure`, `runExpose` | one [exposure](#exposure-optional) pass, outside a conductor |
-| `@critical-labs/qa-conductor/proxy` | `createPaneProxy`, `panePolicy`, `parseSetCookie`, `isAllowedHost`, `requestHostname`, `misdirected` | the pane proxy, and the [Host allowlist](#security) check every server runs |
-| `@critical-labs/qa-conductor/verdict` | `formatVerdict`, `postVerdict` | the verdict comment and label |
-| `@critical-labs/qa-conductor/adapters/provisioner-docker` | `createDockerProvisioner` | a Provisioner for docker-sibling deployments |
-| `@critical-labs/qa-conductor/adapters/provisioner-process` | `createProcessProvisioner` | a Provisioner for local process groups |
-| `@critical-labs/qa-conductor/adapters/build-worktree` | `createWorktreeBuild`, `trustDecision` | a BuildConvention that runs PRs from git worktrees, behind a trust gate |
-| `@critical-labs/qa-conductor/adapters/exposure-tailscale` | `createTailscaleExposure` | an Exposure adapter on `tailscale serve` |
-| `@critical-labs/qa-conductor/package.json` | *(the manifest)* | |
+   // Panes on loopback: nothing outside this machine reaches them, so no identity gate.
+   const cfg = loadConfig('.env.qa', {
+     defaults: { QA_BASE_ORIGIN: 'http://127.0.0.1:3101', QA_PR_ORIGIN: 'http://127.0.0.1:3102' },
+   })
+   const github = createGithub({ token: cfg.githubToken, repo: cfg.repo, qaLabels: [cfg.verdictLabels.accept, cfg.verdictLabels.reject] })
+   const cacheDir = path.join(os.homedir(), '.cache/qa-conductor', cfg.repo.replace('/', '-'))
 
-Each row lists every name its entry point exports, and no other entry point is exported. The package also installs one bin, `qa-conductor-expose`, the [expose CLI](#expose-cli), for operators.
+   const conductor = startConductor({
+     cfg,
+     github,
+     fsx: { readFile: p => fs.promises.readFile(p) },
+     adapters: {
+       // main and each PR head in a git worktree, a PR only once it passes the trust gate
+       build: createWorktreeBuild({
+         repo: cfg.repo,
+         cacheDir: path.join(cacheDir, 'build'),
+         github,
+         servicesFor: dir => ({ app: dir }),
+         install: { cmd: 'npm', args: ['ci', '--ignore-scripts'] },
+       }),
+       // `node server.js` in each worktree, as a process group on 127.0.0.1
+       provisioner: createProcessProvisioner({
+         stateDir: path.join(cacheDir, 'state'),
+         command: ({ ref }) => ({ cmd: process.execPath, args: ['server.js'], cwd: ref }),
+       }),
+       seed: { databases: [], seedPane: async () => {} },
+       envTransform: { derivePaneEnv: ({ pane }) => ({ app: { PORT: String(pane.services.app.port) } }) },
+       auth: { requiresDb: false, establishSession: async ({ pane }) => ({ landingUrl: `${pane.publicOrigin}/` }) },
+     },
+   })
+
+   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+     process.on(sig, () => conductor.shutdown().then(() => process.exit(0)))
+   }
+   ```
+3. Run `npm install @critical-labs/qa-conductor` beside it, then `node qa.mjs`, open `http://127.0.0.1:3100/qa/`, and open a PR. Ctrl-C tears both panes down.
+
+What the pieces do, and what to change for your app:
+- **The trust gate.** A PR boots only when its author has write access to the repository and its head is in the repository or the author's own fork, since booting it runs its code as you. See [`adapters/build-worktree`](#built-in-adaptersbuild-worktree-git-worktree-buildconvention).
+- **Install and launch.** The install runs with `--ignore-scripts`. The server must be started directly, not through `npm run` or `npx` (the [launch contract](#built-in-adaptersprovisioner-process-process-provisioner)), and must listen on the `PORT` the EnvTransform gives it, on `127.0.0.1`. It counts as up once `/` answers below `500`.
+- **No data, no sign-in.** The Seed clones nothing and the AuthBootstrap lands each pane on `/`. To give each pane its own copy of a database, pass the Provisioner a `database` and write a `seedPane`; to sign the reviewer in, return a sign-in URL from `establishSession`. [The seams](#the-seams) has the contracts.
+- **Other devices.** To open the harness from another machine, read [Security](#security), then [Configuration](#configuration)'s tailnet sample.
 
 ## Use
 
@@ -66,14 +140,63 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 }
 ```
 
-`startConductor` serves the harness on `cfg.ports.harness` and one proxy per pane on `cfg.ports.base` / `cfg.ports.pr`, all on `cfg.host` (**`127.0.0.1` by default**). It returns `{ servers, stop(), shutdown(), exposure }`:
+`startConductor` takes:
+
+| Option | Default | |
+|---|---|---|
+| `cfg` | *(required)* | the configuration, from `loadConfig` or built in code (see [Configuration](#configuration)) |
+| `github` | *(required)* | what the core calls on GitHub: `createGithub(...)`, or anything with the [members the core uses](#effect-wrappers) |
+| `fsx` | *(required)* | `{ readFile(path) }`, which serves the harness UI files from `publicDir` |
+| `adapters` | *(required)* | `{ provisioner, build, seed, envTransform, auth }`, plus `exposure` if you want one ([The seams](#the-seams)) |
+| `readBaseEnv` | `async () => ({})` | the env the panes' env is derived from, such as production's: passed to `derivePaneEnv` as `prodEnv` at each boot |
+| `publicDir` | the package's `public/` | the directory with the harness UI's `index.html` and `harness.js` and the panes' `bridge.js` |
+| `log` | `console` | where the `[qa]` lines go: `log.log` and `log.error` |
+
+It serves the harness on `cfg.ports.harness` and one proxy per pane on `cfg.ports.base` / `cfg.ports.pr`, all on `cfg.host` (**`127.0.0.1` by default**). It returns `{ servers, stop(), shutdown(), exposure }`:
 - `shutdown()` is the graceful exit. It stops the idle reaper and the [exposure loop](#exposure-optional), refuses harness writes from then on (`503`, so no new boot can start), tears the session down (aborting an in-flight boot and tearing down both panes), ends the progress streams, closes every connection and resolves once all three servers are closed. Call it from your signal handlers; calling it again is a no-op.
 - `stop()` only stops the reaper and the exposure loop, and asks the servers to close.
 - `exposure` is the exposure loop's handle, `{ ready, state(), reconcile() }`. `ready` resolves with the state after the first pass, or as it stands when `stop()` or `shutdown()` begins first (at once with no Exposure adapter). `state()` is the last pass, as `GET /api/exposure` reports it. `reconcile()` runs a pass now, or joins the one in flight; before all three servers listen there are no targets to mount yet, so it returns `ready`.
 
 `cfg.paneOrigins` must be the URLs viewers actually reach the panes at, and `cfg.harnessOrigin` the one they open the harness at (see [Configuration](#configuration)). To reach the harness from anywhere but the machine it runs on, read [Security](#security) first, then either:
-- put `tailscale serve` on the same host in front of these ports, in tailscale mode (`QA_EXPOSURE=tailscale`, the default for any layout that isn't loopback throughout): every server then answers only the Tailscale logins in `QA_ALLOWED_LOGINS`, and listens on loopback. Pass an [Exposure adapter](#exposure-optional) and the conductor sets up and keeps those mounts itself; or
+- put `tailscale serve --https` on the same host in front of these ports, in tailscale mode (`QA_EXPOSURE=tailscale`, the default for any layout that isn't loopback throughout): every server then answers only the Tailscale logins in `QA_ALLOWED_LOGINS`, and listens on loopback. Pass an [Exposure adapter](#exposure-optional) and the conductor sets up and keeps those mounts itself; or
 - put another TLS front door that authenticates viewers in front of them, and set `QA_EXPOSURE=none`.
+
+### Entry points
+
+| Import | Exports | |
+|---|---|---|
+| `@critical-labs/qa-conductor` | `startConductor` | the conductor: harness, pane proxies, sessions, the exposure loop ([Use](#use)) |
+| `@critical-labs/qa-conductor/config` | `loadConfig`, `parseEnvFile`, `defaultExposure`, `defaultHarnessOrigin`, `isExposureInterval`, `EXPOSURE_MODES`, `EXPOSURE_INTERVAL_RULE`, `MAX_EXPOSURE_INTERVAL_MINUTES`, `HARNESS_PATH` | reading `.env.qa` into `cfg` ([Configuration](#configuration)), and the rules it checks |
+| `@critical-labs/qa-conductor/session` | `bootSession`, `teardownSession`, `createSession`, `reduce`, `touch`, `isIdle`, `ROLES`, `PANE_STAGES`, `parseEnv`, `renderEnv`, `migrateImageFor` | the boot sequence and session state the conductor runs, and helpers for adapters: parsing and rendering env file text, and the `migrate-<tag>` image beside an app image |
+| `@critical-labs/qa-conductor/github` | `createGithub` | the GitHub [effect wrapper](#effect-wrappers) |
+| `@critical-labs/qa-conductor/docker` | `createDocker` | the Docker [effect wrapper](#effect-wrappers) |
+| `@critical-labs/qa-conductor/exec` | `makeExecFileFn` | the `execFile` [effect wrapper](#effect-wrappers) |
+| `@critical-labs/qa-conductor/identity` | `normalizeLogins`, `refusalReason`, `isAllowed`, `identityGate` | the [Tailscale identity gate](#security) |
+| `@critical-labs/qa-conductor/exposure` | `mountsFor`, `reconcileExposure`, `runExpose` | one [exposure](#exposure-optional) pass, outside a conductor |
+| `@critical-labs/qa-conductor/proxy` | `createPaneProxy`, `panePolicy`, `parseSetCookie`, `isAllowedHost`, `requestHostname`, `misdirected` | the pane proxy, and the [Host allowlist](#security) check every server runs |
+| `@critical-labs/qa-conductor/verdict` | `formatVerdict`, `postVerdict` | the verdict comment and label |
+| `@critical-labs/qa-conductor/adapters/provisioner-docker` | `createDockerProvisioner` | a Provisioner that runs each pane as containers on the host's Docker daemon |
+| `@critical-labs/qa-conductor/adapters/provisioner-process` | `createProcessProvisioner` | a Provisioner for local process groups |
+| `@critical-labs/qa-conductor/adapters/build-worktree` | `createWorktreeBuild`, `trustDecision` | a BuildConvention that runs PRs from git worktrees, behind a trust gate |
+| `@critical-labs/qa-conductor/adapters/exposure-tailscale` | `createTailscaleExposure` | an Exposure adapter on `tailscale serve` |
+| `@critical-labs/qa-conductor/package.json` | *(the manifest)* | |
+
+Each row lists every name its entry point exports, and no other entry point is exported. The package also installs one bin, `qa-conductor-expose`, the [expose CLI](#expose-cli), for operators.
+
+## Using the harness
+
+Open the harness at its origin, under `/qa/`, as startup logs it (`[qa] harness at <origin>/qa/`); anywhere else it shows a banner that links there. Then:
+
+- **Pull requests.** The picker lists the open PRs, at most the 50 most recently opened, with each one's build status: `ready — opens in seconds`, `building…`, `needs build` or `can't boot: <reason>`. **↻** reloads the list and **Open QA** boots a PR. One session runs at a time: opening another PR offers **Resume** for the running one, or **End #N and open #M** to take over.
+- **Boot.** The four steps, Building, Preparing data, Migrating and Starting, each timed, with the BuildConvention's messages under the first. **Cancel boot** tears the boot down. A failed boot shows the error and the failing pane's log tail, with **Retry boot**.
+- **Mirror** (`m`) replays each click, key and form value from one pane in the other. Its **⌄** menu turns scroll mirroring off and on (`s`).
+- **Re-sync →** (`r`) reloads the PR pane at the base pane's path, and its **⌄** menu the base pane at the PR pane's. A dot on it says the panes are at different paths.
+- **375**, **768** and **Full** (`1`, `2`, `3`) set both panes' width.
+- **auto-end** counts down to the idle teardown, `QA_IDLE_MINUTES` after the last interaction, and turns amber for the last five minutes.
+- **End session** (`e`) tears the session down once you click it again within three seconds.
+- **Each pane's bar** has a dot (amber while signing in, green while the pane's bridge reports, grey after 10 seconds of silence), the pane's path, a count of interactions the other pane couldn't replay (click it to clear), and buttons to copy the path, reload the pane and open it in a new tab.
+- **Verdict** (`v`) opens the drawer: notes, kept in the browser as a draft for each PR, then **Accept** or **Reject**, a preview of the comment and the label change, and **Post to PR #N**. After posting: **End session**, **Keep session open** or **Back to pull requests**.
+- **`?`** lists the keyboard shortcuts, which work while the harness, not a pane, has the focus. `Esc` closes the drawer or the list, or cancels an end-session click. Below 900 pixels wide, the panes become **BASE** and **PR** tabs.
 
 ## Security
 
@@ -84,7 +207,9 @@ The conductor's own defences in depth:
 
   `QA_EXPOSURE` defaults to `tailscale` when anything the conductor answers to or listens on is off loopback: the harness origin, either pane origin, `QA_PUBLIC_HOST`, a `QA_ALLOWED_HOSTS` entry or `QA_BIND_HOST` (see [Configuration](#configuration)). Loopback layouts, such as `npm run qa` and the demo, stay ungated with no config.
 
-  **The gate trusts the header from anything that can reach loopback on this host.** That is why tailscale mode requires a loopback bind: on any other address, a client could send its own login. It also means the gate keeps out other devices, not code on this one. With `provisioner-process`, the pane processes run PR code on the same host, as the same user, so they can reach loopback and send any login they like: in tailscale mode the gate does not protect against PR code, and only the BuildConvention's trust gate does. Container panes that aren't on the host network can't reach the host's loopback.
+  **The gate trusts the header from anything that can reach loopback on this host.** That is why tailscale mode requires a loopback bind: on any other address, a client could send its own login. It also means the gate keeps out other devices, not code on this one. With `provisioner-process`, the pane processes run PR code on the same host, as the same user, so they can reach loopback and send any login they like: in tailscale mode the gate does not protect against PR code, and only the BuildConvention's trust gate does. Containers don't change that everywhere. On native Linux Docker, a container on a bridge network can't reach the host's loopback, but Docker Desktop (through `host.docker.internal`) and some rootless runtimes forward to it, and there a container pane can send any login too.
+
+  **The gate works only behind `tailscale serve --https`**, which sets `Tailscale-User-Login` and drops any copy the client sent. Never put Funnel in front of the conductor, which opens it to the internet, nor `tailscale serve --tcp` or `--tls-terminated-tcp`, which pass the client's bytes through unchanged, so a header it writes itself reaches the gate. And never put `tailscale serve` in front of a conductor in none mode (`QA_EXPOSURE=none`): with no gate, every device on the tailnet gets in.
 - **Loopback by default.** All three servers listen on `QA_BIND_HOST`, default `127.0.0.1`, and tailscale mode refuses any other address (`loadConfig` and `startConductor` throw). In none mode, anything other than loopback exposes an unauthenticated API that returns pane login URLs and posts verdicts with `GITHUB_QA_TOKEN`. A pane proxy *is* an authenticated pane session, because the proxy holds the pane's cookie jar. Widen the bind only in none mode, behind a firewall or an authenticating front door, and have viewers reach the harness and the panes over https (a plain-http origin must be loopback, see the pane request guard below).
 - **Host allowlist.** Every server checks the `Host` header before routing (the harness does so before it even parses the request target) and answers `421` unless its hostname (port ignored, `[]` stripped) is `127.0.0.1`, `localhost`, `::1`, `QA_PUBLIC_HOST`, the hostname of the harness origin or of either pane origin, or an entry in `QA_ALLOWED_HOSTS`. This defeats DNS rebinding. A front door must pass the viewer's `Host` through, or rewrite it to a loopback `Host`. A rewritten `Host` that is allowed but not loopback (`qa-conductor:3100` behind nginx, say) clears this check, but every browser `/api/*` call then gets `403 not the harness origin` (see [Same-origin API](#security)).
 - **Pane request guard.** The proxy holds each pane's cookie jar, so every request that reaches a pane acts as the reviewer, and the reviewer's browser sends requests for any page they have open. Loopback and the Host allowlist don't stop that. So a pane answers `403` to:
@@ -110,7 +235,7 @@ The conductor's own defences in depth:
 
 ## The seams
 
-A boot runs these five seams in order: `ensureBuilt` → per pane (`provisionDatabase` → `seedPane` → `reserveServices`) → `derivePaneEnv` (+ `runMigrate`) → `launchServices` → `waitHealthy` → `establishSession`. A sixth, [Exposure](#exposure-optional), is optional and outside the boot: it publishes the conductor itself.
+A boot runs these five seams in order: `ensureBuilt` → per pane (`provisionDatabase` → `seedPane` → `reserveServices`) → `derivePaneEnv` (+ `runMigrate`) → `launchServices` → `waitHealthy` → `establishSession`. A sixth, [Exposure](#exposure-optional), is optional and outside the boot: it publishes the conductor itself. The shapes they pass each other are under [Types](#types).
 
 | Seam | Members | Owns |
 |---|---|---|
@@ -118,7 +243,7 @@ A boot runs these five seams in order: `ensureBuilt` → per pane (`provisionDat
 | **BuildConvention** | `migrationStrategy` (`'one-shot-image' \| 'on-boot' \| 'none'`), `ensureBuilt(pr, {signal})`, `resolvePrImages(pr)`, `resolveBaseImages()` → `{services: {name: ref}, migrate?, label?}`; optional `subscribeBuild(cb)` with `cb({runUrl?, runStatus?, message?})`, `describePrs(prs) → [{number, status: 'built'\|'building'\|'none'\|'blocked', runUrl, reason?}]` | What gets run for base and PR, whether it's ready, and whether it may run at all |
 | **Seed** | `databases`, `seedPane({paneRef, db, databases})` | Where each pane's data comes from and how it moves |
 | **EnvTransform** | `derivePaneEnv({prodEnv, pane}) → {service: env}` (pure) | Pointing a pane at its own DB and origin, and neutralizing side effects (email, payments, storage) |
-| **AuthBootstrap** | `requiresDb`, `establishSession({pane, operator, db?}) → {landingUrl, cookies?, replay?}`; optional `envContributions()` | Getting the reviewer logged in to each pane |
+| **AuthBootstrap** | `requiresDb`, `establishSession({pane, operator, db?}) → {landingUrl}`; optional `envContributions() → {service: env}` | Getting the reviewer logged in to each pane |
 
 The optional members degrade gracefully when absent:
 - With no `sweep`, nothing is cleaned up at startup.
@@ -126,6 +251,19 @@ The optional members degrade gracefully when absent:
 - With no `describePrs`, every PR shows as `none`.
 
 The one exception: a build that declares `one-shot-image` migrations with a Provisioner that can't `runMigrate` fails the boot with a clear error.
+
+### Types
+
+What the seams pass each other. Any method above may return its result or a promise of it: the core awaits each one.
+
+- **PaneRef**: `{ role, slug, publicOrigin }` during a boot. `role` is `'base'` or `'pr'`, `slug` is `qa-<pr>-<role>`, and `publicOrigin` is the pane's origin from `cfg.paneOrigins`. `teardown` and `logs` get only `{ role }`, since they also run outside a boot.
+- **ImageSet**: `{ services: { name: ref }, migrate?: { image }, label? }`, from `resolveBaseImages()` and `resolvePrImages(pr)`. A `ref` is whatever the Provisioner launches, such as an image name or a checkout directory.
+- **Reserved**: `{ name: { url, port } }`, from `reserveServices`: where each service will listen. **Only the primary service is proxied**, `app` when there is one, else the first: the pane proxy forwards to `127.0.0.1:<port>` of that service, so it must listen there. Any other service is the app's own business.
+- **Pane**: `{ ref, dsn, db, services, publicOrigin, env }`. `ref` is the PaneRef, `dsn` and `db` come from `provisionDatabase`, `services` is the Reserved map, and `env` is the pane's env. `derivePaneEnv` gets the pane before it has an `env`; `establishSession` gets it whole.
+- **PaneEnv**: `{ service: { KEY: value } }`, from `derivePaneEnv`. **EnvContributions**, the same shape from `auth.envContributions()`, is merged over it service by service. `runMigrate` and `launchServices` get the result as `env`.
+- **SessionResult**: `{ landingUrl }`, from `establishSession`: the URL the harness loads in the pane's frame. The core reads nothing else from it, so a session cookie must reach the pane's jar as a `Set-Cookie` the landing URL answers with (see below).
+- **BuildEvent**: `{ runUrl?, runStatus?, message? }`, what `subscribeBuild`'s callback gets.
+- **Readiness**: `{ number, status, runUrl, reason? }`, one per PR from `describePrs`, with `status` one of `'built'`, `'building'`, `'none'` and `'blocked'`.
 
 ### Contracts between the seams
 
@@ -139,13 +277,7 @@ The one exception: a build that declares `one-shot-image` migrations with a Prov
 - **Landing flows stay on the pane origin (AuthBootstrap).** The harness loads each `landingUrl` as given; the bridge learns the harness origin from the proxy, not from the URL. A pane serves a navigation from another site only when its `Referer` is the harness origin, so a sign-in step on another site, such as an external identity provider's form, comes back with that site's `Referer` and is refused. Keep landing flows on the pane origin. Redirects within it are fine, whatever their `Referrer-Policy`: the proxy drops that header from a redirect that stays on the pane, so the next hop still carries the harness `Referer`.
 - **Sessions live in the jar (AuthBootstrap).** The pane app gets the cookies its own responses set this session, which the proxy keeps, and not the browser's. So the session must reach the jar in a `Set-Cookie`: have the `landingUrl`, or a redirect it makes, set it server-side. A session cookie the app's scripts write can't be kept apart for two panes on one hostname, `QA_FORWARD_CLIENT_COOKIES` or not. Cookies ignore ports, so both panes' pages write the same browser cookie, whichever pane signs in last overwrites it, and both proxies would pass that one value on: one pane's app would get the other pane's session (see [Security](#security)).
 
-**Built in:** `adapters/provisioner-docker` is a Provisioner for docker-sibling deployments. It creates the pane postgres containers, one app container per pane, `0600` env files under `workDir`, registry login and a labelled-orphan sweep. The `docker`, `github` and `exec` modules are the effect wrappers it and the reference adapters use.
-
-**Effect wrappers:**
-- `github`: `listOpenPrs()` items are `{number, title, headSha, headRef, author, authorAssociation, headRepo, headOwner}`. `prInfo(num)` returns `{number, headSha, author, authorAssociation, isDraft, headRepo, headOwner}`, where `headRepo` (`owner/name`) and `headOwner` are `null` when the head repository was deleted. `authorPermission(login)` returns the login's `admin|write|read|none` permission on the repo and throws on a non-2xx response. `author_association` alone is no access check: `COLLABORATOR` includes read-only outside collaborators.
-- `exec`: `makeExecFileFn()` resolves `{stdout}` and rejects with an Error whose message is unchanged and which also carries `stdout`, `stderr` and the exit `code`.
-
-**Reference consumer:** homefree's platform adapters (Docker + GHCR + `pg_dump` from the prod database + a magic-link login).
+**Reference consumers:** this repository's self-QA ([`qa/self.mjs`](qa/self.mjs): `build-worktree` and `provisioner-process`, described in [CONTRIBUTING.md](CONTRIBUTING.md#qa-this-repos-own-pull-requests)), the demo's fake adapters ([`demo/fake-adapters.mjs`](demo/fake-adapters.mjs)), and agent-identity's [`packages/qa`](https://github.com/critical-labs/agent-identity/tree/main/packages/qa), a 0.2-era consumer that seeds each pane's DynamoDB Local from a redacted snapshot.
 
 ### Built in: `adapters/build-worktree` (git-worktree BuildConvention)
 
@@ -203,7 +335,25 @@ How it works:
 A Provisioner for local processes. It runs each pane's services, and optionally a per-pane database, as process groups on `127.0.0.1`, with a scrubbed env, a pidfile and a start-time-checked orphan sweep. Its launch contract is below.
 
 ```js
+import net from 'node:net'
+import os from 'node:os'
+import path from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { createProcessProvisioner } from '@critical-labs/qa-conductor/adapters/provisioner-process'
+
+const ddbDir = '/opt/dynamodb-local'   // where DynamoDBLocal.jar is unpacked
+
+// Resolves once something accepts connections on the port.
+async function waitForPort(port, { signal }) {
+  while (!signal.aborted) {
+    const open = await new Promise(resolve => {
+      const socket = net.connect(port, '127.0.0.1', () => { socket.end(); resolve(true) })
+      socket.on('error', () => resolve(false))
+    })
+    if (open) return
+    await sleep(250)
+  }
+}
 
 const provisioner = createProcessProvisioner({
   stateDir: path.join(os.homedir(), '.cache/qa-conductor/acme-widget'),  // holds pids.json
@@ -237,6 +387,87 @@ The other options are `healthTimeoutMs` (60000, per service), `host` (`127.0.0.1
 - There's no `runMigrate`: process consumers migrate on boot.
 
 **Security.** A PR's code runs as your user, on your machine. The trust gate is the only real boundary between a PR's code and the reviewer's machine: the BuildConvention must refuse to build a PR it doesn't trust. Env scrubbing and loopback binding are defence in depth. The Tailscale identity gate is no boundary against PR code either: a pane process can reach the conductor on loopback and send any `Tailscale-User-Login` it likes (see [Security](#security)).
+
+### Built in: `adapters/provisioner-docker` (Docker Provisioner)
+
+A Provisioner that runs each pane as two containers on the host's Docker daemon, a postgres one and an app one, on a network both panes share. It writes each pane's env to an owner-only file for `docker run --env-file`, logs in to the registry, runs one-shot migrations, and at startup removes whatever an earlier run left behind.
+
+```js
+import fs from 'node:fs'
+import { createDocker } from '@critical-labs/qa-conductor/docker'
+import { makeExecFileFn } from '@critical-labs/qa-conductor/exec'
+import { createDockerProvisioner } from '@critical-labs/qa-conductor/adapters/provisioner-docker'
+
+const provisioner = createDockerProvisioner({
+  docker: createDocker({ execFileFn: makeExecFileFn() }),
+  fsx: fs.promises,
+  workDir: '/var/lib/qa-conductor',
+  registry: { user: 'acme-bot', token: cfg.ghcrToken },
+})
+```
+
+| Option | Default | |
+|---|---|---|
+| `docker` | *(required)* | a `createDocker(...)` ([Effect wrappers](#effect-wrappers)) |
+| `fsx` | *(required)* | `{ writeFile, unlink }`, such as `fs.promises`: writes the env files, mode `0600`, and removes them at teardown |
+| `workDir` | *(required)* | the directory the env files go in, as `.env.qa-base` and `.env.qa-pr`. The `docker` CLI reads them by path, so it must see the same directory |
+| `network` | `'qa-session'` | the Docker network both panes' containers join |
+| `postgres` | `{ user: 'qa', password: 'qa', db: 'postgres' }` | the credentials and admin database in the `dsn` it returns: match `createDocker`'s `postgres` |
+| `hostPorts` | `{ base: 3111, pr: 3112 }` | the loopback host port each pane's app container is published on |
+| `registry` | `null` | `{ user, token }`: log in to `ghcr.io` before pulling, and again before each retry |
+
+For each pane:
+- `provisionDatabase` starts `qa-pg-<role>` on the network, waits until it answers twice in a row, creates each of the Seed's `databases`, and returns the `dsn` `postgresql://<user>:<password>@qa-pg-<role>:5432` and a `db` of `{ dsn, query(sql, { database }) }`, which runs `psql` in the container.
+- `runMigrate` runs `migrate.image` once on the network, with the pane's `app` env (else its first service's), and removes the container after.
+- `launchServices` pulls each image that's missing (three tries), then runs it as `qa-app-<role>`, with its port `3000` published on `127.0.0.1:<hostPorts[role]>`.
+- `waitHealthy` polls `http://127.0.0.1:<port>/api/health` until it answers `200`, for up to a minute.
+- `logs` tails the app container at `starting`, else the postgres one.
+- `teardown` removes both containers and their volumes, the network once no pane uses it, and the env file. `sweep` removes every container with `createDocker`'s `label`, and the network.
+
+Its limits:
+- **One service per pane.** Every service would run as `qa-app-<role>` with the same env file.
+- **Fixed names and ports.** The containers, the network and the host ports are the same on every run, so run one conductor per Docker host.
+- **The app's side:** listen on port `3000` in the container, and answer `GET /api/health` with `200`.
+- **The registry login is to `ghcr.io` only.**
+- **It ignores `signal`**, so a teardown waits for a Docker call in flight.
+
+### Effect wrappers
+
+**`github`.** The core calls only these, so anything that has them will do:
+- `listOpenPrs()` → `[{ number, title, headSha, headRef, author, authorAssociation, headRepo, headOwner }]`, for the picker;
+- `prInfo(num)` → `{ number, headSha, author, authorAssociation, isDraft, headRepo, headOwner }`, or without it `prHead(num)` → `headSha`, for `/api/build-status`;
+- `postComment(num, body)` → the comment's URL, and `setQaLabel(num, label)`, for the verdict.
+
+`adapters/build-worktree` also needs `prInfo` and `authorPermission(login)`. `createGithub(options)` makes one on GitHub's REST API:
+
+| Option | Default | |
+|---|---|---|
+| `token` | *(required)* | every call but the package listing ([Tokens](#tokens)) |
+| `repo` | *(required)* | `owner/name` |
+| `qaLabels` | `['qa-approved', 'qa-changes-requested']` | the accept and reject labels, `[cfg.verdictLabels.accept, cfg.verdictLabels.reject]`: `setQaLabel` adds one and removes the other |
+| `packagesToken` | `token` | the GHCR package version listing only (`cfg.ghcrToken`) |
+| `packageName` | `null` | the container package the GHCR helpers read; they throw without it |
+| `rcTagPattern` | `/-rc\.\d+$/` | which tags `latestRcTag()` counts as release candidates |
+| `previewWorkflow` | `'pr-preview.yml'` | the workflow `dispatchPreviewBuild(num)` runs, with the input `pr`, and `findPreviewRun(num)` reads |
+| `previewRef` | `'main'` | the ref that workflow is dispatched on |
+| `fetchFn` | `fetch` | |
+
+- `listOpenPrs()` returns at most the 50 most recently opened PRs: it reads one page.
+- `headRepo` (`owner/name`) and `headOwner` are `null` when the head repository was deleted.
+- `authorPermission(login)` returns the login's `admin`, `write`, `read` or `none` permission on the repo, and throws on a non-2xx response. `author_association` alone is no access check: `COLLABORATOR` includes read-only outside collaborators.
+- The GHCR and preview-build helpers are for a BuildConvention that runs CI-built images: `ghcrTagExists(tag)`, `latestRcTag()`, `listPrImageTags()`, `awaitPreviewImage(num, sha, { timeoutMs, pollMs, signal })`, which waits for the tag `pr-<num>-<the sha's first 12 characters>`, `dispatchPreviewBuild(num)` and `findPreviewRun(num)`. They read a package that the token's own user owns, not an organization's.
+
+**`docker`.** `createDocker({ execFileFn, label, postgres })` runs the `docker` CLI for the Docker Provisioner, and for a Seed that copies databases between containers:
+
+| Option | Default | |
+|---|---|---|
+| `execFileFn` | *(required)* | `makeExecFileFn()` from `./exec` |
+| `label` | `'qa-conductor-session'` | put on every container and network it creates; `sweepQaContainers()` removes whatever carries it |
+| `postgres` | `{ image: 'postgres:16', user: 'qa', password: 'qa', db: 'postgres' }` | the pane database containers; keys you leave out keep these values |
+
+Its members are `run(argv)`, `login(user, token)` (to `ghcr.io`, with the token in the environment, never in argv), `imagePresent`, `ensureImage(image, { retries, relogin })`, `runPg`, `waitHealthyPg`, `createDatabase`, `pipeDump(from, to, db)` and `cloneDb(from, to, db)` (a host-side `pg_dump | psql` between two containers), `runMigrate`, `runApp`, `waitHealthyApp`, `psql`, `rmForce`, `createNetwork`, `rmNetwork`, `sweepQaContainers`, `inspectImageOf` and `logsTail`. `login`, `createDatabase`, `pipeDump`, `cloneDb` and `logsTail` throw on a name that isn't letters, digits, `_` and `-`.
+
+**`exec`.** `makeExecFileFn({ maxBuffer })` returns an `execFileFn(cmd, args, opts)` that runs `execFile` with `maxBuffer` (default 64 MB, which `opts` can override) and resolves `{ stdout }`. It rejects with an Error whose message is `<cmd> <first arg>: <execFile's message>`, then, on the next line, up to 2000 characters of stderr. The original error is its `cause`, and it also carries the whole `stdout` and `stderr` and the exit `code`.
 
 ### Exposure (optional)
 
@@ -280,7 +511,7 @@ The contract:
   - `path` is `/qa` for the harness and `/` for each pane.
   - `target` is `http://<cfg.host>:<listen port>`, with brackets for IPv6.
 - **`Drift = { mount, actual }`**: `actual` is the proxy target the front door serves at that mount over https now, or `null` when there is none: nothing at that path, no https on the port, or a handler that isn't a proxy. A mount also drifts once for each other handler that takes some of its requests, and `actual` then names that handler, as `<path> -> <target>` or `<path> (not a proxy)`.
-- **`ensure(mounts) → Promise<{ added, ok }>`** creates the missing or mismatched mounts, and only those. **`check(mounts) → Promise<{ ok, drift }>`** changes nothing. Either rejects on failure. An `ensure` that fails part way may list the mounts it did write on its error, as `added`.
+- **`ensure(mounts) → Promise<{ added: Mount[], ok: Mount[] }>`** creates the missing or mismatched mounts, and only those: `added` lists the mounts it wrote, `ok` the ones already in place. **`check(mounts) → Promise<{ ok: boolean, drift: Drift[] }>`** changes nothing. Either rejects on failure. An `ensure` that fails part way may list the mounts it did write on its error, as `added`.
 - **An adapter owns exactly the `(port, path)` pairs it is given**, and never touches another handler.
 
 `mountsFor(cfg, { ports = cfg.ports })` derives the mounts from the origins viewers open, so the URL a viewer sees and the mount behind it can't disagree. Pass the bound ports when `cfg.ports` holds `0`. It throws on a layout no front door can publish:
@@ -308,34 +539,87 @@ The contract:
 
 ## Configuration
 
-`loadConfig(path, { defaults, required = [] })` reads `KEY=value` lines. File values override `defaults`, and the raw map is returned as `cfg.env` so a platform can read its own keys. `required` lists extra keys the platform insists on (homefree re-requires `QA_OPERATOR_EMAIL`); it can't waive the core's.
+`loadConfig(path, { defaults, required = [] })` reads an env file, `.env.qa` by convention, into `cfg`. File values override `defaults`, and the raw map is returned as `cfg.env` so a platform can read its own keys. `required` lists extra keys the platform insists on (a platform may re-require `QA_OPERATOR_EMAIL`, say); it can't waive the core's.
 
-| Key | Default | |
-|---|---|---|
-| `GITHUB_QA_TOKEN` | *(required)* | PR list, head and trust lookups, verdict comment + label |
-| `QA_GHCR_TOKEN` | `GITHUB_QA_TOKEN` | `cfg.ghcrToken`, for `createGithub({ packagesToken })`: the GHCR package version listing, which a fine-grained token can't call (use a classic PAT with `read:packages`), and a platform's registry login |
-| `QA_REPO` | *(required)* | `owner/name` |
-| `QA_OPERATOR_EMAIL` | `null` | the reviewer, passed to `establishSession` |
-| `QA_PUBLIC_HOST` | *(required unless both pane origins are set)*, else `null` | default host for the pane origins; always an allowed `Host` |
-| `QA_BIND_HOST` | `127.0.0.1` | the address all three servers listen on (`[::1]` is read as `::1`); must be loopback in tailscale mode (see [Security](#security)) |
-| `QA_ALLOWED_HOSTS` | *(none)* | extra comma-separated hostnames (no ports) the servers answer to |
-| `QA_EXPOSURE` | `tailscale` if any address the conductor answers to or listens on is off loopback (see below), else `none` | `tailscale`: fronted by `tailscale serve` on this host, so the identity gate is on and the bind must be loopback. `none`: no gate (0.2's behaviour), for loopback or another authenticating front door. Anything else throws |
-| `QA_ALLOWED_LOGINS` | *(none)* | comma-separated Tailscale logins (as `tailscale whois` shows them, e.g. `alice@github`) allowed in when the gate is on; trimmed and lowercased. Required in tailscale mode |
-| `QA_EXPOSURE_INTERVAL_MINUTES` | `5` | minutes between [exposure](#exposure-optional) reconcile passes, when the platform passes an Exposure adapter. Above `0` and at most `35791`, the longest a timer can wait (above it, Node would fire every millisecond); fractions are fine |
-| `QA_TAILSCALE_BIN` | `tailscale` | the tailscale CLI the [expose CLI](#expose-cli) and self-QA run, for an env file they read. On macOS, use the app's `/Applications/Tailscale.app/Contents/MacOS/Tailscale` when the one on `PATH` is older than the daemon. The conductor never reads it: a platform passes `bin` to `createTailscaleExposure` |
-| `QA_HARNESS_PORT` / `QA_BASE_PROXY_PORT` / `QA_PR_PROXY_PORT` | `3100` / `3101` / `3102` | listen ports |
-| `QA_HARNESS_ORIGIN` | `https://<QA_PUBLIC_HOST>:8444`, else `http://<QA_BIND_HOST>:<QA_HARNESS_PORT>` on a loopback bind | the origin viewers open the harness at (any path dropped); the page is under `/qa/`. Required on a non-loopback bind with no public host. On port `0` the conductor derives it from the bound port. Not an IPv6 literal: on a `::1` bind, set `http://localhost:<port>` |
-| `QA_BASE_ORIGIN` / `QA_PR_ORIGIN` | `https://<host>:8443` / `:10000` | public pane origins |
-| `QA_FRAME_ANCESTORS` | *(none)* | extra comma-separated origins allowed to frame the panes, for a harness nested in a pane (self-QA's inner demos). CSP only: they pass no `Referer` check, and the bridge never talks to them |
-| `QA_FORWARD_CLIENT_COOKIES` | *(none)* | `cfg.forwardClientCookies`: comma-separated names of the browser's own cookies the pane proxies pass to the pane apps, beside each pane's jar, whose value wins on a name both have. Unset, the apps get only the jar's cookies (see [Security](#security)). Each must be a cookie name (an RFC 6265 token); `*` and other wildcards throw. Any page on the panes' hostname can set these cookies, the other pane's scripts included, so a value that isn't an RFC 6265 cookie-value (one with a space, a comma, a backslash or a stray double quote) isn't passed. On one hostname both pane apps get the browser's one value of each, so name only cookies both panes may share, such as a preference, never a session |
-| `QA_LABEL_ACCEPT` / `QA_LABEL_REJECT` | `qa-approved` / `qa-changes-requested` | verdict label pair |
-| `QA_IDLE_MINUTES` | `30` | idle sessions are torn down |
+### The env file
+
+- One `KEY=value` per line. Blank lines, lines that start with `#` and lines with no `=` are skipped. Spaces around the key and the value are dropped, and a later line wins.
+- A value in a matching pair of double or single quotes loses them. Nothing is unescaped or expanded, quoted or not: `$HOME` stays `$HOME`.
+- No `export`: `export KEY=value` sets a key named `export KEY`, which nothing reads.
+- No comment after a value: a `#` after a space or a tab in an unquoted value throws, naming the file, the line and the key, and so does a `#` after a quoted value's closing quote (`KEY="value" # note`), with a space between or not. Put the comment on a line of its own. A value with a space or a tab before a `#` needs quotes (`KEY="a # b"` is `a # b`), and inside them a `#` mustn't follow the quote character, which would read as the closing quote.
+- **It holds a token.** Keep it out of git (`echo .env.qa >> .gitignore`) and readable by you alone: create it with `(umask 077 && touch .env.qa)`, or `chmod 600` it.
+
+### Sample `.env.qa` files
+
+On one machine, with everything on loopback and no identity gate:
+
+```ini
+GITHUB_QA_TOKEN=<token>
+QA_REPO=acme/widget
+# With both pane origins set, QA_PUBLIC_HOST isn't needed.
+# The harness is at http://127.0.0.1:3100/qa/.
+QA_BASE_ORIGIN=http://127.0.0.1:3101
+QA_PR_ORIGIN=http://127.0.0.1:3102
+```
+
+On a tailnet, behind `tailscale serve` on the conductor's machine, `qa-box.tail1234.ts.net`:
+
+```ini
+GITHUB_QA_TOKEN=<token>
+QA_REPO=acme/widget
+# The harness is at https://qa-box.tail1234.ts.net:8444/qa/, the panes at :8443 and :10000.
+QA_PUBLIC_HOST=qa-box.tail1234.ts.net
+# Who may open them: Tailscale logins, as tailscale whois shows them.
+QA_ALLOWED_LOGINS=alice@github,bob@example.com
+```
+
+That layout is tailscale mode: every server listens on loopback and answers only those logins (see [Security](#security)). The platform's [Exposure adapter](#exposure-optional) mounts the three servers on `tailscale serve`, or you do, with `tailscale serve --bg --https=8444 --set-path=/qa http://127.0.0.1:3100`, `tailscale serve --bg --https=8443 http://127.0.0.1:3101` and `tailscale serve --bg --https=10000 http://127.0.0.1:3102`.
+
+### Tokens
+
+`GITHUB_QA_TOKEN` reads the open PRs and posts each verdict, as the token's owner. Use a fine-grained personal access token with:
+- **Repository access:** only the repository under QA.
+- **Pull requests: read.** The PR list, and each PR's head and author.
+- **Issues: read and write.** The verdict comment and label.
+- **Metadata: read**, which GitHub grants with any other permission. It also covers the author's permission, which the trust gate checks.
+
+Some built-ins need more than this token:
+- `adapters/build-worktree` fetches with plain `git` over https, so a private repository needs a git credential helper that can read it.
+- `createGithub`'s GHCR helpers list container package versions, which a fine-grained token can't. Set `QA_GHCR_TOKEN` to a classic token with `read:packages`, and pass `createGithub` the `packageName`.
+- A BuildConvention that dispatches preview builds with `createGithub`'s `dispatchPreviewBuild` and `findPreviewRun` needs Actions: read and write.
+
+### Keys
+
+| Key | `cfg` | Default | |
+|---|---|---|---|
+| `GITHUB_QA_TOKEN` | `githubToken` | *(required)* | PR list, head and trust lookups, verdict comment + label ([Tokens](#tokens)) |
+| `QA_GHCR_TOKEN` | `ghcrToken` | `GITHUB_QA_TOKEN` | for `createGithub({ packagesToken })`, with its `packageName`: the GHCR package version listing, which a fine-grained token can't call (use a classic PAT with `read:packages`), and a platform's registry login |
+| `QA_REPO` | `repo` | *(required)* | `owner/name` |
+| `QA_OPERATOR_EMAIL` | `operatorEmail` | `null` | the reviewer, passed to `establishSession` |
+| `QA_PUBLIC_HOST` | `publicHost` | *(required unless both pane origins are set)*, else `null` | default host for the harness and pane origins; always an allowed `Host` |
+| `QA_BIND_HOST` | `host` | `127.0.0.1` | the address all three servers listen on (`[::1]` is read as `::1`); must be loopback in tailscale mode (see [Security](#security)) |
+| `QA_ALLOWED_HOSTS` | `allowedHosts` | *(none)* | extra comma-separated hostnames (no ports) the servers answer to |
+| `QA_EXPOSURE` | `exposure` | `tailscale` if any address the conductor answers to or listens on is off loopback (see below), else `none` | `tailscale`: fronted by `tailscale serve --https` on this host, so the identity gate is on and the bind must be loopback. `none`: no gate (0.2's behaviour), for loopback or another authenticating front door. Anything else throws |
+| `QA_ALLOWED_LOGINS` | `allowedLogins` | *(none)* | comma-separated Tailscale logins (as `tailscale whois` shows them, e.g. `alice@github`) allowed in when the gate is on; trimmed and lowercased. Required in tailscale mode |
+| `QA_EXPOSURE_INTERVAL_MINUTES` | `exposureIntervalMinutes` | `5` | minutes between [exposure](#exposure-optional) reconcile passes, when the platform passes an Exposure adapter. Above `0` and at most `35791`, the longest a timer can wait (above it, Node would fire every millisecond); fractions are fine |
+| `QA_TAILSCALE_BIN` | *(only `cfg.env`)* | `tailscale` | the tailscale CLI the [expose CLI](#expose-cli) and this repository's self-QA run, for an env file they read. On macOS, use the app's `/Applications/Tailscale.app/Contents/MacOS/Tailscale` when the one on `PATH` is older than the daemon. The conductor never reads it: a platform passes `bin` to `createTailscaleExposure` |
+| `QA_HARNESS_PORT` / `QA_BASE_PROXY_PORT` / `QA_PR_PROXY_PORT` | `ports.harness` / `ports.base` / `ports.pr` | `3100` / `3101` / `3102` | listen ports |
+| `QA_HARNESS_ORIGIN` | `harnessOrigin` | `https://<QA_PUBLIC_HOST>:8444`, else `http://<QA_BIND_HOST>:<QA_HARNESS_PORT>` on a loopback bind | the origin viewers open the harness at (any path dropped); the page is under `/qa/`. Required on a non-loopback bind with no public host. On port `0` the conductor derives it from the bound port. Not an IPv6 literal: on a `::1` bind, set `http://localhost:<port>` |
+| `QA_BASE_ORIGIN` / `QA_PR_ORIGIN` | `paneOrigins.base` / `paneOrigins.pr` | `https://<QA_PUBLIC_HOST>:8443` / `https://<QA_PUBLIC_HOST>:10000` | the origins viewers reach the panes at |
+| `QA_FRAME_ANCESTORS` | `frameAncestors` | *(none)* | extra comma-separated origins allowed to frame the panes, for a harness nested in a pane (self-QA's inner demos). CSP only: they pass no `Referer` check, and the bridge never talks to them |
+| `QA_FORWARD_CLIENT_COOKIES` | `forwardClientCookies` | *(none)* | comma-separated names of the browser's own cookies the pane proxies pass to the pane apps, beside each pane's jar, whose value wins on a name both have. Unset, the apps get only the jar's cookies (see [Security](#security)). Each must be a cookie name (an RFC 6265 token); `*` and other wildcards throw. Any page on the panes' hostname can set these cookies, the other pane's scripts included, so a value that isn't an RFC 6265 cookie-value (one with a space, a comma, a backslash or a stray double quote) isn't passed. On one hostname both pane apps get the browser's one value of each, so name only cookies both panes may share, such as a preference, never a session |
+| `QA_LABEL_ACCEPT` / `QA_LABEL_REJECT` | `verdictLabels.accept` / `verdictLabels.reject` | `qa-approved` / `qa-changes-requested` | verdict label pair |
+| `QA_IDLE_MINUTES` | `idleMinutes` | `30` | idle sessions are torn down |
 
 Every origin key must be an http(s) URL with a plain hostname. It is normalized to an origin (lowercased, a default port and any path dropped), and anything else throws. An `http:` harness or pane origin must be loopback (`127.0.0.0/8`, `::1`, `localhost`): browsers send the `Sec-Fetch-*` headers the request guards rely on only to https and loopback origins (see [Security](#security)). The harness and the two panes must be three different origins: a page that is same-origin with another could act for the reviewer there.
 
 Unset, `QA_EXPOSURE` is `none` only when all of these are loopback, and `tailscale` otherwise: the harness origin (as derived above; when none can be derived, on a loopback bind on port `0` with no `QA_HARNESS_ORIGIN` or `QA_PUBLIC_HOST`, it adds nothing), both pane origins, `QA_PUBLIC_HOST` and every `QA_ALLOWED_HOSTS` entry (both widen the `Host` allowlist), and `QA_BIND_HOST`. So a non-loopback bind alone makes the mode `tailscale`, which then refuses that bind: behind another authenticating front door, set `QA_EXPOSURE=none`. In tailscale mode, `loadConfig` throws on a non-loopback `QA_BIND_HOST` and on an empty `QA_ALLOWED_LOGINS`, and each error says why the mode is `tailscale`.
 
-A platform that builds `cfg` in code instead can leave out `host` (loopback is the default), `allowedHosts`, `harnessOrigin` (derived as above), `frameAncestors`, `forwardClientCookies` (none: `false` or an array of cookie names), `exposure`, `allowedLogins` and `exposureIntervalMinutes` (`5`). Without `exposure`, `startConductor` resolves the mode as `loadConfig` does, with `defaultExposure({ harnessOrigin, paneOrigins, publicHost, allowedHosts, host })` from `./config`, where a missing or unparseable pane origin counts as off loopback. The mode is fixed at start, so a `cfg` whose non-loopback origins are assigned after start must set `exposure` itself. `startConductor` refuses an unknown `exposure`, a `host` in brackets (write `::1`, not `[::1]`), tailscale mode on a non-loopback `host`, a `harnessOrigin` or `frameAncestors` entry that isn't an http(s) origin, an `http:` harness origin or pane origin (set at start) whose host isn't loopback, a harness origin equal to a pane origin, an `exposureIntervalMinutes` that isn't a number above `0` and at most `35791`, a `forwardClientCookies` that isn't `false` or an array of cookie names, and an `adapters.exposure` in none mode. Startup logs whether the gate is on and, for a defaulted mode, what made it `tailscale`. In tailscale mode with no `allowedLogins` it logs an error, and every request is refused. The core reads `cfg.paneOrigins` per request, so it may be assigned once the proxies are listening.
+### A `cfg` built in code
+
+A platform that builds `cfg` in code instead of with `loadConfig` must set `ports`, `paneOrigins`, `verdictLabels` and `idleMinutes`, in the shapes the table's `cfg` column shows. Without `idleMinutes`, the idle reaper silently never ends a session. The core never reads `githubToken`, `ghcrToken`, `repo` or `env`: they are for the platform's own `createGithub` and adapters. `readBaseEnv` is optional too (see [Use](#use)).
+
+It can leave out `operatorEmail`, `publicHost`, `host` (loopback is the default), `allowedHosts`, `harnessOrigin` (derived as above), `frameAncestors`, `forwardClientCookies` (none: `false` or an array of cookie names), `exposure`, `allowedLogins` and `exposureIntervalMinutes` (`5`). Without `exposure`, `startConductor` resolves the mode as `loadConfig` does, with `defaultExposure({ harnessOrigin, paneOrigins, publicHost, allowedHosts, host })` from `./config`, where a missing or unparseable pane origin counts as off loopback. The mode is fixed at start, so a `cfg` whose non-loopback origins are assigned after start must set `exposure` itself. `startConductor` refuses an unknown `exposure`, a `host` in brackets (write `::1`, not `[::1]`), tailscale mode on a non-loopback `host`, a `harnessOrigin` or `frameAncestors` entry that isn't an http(s) origin, an `http:` harness origin or pane origin (set at start) whose host isn't loopback, a harness origin equal to a pane origin, an `exposureIntervalMinutes` that isn't a number above `0` and at most `35791`, a `forwardClientCookies` that isn't `false` or an array of cookie names, and an `adapters.exposure` in none mode. Startup logs whether the gate is on and, for a defaulted mode, what made it `tailscale`. In tailscale mode with no `allowedLogins` it logs an error, and every request is refused. The core reads `cfg.paneOrigins` per request, so it may be assigned once the proxies are listening.
 
 ## HTTP API (harness port)
 
@@ -364,7 +648,7 @@ npm run expose -- --check        # in this repo: self-QA's .env.qa, through self
 
 `qa-conductor-expose` runs one [exposure](#exposure-optional) pass from a shell, through the built-in tailscale adapter. **It is a tool for operators and debugging.** The conductor's reconcile loop owns the mounts: it sets them once its servers listen and restores them every `QA_EXPOSURE_INTERVAL_MINUTES`. So a deploy only restarts the conductor, and runs neither this CLI nor `tailscale serve`. Use the CLI to see drift, or to restore a mount now instead of at the next pass.
 
-**Run it without `--check` only while the conductor is running.** The CLI never removes a mount, and self-QA removes its own only as it stops, so a mount written with no conductor behind it stays. Until someone removes it, it publishes whatever listens on its loopback port next, such as a later loopback self-QA, with no identity gate: that is why self-QA removes its mounts when it stops. With the conductor stopped, use `--check`.
+**Run it without `--check` only while the conductor is running.** Neither the CLI nor the conductor ever removes a mount, so a mount written with no conductor behind it stays. Until someone removes it, it publishes whatever listens on its loopback port next, such as the demo or a conductor in none mode, with no identity gate. With the conductor stopped, use `--check`. The CLI doesn't yet check that what listens there is a gated conductor: [#18](https://github.com/critical-labs/qa-conductor/issues/18) tracks that.
 
 ```
 qa-conductor-expose [--check] [--env FILE] [--config MODULE[#export]] [--tailscale BIN] [--socket PATH] [--help|-h]
@@ -400,51 +684,26 @@ Demo mode runs the real conductor with fixture PRs and fake adapters, so you can
 
 `demo/` is not published with the package. From code, `startDemo({ port, speed, log, harnessOrigin, frameAncestors })` in `demo/index.mjs` returns `{ stop(), ports }`. Without a `harnessOrigin` the core derives `http://127.0.0.1:<port>`. `QA_HARNESS_ORIGIN` and `QA_FRAME_ANCESTORS` set the last two from `npm run demo`.
 
-## QA this repo's own pull requests
+## Known limits
 
-```sh
-echo 'GITHUB_QA_TOKEN=<token>' > .env.qa   # read PRs, comment and label on this repo
-npm run qa                                  # then open http://127.0.0.1:3100/qa/
-```
+- **One page of PRs.** The picker lists at most the 50 most recently opened PRs.
+- **A plain expose run can publish an ungated server.** `qa-conductor-expose` without `--check` mounts whatever listens on the configured ports, conductor or not, and nothing removes those mounts ([Expose CLI](#expose-cli)). [#18](https://github.com/critical-labs/qa-conductor/issues/18) tracks a check that refuses an ungated target.
+- **The panes' pages share the browser's cookies with every app on their hostname**, and can send those apps same-site requests that carry them. Serve the panes on a hostname no other app uses ([Security](#security)).
+- **The identity gate keeps out other devices, not PR code** on the same host: a pane process, or a container pane outside native Linux Docker, can send any login ([Security](#security)).
+- **A harness that shares an origin with another app** shares its trust. Give the harness a port of its own.
+- **Browsers without Fetch Metadata** are judged by `Origin` alone, which is why an `http:` origin must be loopback.
+- **An IPv6-literal harness origin** can't be named in `frame-ancestors`: on a `::1` bind, set `QA_HARNESS_ORIGIN=http://localhost:<port>`.
+- **`X-Forwarded-For` reaches the pane apps**, so PR code sees which tailnet address is viewing.
+- **The Docker Provisioner** runs one service per pane, with fixed container names and host ports, and logs in to `ghcr.io` only ([its section](#built-in-adaptersprovisioner-docker-docker-provisioner)). **The GHCR helpers** read packages a user owns, not an organization's.
+- **Linux and macOS only, and no TypeScript declarations yet** ([Requirements](#requirements)).
 
-qa-conductor QAs its own PRs with its own built-in adapters (`qa/self.mjs`):
-- **Panes.** Each pane is a git worktree of this repo, base (`main`) and the PR head, running demo mode (`node demo/server.mjs`). A UI change shows up side by side before it merges.
-- **Builds.** `build-worktree` checks a PR out only after the trust gate passes: the author has write access, and the head lives in this repo or the author's own fork. There is no install step, because the package has no dependencies.
-- **Processes.** `provisioner-process` runs each pane on `127.0.0.1` with only `PATH`, `PORT`, `QA_DEMO_SPEED`, `QA_HARNESS_ORIGIN` and `QA_FRAME_ANCESTORS` in its environment.
-- **Nested harnesses.** Each pane's demo harness is seen at the outer pane's origin, inside the outer harness, and CSP `frame-ancestors` checks every ancestor. So each inner demo gets `QA_HARNESS_ORIGIN=<the pane's origin>` and `QA_FRAME_ANCESTORS=<the outer harness origin>`, and its own panes render and mirror inside the outer pane. On `QA_HARNESS_PORT=0` the outer origin is the bound port's, read when a pane boots.
-- **Where things live.** Builds and the pidfile are under `$XDG_CACHE_HOME/qa-conductor/critical-labs-qa-conductor`, defaulting to `~/.cache/...`.
-- **Stopping.** Ctrl-C tears the panes down before exiting, and on a tailnet then removes the `tailscale serve` mounts (below).
-- **On a tailnet.** To open self-QA from your other devices, set these in `.env.qa`, for a machine whose MagicDNS name is `<machine>.ts.net`:
-  - `QA_PUBLIC_HOST=<machine>.ts.net`;
-  - `QA_BASE_ORIGIN=https://<machine>.ts.net:8443` and `QA_PR_ORIGIN=https://<machine>.ts.net:10000` (self-QA defaults both to loopback, so set both);
-  - `QA_ALLOWED_LOGINS=<your Tailscale login>`.
+## Contributing
 
-  That layout is tailscale mode, so self-QA passes the conductor the built-in tailscale [Exposure](#exposure-optional) adapter. The conductor mounts the harness at `https://<machine>.ts.net:8444/qa/` and the panes at `:8443` and `:10000` with `tailscale serve`, and restores them every `QA_EXPOSURE_INTERVAL_MINUTES`. `QA_TAILSCALE_BIN` names the CLI (default `tailscale`; on macOS, use the app's `/Applications/Tailscale.app/Contents/MacOS/Tailscale`, since the one on `PATH` may be older than the daemon). To see drift from a shell, run `npm run expose -- --check`: the script passes `--config qa/self.mjs#loadSelfQaConfig`, which reads `.env.qa` with self-QA's defaults, such as `QA_REPO`, that the core `loadConfig` lacks (see [Expose CLI](#expose-cli)). A plain `npm run expose` restores them now, but only while self-QA runs: once it has stopped, it would put back the mounts self-QA just removed.
+To work on qa-conductor itself, read [CONTRIBUTING.md](CONTRIBUTING.md): how to run the tests, the commit style, how to QA a pull request in the conductor's own harness (`npm run qa`), and how a release is cut.
 
-  From another device, the outer harness and each pane's demo harness render, but a demo's own panes are on this machine's loopback (`http://127.0.0.1:<port>`), so they render only in a browser on this machine.
+## Reporting a vulnerability
 
-  **Self-QA removes its mounts when it stops**, unlike the conductor itself. On Ctrl-C (or SIGTERM or SIGHUP), once the panes are down, it runs `tailscale serve --https=8444 --set-path=/qa off`, `tailscale serve --https=8443 off` and `tailscale serve --https=10000 off`, skipping any handler that no longer proxies to self-QA. A second Ctrl-C, a crash or a kill leaves them in place, and so does a command that fails, which is logged with the command to run: then remove them yourself with those commands. **Until the mounts are gone, whatever listens on the loopback ports they point at (`3100`–`3102` by default), such as a later loopback self-QA, is reachable from the tailnet with no identity gate.** `tailscale serve` picks the handler by the TLS server name and passes the client's `Host` through, so a tailnet device can send a loopback `Host`, which the `Host` allowlist and the API guard admit.
-
-  **The identity gate is no boundary against the PR here.** The PR's demo runs as you, on this host, so it can reach the conductor on loopback and send any `Tailscale-User-Login` it likes. Only the trust gate keeps untrusted PR code out (see [Security](#security)).
-
-`.env.qa` accepts the usual configuration keys, plus `QA_BASE_REF`, the branch the base pane runs (default `main`), and `QA_TAILSCALE_BIN`. `QA_ENV_FILE` points at a different file.
-
-## Develop
-
-```sh
-npm test
-```
-
-The suite runs on `node:test` with injected effects, so it needs no Docker, network or GitHub.
-
-## Releasing
-
-1. Bump `version` in `package.json`, turn the CHANGELOG's `Unreleased` heading into that version, and move the git-tag example under [Install](#install) to its tag. `test/package.test.mjs` fails until all three agree.
-2. Once that is on `main`, tag it `vX.Y.Z` and push the tag.
-3. The [publish workflow](.github/workflows/publish.yml) refuses a tag that isn't `v` plus the `package.json` version. Then it runs the tests and `npm pack --dry-run`, and stages the version on npm with provenance (`npm stage publish`).
-4. A maintainer approves the staged version on npmjs.com. Only then does it go live.
-
-Nothing publishes directly: the workflow's npm token can only stage, and only the stage step gets it. `test/package.test.mjs` pins the workflow's trigger and steps. It fails on any npm or npx command other than the four the workflow runs (npm expands abbreviations such as `npm pub`), on a gate that could be skipped or allowed to fail, and on the token anywhere but the stage step. It reads the file as text, so it catches mistakes, not every way a shell can spell a command: the stage-only token is what refuses a plain publish.
+Please report it privately, as [SECURITY.md](SECURITY.md) describes, never with its details in a public issue.
 
 ## License
 

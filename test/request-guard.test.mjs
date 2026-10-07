@@ -31,10 +31,10 @@ test('paneRefusal: other pages\' subresource loads and frames are refused', () =
     [fetchMeta('same-site', 'no-cors', 'image'), 'cross-site request refused'],
     [fetchMeta('same-site', 'no-cors', 'font'), 'cross-site request refused'],
     [fetchMeta('same-site', 'navigate', 'iframe'), 'cross-site framing refused'],
-    [{ ...fetchMeta('same-site', 'navigate', 'iframe'), referer: 'https://mallory.tail05ae64.ts.net/' }, 'cross-site framing refused'],
+    [{ ...fetchMeta('same-site', 'navigate', 'iframe'), referer: 'https://mallory.tail1234.ts.net/' }, 'cross-site framing refused'],
     [{ ...fetchMeta('cross-site', 'navigate', 'iframe'), referer: 'https://evil.example/' }, 'cross-site framing refused'],
     [fetchMeta('cross-site', 'navigate', 'document'), 'cross-site navigation refused'],
-    [{ ...fetchMeta('same-site', 'navigate', 'document'), referer: 'https://mallory.tail05ae64.ts.net/' }, 'cross-site navigation refused'],
+    [{ ...fetchMeta('same-site', 'navigate', 'document'), referer: 'https://mallory.tail1234.ts.net/' }, 'cross-site navigation refused'],
   ]
   for (const [headers, reason] of shapes) {
     assert.equal(paneRefusal(req(headers), HARNESS), reason, JSON.stringify(headers))

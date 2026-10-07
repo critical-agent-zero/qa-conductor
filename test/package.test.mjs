@@ -19,11 +19,14 @@ const WORKFLOW = path.join(ROOT, '.github/workflows/publish.yml')
 const TAG_CHECK = 'Check the tag matches package.json'
 const CHANGELOG = readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8')
 
-// The CHANGELOG's second-level headings: `## Unreleased` while changes wait
-// for a release, then one `## X.Y.Z` per release, optionally dated
-// (`## 0.3.0 — 2026-10-03`), newest first.
+// The CHANGELOG's second-level headings: `## [Unreleased]` while changes
+// wait for a release, then one dated `## [X.Y.Z] — YYYY-MM-DD` per release,
+// newest first. Each bracketed name is a link, defined at the end of the
+// file (Keep a Changelog's layout).
 const changelogHeadings = () => [...CHANGELOG.matchAll(/^## (.*)$/gm)].map(match => match[1])
-const RELEASE_HEADING = /^(\d+\.\d+\.\d+)(?: — \d{4}-\d{2}-\d{2})?$/
+const RELEASE_HEADING = /^\[(\d+\.\d+\.\d+)\] — \d{4}-\d{2}-\d{2}$/
+const UNRELEASED = '[Unreleased]'
+const REPO_URL = 'https://github.com/critical-labs/qa-conductor'
 const releases = () => changelogHeadings().map(heading => RELEASE_HEADING.exec(heading)?.[1]).filter(Boolean)
 
 // npm packs these whatever `files` says.
@@ -198,12 +201,23 @@ test('the package is publishable: not private, public access, provenance from th
   assert.match(pkg.repository?.url ?? '', /github\.com\/critical-labs\/qa-conductor(\.git)?$/)
 })
 
+// npm fills in homepage and bugs from repository, but only on the registry:
+// spelled out, they match agent-identity's and show in the tarball too.
+test('the npm page names its author, links back to the repository, and has a description that fits a search result', () => {
+  assert.equal(pkg.author, 'Critical Labs')
+  assert.equal(pkg.homepage, 'https://github.com/critical-labs/qa-conductor#readme')
+  assert.deepEqual(pkg.bugs, { url: 'https://github.com/critical-labs/qa-conductor/issues' })
+  assert.ok(Array.isArray(pkg.keywords) && pkg.keywords.length > 0, 'keywords')
+  for (const keyword of pkg.keywords) assert.match(keyword, /^[a-z0-9-]+$/, `keyword ${keyword}`)
+  assert.ok(pkg.description.length <= 130, `the description is ${pkg.description.length} characters, more than a search result shows`)
+})
+
 test('a release names one version: package.json, the CHANGELOG\'s newest release and the README\'s git-tag pin', () => {
   // A tag stages package.json's version, so the notes and the install line
   // a consumer reads must be that version's.
   const headings = changelogHeadings()
   headings.forEach((heading, i) => {
-    assert.ok(RELEASE_HEADING.test(heading) || (heading === 'Unreleased' && i === 0), `CHANGELOG heading "## ${heading}" is a version (or Unreleased, first)`)
+    assert.ok(RELEASE_HEADING.test(heading) || (heading === UNRELEASED && i === 0), `CHANGELOG heading "## ${heading}" is a dated version (or ${UNRELEASED}, first)`)
   })
   const versions = releases()
   for (let i = 1; i < versions.length; i++) {
@@ -212,9 +226,26 @@ test('a release names one version: package.json, the CHANGELOG\'s newest release
   }
   assert.equal(versions[0], pkg.version, 'the newest CHANGELOG release is the package.json version')
   const README = readFileSync(path.join(ROOT, 'README.md'), 'utf8')
-  const pins = [...README.matchAll(/github:critical-labs\/qa-conductor#(\S+)/g)].map(match => match[1])
+  // to the end of the code span it sits in, if any
+  const pins = [...README.matchAll(/github:critical-labs\/qa-conductor#([^\s`'")]+)/g)].map(match => match[1])
   assert.ok(pins.length > 0, 'the README shows a git-tag pin')
   for (const pin of pins) assert.equal(pin, `v${pkg.version}`, 'the README\'s git-tag pin is this version\'s tag')
+})
+
+// Each heading's link shows what changed in it: Unreleased since the newest
+// tag, each release since the one before, and the first release its tag.
+test('every CHANGELOG heading links to its changes, and the CHANGELOG defines no other link', () => {
+  const versions = releases()
+  assert.ok(versions.length > 0, 'the CHANGELOG has a release')
+  const want = new Map()
+  if (changelogHeadings()[0] === UNRELEASED) want.set('Unreleased', `${REPO_URL}/compare/v${versions[0]}...HEAD`)
+  versions.forEach((version, i) => {
+    const previous = versions[i + 1]
+    want.set(version, previous ? `${REPO_URL}/compare/v${previous}...v${version}` : `${REPO_URL}/releases/tag/v${version}`)
+  })
+  const defined = [...CHANGELOG.matchAll(/^\[([^\]]+)\]: *(\S+)$/gm)].map(match => [match[1], match[2]])
+  assert.deepEqual(defined, [...want], 'one link per heading, newest first, at the end of the file')
+  assert.match(CHANGELOG, /\n\n(\[[^\]]+\]: \S+\n)+$/, 'the links end the file')
 })
 
 test('every exports and bin target exists and is inside a files entry', () => {

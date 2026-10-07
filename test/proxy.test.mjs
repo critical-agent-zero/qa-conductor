@@ -545,7 +545,7 @@ test('no upstream (no session) yields a 503, not a connection attempt', async (t
 })
 
 
-// --- other pages (from homefree #329) -------------------------------------------
+// --- other pages ----------------------------------------------------------------
 // The jar signs every request in as the operator, and a front door that
 // authenticates the device vouches for any page in the operator's browser, so
 // the app's SameSite cookies protect nothing here. ts.net is on the Public
@@ -554,7 +554,7 @@ test('no upstream (no session) yields a 503, not a connection attempt', async (t
 
 const FRAME_ANCESTORS = `frame-ancestors 'self' ${HARNESS}`
 const PANE_HOST = { host: 'h.ts.net:10000' }
-const MALLORY = 'https://mallory.tail05ae64.ts.net'
+const MALLORY = 'https://mallory.tail1234.ts.net'
 // The pane's own hostname must pass the Host allowlist.
 const GUARDED = { harnessOrigin: HARNESS, allowedHosts: ['h.ts.net'] }
 

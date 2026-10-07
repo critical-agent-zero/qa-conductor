@@ -28,9 +28,9 @@ reconcile loop owns these mounts: this is for operators and debugging, and no
 deploy needs to run it.
 
 Run it without --check only while the conductor is running. This CLI never
-removes a mount, and self-QA removes its own only as it stops, so a mount
-written with no conductor behind it stays, and publishes whatever listens on
-its loopback port next with no identity gate. Otherwise use --check.
+removes a mount, and neither does the conductor, so a mount written with no
+conductor behind it stays, and publishes whatever listens on its loopback
+port next with no identity gate. Otherwise use --check.
 
   --check                   report drift; change nothing
   --env FILE                the conductor's env file
