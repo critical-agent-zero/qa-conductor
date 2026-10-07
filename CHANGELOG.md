@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+What changed in each release, newest first. A 0.x minor version may break the interface, and says how to migrate when it does.
+
+## [Unreleased]
 
 ### Security
 
@@ -18,16 +20,17 @@
 ### Documentation
 
 - **The published text describes the general case.** The README, the code comments and the expose CLI's help named the app the conductor was first built for, its deployment and its issue numbers. A Provisioner "for docker-sibling deployments" is now one that runs each pane as containers on the host's Docker daemon, and the README's reference consumers are public: self-QA (`qa/self.mjs`), the demo's fake adapters and agent-identity's `packages/qa`. The design and plan notes for 0.2 and 0.3 are gone from `main`; they remain at the `v0.3.0` tag.
+- **The CHANGELOG** dates every release, links each one to its changes on GitHub, and gains an entry for 0.1.0.
 - **The npm page.** `package.json` gains `keywords`, `"author": "Critical Labs"`, and an explicit `homepage` and `bugs`, as agent-identity has, and its `description` is down to one line a search result shows whole.
 - **A hygiene test keeps private details out of the repository.** `test/hygiene.test.mjs` fails on any tracked file that names a tailnet other than the placeholder `tail1234.ts.net`, a tailnet address (`100.64.0.0/10`) other than `100.64.0.1`, an absolute path into a home directory, or, outside this CHANGELOG, the app the conductor was first built for. Three fixtures named a real tailnet and one a real device's tailnet address: they now use the placeholders.
 
-## 0.3.0 — 2026-10-03
+## [0.3.0] — 2026-10-03
 
-The hardening that homefree #329 shipped for homefree #307, the Tailscale identity gate among it, and an optional Exposure seam through which the conductor publishes and keeps its own `tailscale serve` mounts. The first version on npm. It breaks 0.2 in places: read [Migrating from 0.2](#migrating-from-02) before upgrading.
+The hardening first built in homefree, the app the conductor was extracted from, the Tailscale identity gate among it, and an optional Exposure seam through which the conductor publishes and keeps its own `tailscale serve` mounts. The first version on npm. It breaks 0.2 in places: read [Migrating from 0.2](#migrating-from-02) before upgrading.
 
-### Browser-request hardening (from homefree #329)
+### Browser-request hardening
 
-- **Pane request guard** (from homefree #329). The proxy's jar signs every request in as the reviewer, so a pane now refuses what other pages make the reviewer's browser send: writes, preflights, CORS reads, WebSockets and subresource loads from anywhere but the pane's own pages, and navigations from another site whose `Referer` isn't the harness origin. `same-site` counts as another site, since every loopback port and every tailnet host is same-site. The proxy drops the app's `Referrer-Policy` from a redirect that stays on the pane, so the app's own redirects of the harness's navigations keep that `Referer`. The guard keeps out other pages, not the panes' own apps: a redirect keeps the harness `Referer` wherever it leads, so the PR pane's app can still send the harness's frame or new tab to any URL of the base pane. It relies on Fetch Metadata, which browsers send only to https and loopback origins, so an `http:` harness or pane origin must now be loopback: `loadConfig` and `startConductor` refuse any other (0.2.1 loaded, say, `QA_BASE_ORIGIN=http://box.lan:3101`).
+- **Pane request guard.** The proxy's jar signs every request in as the reviewer, so a pane now refuses what other pages make the reviewer's browser send: writes, preflights, CORS reads, WebSockets and subresource loads from anywhere but the pane's own pages, and navigations from another site whose `Referer` isn't the harness origin. `same-site` counts as another site, since every loopback port and every tailnet host is same-site. The proxy drops the app's `Referrer-Policy` from a redirect that stays on the pane, so the app's own redirects of the harness's navigations keep that `Referer`. The guard keeps out other pages, not the panes' own apps: a redirect keeps the harness `Referer` wherever it leads, so the PR pane's app can still send the harness's frame or new tab to any URL of the base pane. It relies on Fetch Metadata, which browsers send only to https and loopback origins, so an `http:` harness or pane origin must now be loopback: `loadConfig` and `startConductor` refuse any other (0.2.1 loaded, say, `QA_BASE_ORIGIN=http://box.lan:3101`).
 - **Pane framing.** Every pane response carries `frame-ancestors 'self' <harness origin> <QA_FRAME_ANCESTORS…>` in place of the app's own `frame-ancestors` and `X-Frame-Options`, plus `nosniff`, the proxy's own `403`, `421`, `502` and `503` included. 0.2.1 added a loopback-and-allowed-hosts policy on any port beside the app's, so any local page could frame a pane, and an app that denied framing couldn't be framed at all.
 - **Harness frame lock.** Every harness response sends `frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN` and `Referrer-Policy: strict-origin-when-cross-origin`.
 - **Harness API guard.** Every `/api/*` request, reads and the progress stream included, must be same-origin (0.2.1 checked writes only). A browser must also reach the API at the harness origin's host and port (`403 not the harness origin`), so a stale front-door handler on another port can't hand it to the pages that share its origin. Loopback `Host`s and non-browser clients are exempt. A front door that rewrites `Host` to an allowed name that isn't loopback (0.2.1 served that) now gets `403` on every browser API call: pass the viewer's `Host` through, or rewrite it to a loopback one.
@@ -36,9 +39,9 @@ The hardening that homefree #329 shipped for homefree #307, the Tailscale identi
 - **The jar no longer filters by SameSite.** After the guard, it only filtered the harness's own cross-site iframe loads, which signed the pane out. `parseSetCookie` drops `sameSite`; `./proxy` drops `isCrossSite` and `frameAncestors`, and gains `panePolicy`; `createPaneProxy` gains `harnessOrigin` and `frameAncestors`, each a value or a function read per request.
 - **Self-QA and the demo.** `startDemo` and `npm run demo` take the harness origin and frame ancestors, and self-QA passes its inner demos the pane's origin and the outer harness origin (on `QA_HARNESS_PORT=0`, the bound port's), so nested panes still render and mirror.
 
-### The Tailscale identity gate and exposure modes (homefree #307)
+### The Tailscale identity gate and exposure modes
 
-- **Tailscale identity gate** (#307, from homefree #329). In tailscale mode the harness and both pane proxies answer `403` to any request whose `Tailscale-User-Login` isn't in `QA_ALLOWED_LOGINS` (`cfg.allowedLogins`, trimmed and lowercased), before anything else runs; the `403` keeps the frame headers. `loadConfig` refuses tailscale mode with an empty allowlist, and `startConductor` logs an error and refuses everyone. The pane proxies drop every `Tailscale-*` request header, so the pane app never sees the reviewer's login, name or picture. The gate trusts the header from anything that reaches loopback on this host: with `provisioner-process`, PR code runs as the same user and can send any login, so the gate keeps out other devices, not PR code. `./identity` exports `normalizeLogins`, `refusalReason`, `isAllowed` and `identityGate`.
+- **Tailscale identity gate.** In tailscale mode the harness and both pane proxies answer `403` to any request whose `Tailscale-User-Login` isn't in `QA_ALLOWED_LOGINS` (`cfg.allowedLogins`, trimmed and lowercased), before anything else runs; the `403` keeps the frame headers. `loadConfig` refuses tailscale mode with an empty allowlist, and `startConductor` logs an error and refuses everyone. The pane proxies drop every `Tailscale-*` request header, so the pane app never sees the reviewer's login, name or picture. The gate trusts the header from anything that reaches loopback on this host: with `provisioner-process`, PR code runs as the same user and can send any login, so the gate keeps out other devices, not PR code. `./identity` exports `normalizeLogins`, `refusalReason`, `isAllowed` and `identityGate`.
 - **Exposure modes: `QA_EXPOSURE`** (`cfg.exposure`), `none` or `tailscale`; anything else throws. Unset, it is `tailscale` when any of these is off loopback: the harness origin, a pane origin, `QA_PUBLIC_HOST`, a `QA_ALLOWED_HOSTS` entry or `QA_BIND_HOST`. Loopback layouts (self-QA, agent-identity) stay ungated with no new config, and the demo is always ungated. `startConductor` resolves a `cfg` without `exposure` the same way, through `defaultExposure` (exported from `./config`, beside `EXPOSURE_MODES`), and fixes the mode at start: a `cfg` whose non-loopback origins are assigned later must set `exposure`. Tailscale mode requires a loopback bind (`loadConfig` and `startConductor` throw). So a 0.2 layout that is not loopback throughout, behind another front door, now fails to load until it sets `QA_EXPOSURE=none`, and the errors say so; that includes `QA_BIND_HOST=0.0.0.0`, and 0.2's advice to set it for homefree is withdrawn. `loadConfig` reads a bracketed `QA_BIND_HOST` (`[::1]`) as the bare address (`::1`), and `startConductor` refuses a bracketed `cfg.host`. When the mode was defaulted, the startup line names the input that made it tailscale.
 
 ### Self-managed exposure
@@ -99,13 +102,28 @@ The hardening that homefree #329 shipped for homefree #307, the Tailscale identi
 - **A plain expose run with no conductor behind it** writes mounts that nothing removes, and they publish whatever listens next on their loopback ports, with no identity gate. Run `qa-conductor-expose` without `--check` only while the conductor runs.
 - **`X-Forwarded-For` reaches the pane apps.** The pane proxies drop the `Tailscale-*` identity headers but pass other front-door headers through, so the viewer's tailnet address, which `tailscale serve` sets as `X-Forwarded-For`, reaches PR code.
 
-## 0.2.1
+## [0.2.1] — 2026-09-30
 
 - **Boots wait for the startup sweep.** `startConductor` ran `provisioner.sweep()` at startup without waiting for it, so a session booted right after a conductor restart could race it. With the Docker Provisioner, the sweep could then remove the new session's containers and network mid-boot. A boot now waits for the sweep before `ensureBuilt`, and the harness shows `waiting for startup cleanup…` while it does. The wait counts in the first step's time and the boot's: a boot sends its `ensuring-image` step event once (0.2.0 sent it twice). A failed sweep, including one that throws synchronously or rejects with something other than an `Error`, is logged and doesn't block boots. A teardown or takeover during the wait cancels the boot as before.
 
-## 0.2.0
+## [0.2.0] — 2026-09-29
 
 - Built-in `adapters/provisioner-process` (panes as local process groups) and `adapters/build-worktree` (PR checkout and install behind a trust gate).
 - A harness that is safe on a laptop: loopback binding by default, a `Host` allowlist (`421`), same-origin (`403`) and JSON-only (`415`) writes, frame-locked panes and inert rendering of adapter text.
 - Core: cancellation threaded through every seam, display labels, failure log tails, build progress messages, `blocked` readiness and a graceful `shutdown()`.
 - Demo mode (`npm run demo`) and self-QA of this repo's own PRs (`npm run qa`).
+
+## [0.1.0] — 2026-09-26
+
+The first standalone release, extracted from homefree's platform code. It installs from git (`npm install github:critical-labs/qa-conductor#v0.1.0`) and was never on npm.
+
+- **The conductor**, `startConductor`: the harness UI and its HTTP API, one proxy per pane that keeps the pane's cookie jar and injects the mirror bridge, one session at a time with takeover, an idle reaper, and the verdict, a PR comment plus one of a pair of labels.
+- **Five adapter seams** that every boot runs in order: Provisioner, BuildConvention, Seed, EnvTransform and AuthBootstrap. Teardown and takeover cancel a boot in flight.
+- **`loadConfig`** reads `.env.qa` into the settings the core needs, with a platform's own `defaults`. It has no app defaults, and the verdict labels are configurable.
+- **Built in:** a Docker Provisioner (`adapters/provisioner-docker`): a postgres container and an app container per pane, `0600` env files, registry login and a sweep of labelled orphans. And the effect wrappers for it: `docker`, `github` and `exec`.
+
+[Unreleased]: https://github.com/critical-labs/qa-conductor/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/critical-labs/qa-conductor/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/critical-labs/qa-conductor/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/critical-labs/qa-conductor/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/critical-labs/qa-conductor/releases/tag/v0.1.0

@@ -439,7 +439,7 @@ The suite runs on `node:test` with injected effects, so it needs no Docker, netw
 
 ## Releasing
 
-1. Bump `version` in `package.json`, turn the CHANGELOG's `Unreleased` heading into that version, and move the git-tag example under [Install](#install) to its tag. `test/package.test.mjs` fails until all three agree.
+1. Bump `version` in `package.json`, turn the CHANGELOG's `## [Unreleased]` heading into `## [X.Y.Z] — YYYY-MM-DD` with its compare link at the end of the file (and point `[Unreleased]` at the new tag), and move the git-tag example under [Install](#install) to its tag. `test/package.test.mjs` fails until all of them agree.
 2. Once that is on `main`, tag it `vX.Y.Z` and push the tag.
 3. The [publish workflow](.github/workflows/publish.yml) refuses a tag that isn't `v` plus the `package.json` version. Then it runs the tests and `npm pack --dry-run`, and stages the version on npm with provenance (`npm stage publish`).
 4. A maintainer approves the staged version on npmjs.com. Only then does it go live.
