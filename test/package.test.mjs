@@ -134,7 +134,7 @@ function assertStagesOnly(text) {
   assert.match(checkout.uses[0], /^actions\/checkout@/)
   assert.deepEqual(checkout.with, ['', 'persist-credentials: false'])
   assert.match(node.uses[0], /^actions\/setup-node@/)
-  assert.deepEqual(node.with, ['', 'node-version: 22', 'registry-url: https://registry.npmjs.org'])
+  assert.deepEqual(node.with, ['', 'node-version: 22', 'registry-url: https://registry.npmjs.org', 'package-manager-cache: false'], 'no cache a release could restore')
   assert.deepEqual(upgrade.run, ['npm install -g npm@^11.15.0'], 'staged publishing needs npm 11.15')
   assert.deepEqual(tagCheck.name, [TAG_CHECK])
   assert.equal(tagCheck.run[0], '|')
@@ -311,7 +311,7 @@ test('the workflow check refuses a publish, a skippable gate or a token that lea
     'the token at job level': after('    timeout-minutes: 15\n', '    env:', `      ${TOKEN.trim()}`),
     'the token on the tests too': after(TESTS, '        env:', TOKEN.trimEnd()),
     'the token in the tag check\'s script': after('          fi\n', '          echo "${{ secrets.NPM_TOKEN }}"'),
-    'an action by tag, not SHA': replace('actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5', 'actions/checkout@v4'),
+    'an action by tag, not SHA': replace('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'actions/checkout@v7'),
   }
   for (const [what, mutate] of Object.entries(mutations)) {
     // Mutated outside assert.throws, so a missing anchor fails the test.
