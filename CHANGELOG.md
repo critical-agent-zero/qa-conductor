@@ -29,7 +29,7 @@ What changed in each release, newest first. A 0.x minor version may break the in
 - **The CHANGELOG** dates every release, links each one to its changes on GitHub, and gains an entry for 0.1.0.
 - **The npm page.** `package.json` gains `keywords`, `"author": "Critical Labs"`, and an explicit `homepage` and `bugs`, as agent-identity has, and its `description` is down to one line a search result shows whole.
 - **`CONTRIBUTING.md`** takes the README's sections on developing, QA-ing this repository's own pull requests and releasing, and adds the tests that guard the repository, the commit style and signed commits. The README links to it.
-- **`SECURITY.md`** says how to report a vulnerability privately, through GitHub's private vulnerability reporting, which versions get fixes (the latest 0.x) and what is in scope.
+- **`SECURITY.md`** says how to report a vulnerability privately, through GitHub's private vulnerability reporting or, where the repository shows no button for it, an issue that asks for a private advisory and says nothing more. It also says which versions get fixes (the latest 0.x) and what is in scope.
 - **A hygiene test keeps private details out of the repository.** `test/hygiene.test.mjs` fails on any tracked file that names a tailnet other than the placeholder `tail1234.ts.net`, a tailnet address (`100.64.0.0/10`) other than `100.64.0.1`, an absolute path into a home directory, or, outside this CHANGELOG, the app the conductor was first built for. Three fixtures named a real tailnet and one a real device's tailnet address: they now use the placeholders.
 
 ## [0.3.0] — 2026-10-03

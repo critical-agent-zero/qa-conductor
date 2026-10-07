@@ -15,6 +15,8 @@ Only the latest 0.x release gets security fixes. A fix ships as a new release; e
 
 Use GitHub's private vulnerability reporting: on this repository's **Security** tab, choose **Report a vulnerability**. Please don't open a public issue, pull request or discussion about it.
 
+If the **Security** tab has no **Report a vulnerability** button, open an issue titled "Security contact request" that says only that you have something to report, with nothing about what or where. A maintainer will open a private security advisory, add you to it, and take the report there.
+
 A useful report says:
 - the version, and the layout: `QA_EXPOSURE`, the front door, and which built-in adapters you run;
 - what gets through: the request, page or PR that does, and what it reaches;

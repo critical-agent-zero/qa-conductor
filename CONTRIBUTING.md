@@ -1,6 +1,6 @@
 # Contributing to qa-conductor
 
-Thanks for helping. This file is for working on qa-conductor itself: running its tests, QA-ing a pull request in its own harness, and cutting a release. To use the package, read the [README](README.md). To report a vulnerability, follow [SECURITY.md](SECURITY.md) instead of opening an issue.
+Thanks for helping. This file is for working on qa-conductor itself: running its tests, QA-ing a pull request in its own harness, and cutting a release. To use the package, read the [README](README.md). To report a vulnerability, follow [SECURITY.md](SECURITY.md), and don't describe it in an issue.
 
 ## Develop
 

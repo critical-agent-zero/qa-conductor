@@ -703,7 +703,7 @@ To work on qa-conductor itself, read [CONTRIBUTING.md](CONTRIBUTING.md): how to 
 
 ## Reporting a vulnerability
 
-Please report it privately, as [SECURITY.md](SECURITY.md) describes, not in a public issue.
+Please report it privately, as [SECURITY.md](SECURITY.md) describes, never with its details in a public issue.
 
 ## License
 
