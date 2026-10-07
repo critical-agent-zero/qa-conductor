@@ -75,6 +75,21 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 - put `tailscale serve` on the same host in front of these ports, in tailscale mode (`QA_EXPOSURE=tailscale`, the default for any layout that isn't loopback throughout): every server then answers only the Tailscale logins in `QA_ALLOWED_LOGINS`, and listens on loopback. Pass an [Exposure adapter](#exposure-optional) and the conductor sets up and keeps those mounts itself; or
 - put another TLS front door that authenticates viewers in front of them, and set `QA_EXPOSURE=none`.
 
+## Using the harness
+
+Open the harness at its origin, under `/qa/`, as startup logs it (`[qa] harness at <origin>/qa/`); anywhere else it shows a banner that links there. Then:
+
+- **Pull requests.** The picker lists the open PRs, at most the 50 most recently opened, with each one's build status: `ready — opens in seconds`, `building…`, `needs build` or `can't boot: <reason>`. **↻** reloads the list and **Open QA** boots a PR. One session runs at a time: opening another PR offers **Resume** for the running one, or **End #N and open #M** to take over.
+- **Boot.** The four steps, Building, Preparing data, Migrating and Starting, each timed, with the BuildConvention's messages under the first. **Cancel boot** tears the boot down. A failed boot shows the error and the failing pane's log tail, with **Retry boot**.
+- **Mirror** (`m`) replays each click, key and form value from one pane in the other. Its **⌄** menu turns scroll mirroring off and on (`s`).
+- **Re-sync →** (`r`) reloads the PR pane at the base pane's path, and its **⌄** menu the base pane at the PR pane's. A dot on it says the panes are at different paths.
+- **375**, **768** and **Full** (`1`, `2`, `3`) set both panes' width.
+- **auto-end** counts down to the idle teardown, `QA_IDLE_MINUTES` after the last interaction, and turns amber for the last five minutes.
+- **End session** (`e`) tears the session down once you click it again within three seconds.
+- **Each pane's bar** has a dot (amber while signing in, green while the pane's bridge reports, grey after 10 seconds of silence), the pane's path, a count of interactions the other pane couldn't replay (click it to clear), and buttons to copy the path, reload the pane and open it in a new tab.
+- **Verdict** (`v`) opens the drawer: notes, kept in the browser as a draft for each PR, then **Accept** or **Reject**, a preview of the comment and the label change, and **Post to PR #N**. After posting: **End session**, **Keep session open** or **Back to pull requests**.
+- **`?`** lists the keyboard shortcuts, which work while the harness, not a pane, has the focus. `Esc` closes the drawer or the list, or cancels an end-session click. Below 900 pixels wide, the panes become **BASE** and **PR** tabs.
+
 ## Security
 
 **The trust gate is the only real boundary between a PR's code and the reviewer's machine.** Booting a PR runs its code. A BuildConvention that checks out and installs PRs must refuse untrusted ones in `ensureBuilt`, before any git call. **Env scrubbing and loopback binding are defence in depth**, not a boundary.
@@ -525,7 +540,7 @@ npm run expose -- --check        # in this repo: self-QA's .env.qa, through self
 
 `qa-conductor-expose` runs one [exposure](#exposure-optional) pass from a shell, through the built-in tailscale adapter. **It is a tool for operators and debugging.** The conductor's reconcile loop owns the mounts: it sets them once its servers listen and restores them every `QA_EXPOSURE_INTERVAL_MINUTES`. So a deploy only restarts the conductor, and runs neither this CLI nor `tailscale serve`. Use the CLI to see drift, or to restore a mount now instead of at the next pass.
 
-**Run it without `--check` only while the conductor is running.** Neither the CLI nor the conductor ever removes a mount, so a mount written with no conductor behind it stays. Until someone removes it, it publishes whatever listens on its loopback port next, such as the demo or a conductor in none mode, with no identity gate. With the conductor stopped, use `--check`.
+**Run it without `--check` only while the conductor is running.** Neither the CLI nor the conductor ever removes a mount, so a mount written with no conductor behind it stays. Until someone removes it, it publishes whatever listens on its loopback port next, such as the demo or a conductor in none mode, with no identity gate. With the conductor stopped, use `--check`. The CLI doesn't yet check that what listens there is a gated conductor: [#18](https://github.com/critical-labs/qa-conductor/issues/18) tracks that.
 
 ```
 qa-conductor-expose [--check] [--env FILE] [--config MODULE[#export]] [--tailscale BIN] [--socket PATH] [--help|-h]
