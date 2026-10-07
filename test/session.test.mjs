@@ -91,7 +91,7 @@ function makeDeps({ failAt = null, migrationStrategy = 'one-shot-image', require
         resolvePrImages: rec('resolvePrImages', () => ({ services: { app: PR_IMG }, migrate: { image: migrateImageFor(PR_IMG) } })),
       },
       seed: { databases: ['idp', 'userdb'], seedPane: rec('seedPane') },
-      // derivePaneEnv is PURE (sync) per the frozen contract — record manually.
+      // derivePaneEnv is pure, and sync here (an async one is awaited too) — record manually.
       envTransform: { derivePaneEnv: ({ prodEnv, pane }) => { calls.push(['derivePaneEnv', { prodEnv, pane }]); return { app: { DSN: pane.dsn } } } },
       auth: {
         requiresDb,
@@ -216,6 +216,51 @@ test('teardownSession tears down every role via the provisioner, tolerating erro
   await teardownSession({ provisioner }) // resolves despite failing
   assert.deepEqual(calls, ROLES)
   assert.deepEqual(ROLES, ['base', 'pr'])
+})
+
+// Any seam member may return its result or a promise of it (README, Types).
+// A teardown that returned no promise, or threw before returning one, used
+// to end teardownSession at the base pane, leaving the PR pane up.
+test('teardownSession tears down every pane whether teardown returns, throws or rejects', async () => {
+  const outcomes = {
+    'returns a value': () => undefined,
+    'throws synchronously': () => { throw new Error('sync') },
+    rejects: async () => { throw new Error('async') },
+    'rejects with a non-Error': () => Promise.reject('gone'),
+  }
+  for (const [name, outcome] of Object.entries(outcomes)) {
+    const roles = []
+    await teardownSession({ provisioner: { teardown: ({ paneRef }) => { roles.push(paneRef.role); return outcome() } } })
+    assert.deepEqual(roles, ROLES, name)
+  }
+  // and so does a failed boot, which tears down through it
+  const { deps, calls } = makeDeps({ failAt: 'launchServices' })
+  deps.adapters.provisioner.teardown = ({ paneRef }) => { calls.push(['teardown', { paneRef }]) }
+  await assert.rejects(() => bootSession(deps, 7), /fail:launchServices/)
+  assert.deepEqual(calls.filter(c => c[0] === 'teardown').map(c => c[1].paneRef.role), ['base', 'pr'])
+})
+
+// Spread unawaited, a promise is {}: the panes would get none of its env, no
+// DSN or origin, and none of the EnvTransform's side-effect neutralisation.
+test('bootSession awaits derivePaneEnv and envContributions, so either may be async', async () => {
+  const { deps, calls } = makeDeps({ envContributions: { app: { DEV_LOGIN_BYPASS: '1' } } })
+  const { envTransform, auth } = deps.adapters
+  const derive = envTransform.derivePaneEnv
+  const contribute = auth.envContributions
+  envTransform.derivePaneEnv = async args => derive(args)
+  auth.envContributions = async () => contribute()
+  await bootSession(deps, 7)
+  const want = [{ app: { DSN: 'dsn-base', DEV_LOGIN_BYPASS: '1' } }, { app: { DSN: 'dsn-pr', DEV_LOGIN_BYPASS: '1' } }]
+  assert.deepEqual(calls.filter(c => c[0] === 'runMigrate').map(c => c[1].env), want)
+  assert.deepEqual(calls.filter(c => c[0] === 'launchServices').map(c => c[1].env), want)
+})
+
+test('bootSession: a subscribeBuild that rejects fails the boot, and tears it down', async () => {
+  const { deps, calls } = makeDeps({ withOnBuild: true })
+  deps.adapters.build.subscribeBuild = async () => { throw new Error('no build feed') }
+  await assert.rejects(() => bootSession(deps, 7), /no build feed/)
+  assert.equal(calls.some(c => c[0] === 'ensureBuilt'), false)
+  assert.deepEqual(calls.filter(c => c[0] === 'teardown').map(c => c[1].paneRef.role), ['base', 'pr'])
 })
 
 // --- cancellation (2026-09-25 stale-boot incident) -------------------------

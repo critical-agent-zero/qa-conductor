@@ -254,7 +254,7 @@ The one exception: a build that declares `one-shot-image` migrations with a Prov
 
 ### Types
 
-What the seams pass each other. Any member above may return a promise of its result.
+What the seams pass each other. Any method above may return its result or a promise of it: the core awaits each one.
 
 - **PaneRef**: `{ role, slug, publicOrigin }` during a boot. `role` is `'base'` or `'pr'`, `slug` is `qa-<pr>-<role>`, and `publicOrigin` is the pane's origin from `cfg.paneOrigins`. `teardown` and `logs` get only `{ role }`, since they also run outside a boot.
 - **ImageSet**: `{ services: { name: ref }, migrate?: { image }, label? }`, from `resolveBaseImages()` and `resolvePrImages(pr)`. A `ref` is whatever the Provisioner launches, such as an image name or a checkout directory.
