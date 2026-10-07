@@ -6,6 +6,19 @@ The conductor owns the choreography: session state, cancellation, the harness UI
 
 > **Status: 0.x.** The interface may still change, and a 0.x minor version may break it: read the migration notes in [CHANGELOG.md](CHANGELOG.md) before upgrading.
 
+## Contents
+
+- [Try it](#try-it), [Requirements](#requirements), [Install](#install)
+- [Quickstart: QA your own app](#quickstart-qa-your-own-app)
+- [Use](#use), with the [Entry points](#entry-points)
+- [Using the harness](#using-the-harness)
+- [Security](#security)
+- [The seams](#the-seams): [Types](#types), [Contracts](#contracts-between-the-seams), the built-in [`build-worktree`](#built-in-adaptersbuild-worktree-git-worktree-buildconvention), [`provisioner-process`](#built-in-adaptersprovisioner-process-process-provisioner) and [`provisioner-docker`](#built-in-adaptersprovisioner-docker-docker-provisioner), the [Effect wrappers](#effect-wrappers), and [Exposure](#exposure-optional)
+- [Configuration](#configuration): [The env file](#the-env-file), [Sample `.env.qa` files](#sample-envqa-files), [Tokens](#tokens), [Keys](#keys), [A `cfg` built in code](#a-cfg-built-in-code)
+- [HTTP API](#http-api-harness-port), [Expose CLI](#expose-cli), [Demo](#demo)
+- [Known limits](#known-limits)
+- [Contributing](#contributing), [Reporting a vulnerability](#reporting-a-vulnerability), [License](#license)
+
 ## Try it
 
 ```sh

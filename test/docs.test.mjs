@@ -122,3 +122,50 @@ test('the README\'s sample .env.qa files load: the local one ungated, the tailne
   assert.deepEqual(tailnet.paneOrigins, { base: 'https://qa-box.tail1234.ts.net:8443', pr: 'https://qa-box.tail1234.ts.net:10000' })
   assert.ok(tailnet.allowedLogins.length > 0, 'the tailnet sample lets someone in')
 })
+
+// The anchors GitHub gives a markdown text's headings: lowercased, without
+// punctuation other than - and _, spaces as -, and -1, -2... on a repeat.
+function anchors(text) {
+  const out = new Set()
+  const seen = new Map()
+  for (const [, heading] of withoutCode(text).matchAll(/^#{1,6} (.+)$/gm)) {
+    const slug = heading.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/ /g, '-')
+    const n = seen.get(slug) ?? 0
+    seen.set(slug, n + 1)
+    out.add(n ? `${slug}-${n}` : slug)
+  }
+  return out
+}
+
+// A markdown text without its fenced code blocks.
+const withoutCode = text => text.replace(/^( *)```[^\n]*\n[\s\S]*?^\1```$/gm, '')
+
+test('every relative link in the README, CHANGELOG, CONTRIBUTING.md and SECURITY.md reaches a file, and every anchor a heading', () => {
+  let checked = 0
+  for (const doc of ['README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md']) {
+    assert.ok(existsSync(path.join(ROOT, doc)), `${doc} exists`)
+    const prose = withoutCode(readFileSync(path.join(ROOT, doc), 'utf8')).replace(/`[^`\n]*`/g, '')
+    for (const [, target] of prose.matchAll(/\]\(([^)\s]+)\)/g)) {
+      if (/^[a-z][a-z+.-]*:/i.test(target)) continue // https:, mailto:
+      const [file, anchor] = target.split('#')
+      const linked = file ? path.join(path.dirname(doc), file) : doc
+      assert.ok(existsSync(path.join(ROOT, linked)), `${doc} links to ${linked}, which exists`)
+      if (anchor !== undefined) {
+        assert.ok(anchors(readFileSync(path.join(ROOT, linked), 'utf8')).has(anchor), `${doc} links to #${anchor}, a heading in ${linked}`)
+      }
+      checked++
+    }
+  }
+  assert.ok(checked >= 20, `checked ${checked} links`)
+  // The README points at the other two, so the npm page leads to them.
+  assert.match(README, /\]\(CONTRIBUTING\.md\)/)
+  assert.match(README, /\]\(SECURITY\.md\)/)
+})
+
+test('the README\'s Contents link every second-level heading after it, in order', () => {
+  const headings = [...withoutCode(README).matchAll(/^## (.+)$/gm)].map(match => match[1])
+  assert.equal(headings[0], 'Contents')
+  const linked = [...section('## Contents').join('\n').matchAll(/\]\(#([^)]+)\)/g)].map(match => match[1])
+  const want = headings.slice(1).map(heading => [...anchors(`## ${heading}`)][0])
+  assert.deepEqual(linked.filter(anchor => want.includes(anchor)), want)
+})
