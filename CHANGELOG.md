@@ -14,6 +14,7 @@
 ### Documentation
 
 - **The published text describes the general case.** The README, the code comments and the expose CLI's help named the app the conductor was first built for, its deployment and its issue numbers. A Provisioner "for docker-sibling deployments" is now one that runs each pane as containers on the host's Docker daemon, and the README's reference consumers are public: self-QA (`qa/self.mjs`), the demo's fake adapters and agent-identity's `packages/qa`. The design and plan notes for 0.2 and 0.3 are gone from `main`; they remain at the `v0.3.0` tag.
+- **A hygiene test keeps private details out of the repository.** `test/hygiene.test.mjs` fails on any tracked file that names a tailnet other than the placeholder `tail1234.ts.net`, a tailnet address (`100.64.0.0/10`) other than `100.64.0.1`, an absolute path into a home directory, or, outside this CHANGELOG, the app the conductor was first built for. Three fixtures named a real tailnet and one a real device's tailnet address: they now use the placeholders.
 
 ## 0.3.0 — 2026-10-03
 
