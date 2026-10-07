@@ -112,7 +112,7 @@ function harnessOriginNotice(configured, current) {
     return renderPicker(s, { endedFor: route.pr })
   }
 
-  // --- picker (#164 #167 #169) --------------------------------------------
+  // --- picker --------------------------------------------------------------
   const rows = new Map()
   let picking = false
 
@@ -198,7 +198,7 @@ function harnessOriginNotice(configured, current) {
     return badge
   }
 
-  // delegated picker clicks — survive re-renders (#164)
+  // delegated picker clicks — survive re-renders
   $('prList').addEventListener('click', e => {
     const btn = e.target.closest('button[data-open]'); if (!btn) return
     const num = +btn.dataset.open
@@ -226,7 +226,7 @@ function harnessOriginNotice(configured, current) {
     } finally { picking = false }
   }
 
-  // --- boot (#163 #165 #166) ----------------------------------------------
+  // --- boot ----------------------------------------------------------------
   const stepAt = {}
   let bootPr = null
   for (const li of $('bootSteps').querySelectorAll('li')) li.querySelector('.stepLabel').textContent = stepLabel(li.dataset.step)
@@ -314,7 +314,7 @@ function harnessOriginNotice(configured, current) {
   function mkBtn(text, cls, onclick) { const b = document.createElement('button'); b.className = cls; b.textContent = text; b.onclick = onclick; return b }
   $('cancelBoot').onclick = async () => { await postJson('/teardown').catch(() => {}); go('#/') }
 
-  // --- session (#163 #170 #171 #172) --------------------------------------
+  // --- session -------------------------------------------------------------
   function onReady(meta) { setHashSilent(`#/pr/${meta.pr || bootPr}`); renderSession(meta) }
 
   function renderSession(meta) {
@@ -395,7 +395,7 @@ function harnessOriginNotice(configured, current) {
     }, 3000)
   }
 
-  // pane bar controls (#171)
+  // pane bar controls
   document.querySelector('#paneRow').addEventListener('click', e => {
     const btn = e.target.closest('button[data-act]'); if (!btn) return
     const pane = btn.dataset.pane
@@ -423,7 +423,7 @@ function harnessOriginNotice(configured, current) {
   document.addEventListener('click', () => { $('mirrorMenu').hidden = true; $('resyncMenu').hidden = true })
   for (const m of ['mirrorMenu', 'resyncMenu']) $(m).addEventListener('click', e => e.stopPropagation())
 
-  // idle countdown chip (#170)
+  // idle countdown chip
   function startIdlePoll() { pollIdle(); S.idlePoll = setInterval(pollIdle, 60000) }
   async function pollIdle() {
     let s; try { s = await api('/state') } catch { return }
@@ -435,7 +435,7 @@ function harnessOriginNotice(configured, current) {
     if (low) announce(`QA session ends in ${Math.ceil(left / 60000)} minutes unless you interact`)
   }
 
-  // teardown two-step (#170)
+  // teardown two-step
   twoStepConfirm($('teardownBtn'), 'Confirm end? (3s)', async () => { await postJson('/teardown').catch(() => {}); go('#/') })
   function twoStepConfirm(btn, confirmLabel, action) {
     const orig = btn.textContent
@@ -447,7 +447,7 @@ function harnessOriginNotice(configured, current) {
     btn._disarm = () => { if (btn.dataset.armed) { clearTimeout(S.confirmTimer); btn.dataset.armed = ''; btn.textContent = orig; btn.classList.remove('confirm') } }
   }
 
-  // --- verdict drawer (#168 #173) -----------------------------------------
+  // --- verdict drawer ------------------------------------------------------
   $('verdictToggle').onclick = () => toggleVerdict()
   function toggleVerdict(force) {
     const body = $('verdictBody'); const open = force !== undefined ? force : body.hidden
@@ -495,7 +495,7 @@ function harnessOriginNotice(configured, current) {
     return false
   }
 
-  // --- keyboard (#177) -----------------------------------------------------
+  // --- keyboard ------------------------------------------------------------
   document.addEventListener('keydown', e => {
     if ($('shortcuts').open && e.key === 'Escape') return $('shortcuts').close()
     if (e.key === '?') { e.preventDefault(); return $('shortcuts').showModal() }
@@ -518,7 +518,7 @@ function harnessOriginNotice(configured, current) {
   })
   $('shortcutsClose').onclick = () => $('shortcuts').close()
 
-  // --- compact <900px (#176) ----------------------------------------------
+  // --- compact <900px ------------------------------------------------------
   const mq = window.matchMedia('(max-width: 900px)')
   function applyCompact() { document.body.classList.toggle('compact', mq.matches); $('tabs').hidden = !mq.matches; if (mq.matches) selectTab(currentTab) }
   let currentTab = 'base'

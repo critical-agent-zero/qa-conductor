@@ -9,7 +9,11 @@
 
 ### Known limits
 
-- **The panes' pages share the browser's cookies with every app on their hostname.** The proxies no longer send those cookies to the pane apps, but a pane's scripts (PR code) still run on that hostname. They can read its cookies that aren't `HttpOnly`, and set cookies the browser then sends to every app on it, including one named in `QA_FORWARD_CLIENT_COOKIES`, which the other pane's app then gets. They can also send those apps requests that carry their cookies, `HttpOnly` and `SameSite=Strict` ones included, because every port of the hostname, and every host in a tailnet, is same-site: PR code can act on the reviewer's session in another app, such as the RC app, without reading it. Serve the panes on a hostname no other app uses. That stops the cookie sharing, not those requests, so another app the reviewer is signed in to must not rely on `SameSite` alone against the panes.
+- **The panes' pages share the browser's cookies with every app on their hostname.** The proxies no longer send those cookies to the pane apps, but a pane's scripts (PR code) still run on that hostname. They can read its cookies that aren't `HttpOnly`, and set cookies the browser then sends to every app on it, including one named in `QA_FORWARD_CLIENT_COOKIES`, which the other pane's app then gets. They can also send those apps requests that carry their cookies, `HttpOnly` and `SameSite=Strict` ones included, because every port of the hostname, and every host in a tailnet, is same-site: PR code can act on the reviewer's session in another app on that hostname without reading it. Serve the panes on a hostname no other app uses. That stops the cookie sharing, not those requests, so another app the reviewer is signed in to must not rely on `SameSite` alone against the panes.
+
+### Documentation
+
+- **The published text describes the general case.** The README, the code comments and the expose CLI's help named the app the conductor was first built for, its deployment and its issue numbers. A Provisioner "for docker-sibling deployments" is now one that runs each pane as containers on the host's Docker daemon, and the README's reference consumers are public: self-QA (`qa/self.mjs`), the demo's fake adapters and agent-identity's `packages/qa`. The design and plan notes for 0.2 and 0.3 are gone from `main`; they remain at the `v0.3.0` tag.
 
 ## 0.3.0 — 2026-10-03
 

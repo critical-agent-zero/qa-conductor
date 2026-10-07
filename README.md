@@ -34,7 +34,7 @@ Node ≥ 22. There are no runtime dependencies.
 | `@critical-labs/qa-conductor/exposure` | `mountsFor`, `reconcileExposure`, `runExpose` | one [exposure](#exposure-optional) pass, outside a conductor |
 | `@critical-labs/qa-conductor/proxy` | `createPaneProxy`, `panePolicy`, `parseSetCookie`, `isAllowedHost`, `requestHostname`, `misdirected` | the pane proxy, and the [Host allowlist](#security) check every server runs |
 | `@critical-labs/qa-conductor/verdict` | `formatVerdict`, `postVerdict` | the verdict comment and label |
-| `@critical-labs/qa-conductor/adapters/provisioner-docker` | `createDockerProvisioner` | a Provisioner for docker-sibling deployments |
+| `@critical-labs/qa-conductor/adapters/provisioner-docker` | `createDockerProvisioner` | a Provisioner that runs each pane as containers on the host's Docker daemon |
 | `@critical-labs/qa-conductor/adapters/provisioner-process` | `createProcessProvisioner` | a Provisioner for local process groups |
 | `@critical-labs/qa-conductor/adapters/build-worktree` | `createWorktreeBuild`, `trustDecision` | a BuildConvention that runs PRs from git worktrees, behind a trust gate |
 | `@critical-labs/qa-conductor/adapters/exposure-tailscale` | `createTailscaleExposure` | an Exposure adapter on `tailscale serve` |
@@ -139,13 +139,13 @@ The one exception: a build that declares `one-shot-image` migrations with a Prov
 - **Landing flows stay on the pane origin (AuthBootstrap).** The harness loads each `landingUrl` as given; the bridge learns the harness origin from the proxy, not from the URL. A pane serves a navigation from another site only when its `Referer` is the harness origin, so a sign-in step on another site, such as an external identity provider's form, comes back with that site's `Referer` and is refused. Keep landing flows on the pane origin. Redirects within it are fine, whatever their `Referrer-Policy`: the proxy drops that header from a redirect that stays on the pane, so the next hop still carries the harness `Referer`.
 - **Sessions live in the jar (AuthBootstrap).** The pane app gets the cookies its own responses set this session, which the proxy keeps, and not the browser's. So the session must reach the jar in a `Set-Cookie`: have the `landingUrl`, or a redirect it makes, set it server-side. A session cookie the app's scripts write can't be kept apart for two panes on one hostname, `QA_FORWARD_CLIENT_COOKIES` or not. Cookies ignore ports, so both panes' pages write the same browser cookie, whichever pane signs in last overwrites it, and both proxies would pass that one value on: one pane's app would get the other pane's session (see [Security](#security)).
 
-**Built in:** `adapters/provisioner-docker` is a Provisioner for docker-sibling deployments. It creates the pane postgres containers, one app container per pane, `0600` env files under `workDir`, registry login and a labelled-orphan sweep. The `docker`, `github` and `exec` modules are the effect wrappers it and the reference adapters use.
+**Built in:** `adapters/provisioner-docker` is a Provisioner that runs each pane as containers on the host's Docker daemon. It creates the pane postgres containers, one app container per pane, `0600` env files under `workDir`, registry login and a labelled-orphan sweep. The `docker`, `github` and `exec` modules are the effect wrappers it and the reference adapters use.
 
 **Effect wrappers:**
 - `github`: `listOpenPrs()` items are `{number, title, headSha, headRef, author, authorAssociation, headRepo, headOwner}`. `prInfo(num)` returns `{number, headSha, author, authorAssociation, isDraft, headRepo, headOwner}`, where `headRepo` (`owner/name`) and `headOwner` are `null` when the head repository was deleted. `authorPermission(login)` returns the login's `admin|write|read|none` permission on the repo and throws on a non-2xx response. `author_association` alone is no access check: `COLLABORATOR` includes read-only outside collaborators.
 - `exec`: `makeExecFileFn()` resolves `{stdout}` and rejects with an Error whose message is unchanged and which also carries `stdout`, `stderr` and the exit `code`.
 
-**Reference consumer:** homefree's platform adapters (Docker + GHCR + `pg_dump` from the prod database + a magic-link login).
+**Reference consumers:** this repository's self-QA ([`qa/self.mjs`](qa/self.mjs): `build-worktree` and `provisioner-process`), the demo's fake adapters ([`demo/fake-adapters.mjs`](demo/fake-adapters.mjs)), and agent-identity's [`packages/qa`](https://github.com/critical-labs/agent-identity/tree/main/packages/qa), a 0.2-era consumer that seeds each pane's DynamoDB Local from a redacted snapshot.
 
 ### Built in: `adapters/build-worktree` (git-worktree BuildConvention)
 
@@ -308,7 +308,7 @@ The contract:
 
 ## Configuration
 
-`loadConfig(path, { defaults, required = [] })` reads `KEY=value` lines. File values override `defaults`, and the raw map is returned as `cfg.env` so a platform can read its own keys. `required` lists extra keys the platform insists on (homefree re-requires `QA_OPERATOR_EMAIL`); it can't waive the core's.
+`loadConfig(path, { defaults, required = [] })` reads `KEY=value` lines. File values override `defaults`, and the raw map is returned as `cfg.env` so a platform can read its own keys. `required` lists extra keys the platform insists on (a platform may re-require `QA_OPERATOR_EMAIL`, say); it can't waive the core's.
 
 | Key | Default | |
 |---|---|---|
@@ -364,7 +364,7 @@ npm run expose -- --check        # in this repo: self-QA's .env.qa, through self
 
 `qa-conductor-expose` runs one [exposure](#exposure-optional) pass from a shell, through the built-in tailscale adapter. **It is a tool for operators and debugging.** The conductor's reconcile loop owns the mounts: it sets them once its servers listen and restores them every `QA_EXPOSURE_INTERVAL_MINUTES`. So a deploy only restarts the conductor, and runs neither this CLI nor `tailscale serve`. Use the CLI to see drift, or to restore a mount now instead of at the next pass.
 
-**Run it without `--check` only while the conductor is running.** The CLI never removes a mount, and self-QA removes its own only as it stops, so a mount written with no conductor behind it stays. Until someone removes it, it publishes whatever listens on its loopback port next, such as a later loopback self-QA, with no identity gate: that is why self-QA removes its mounts when it stops. With the conductor stopped, use `--check`.
+**Run it without `--check` only while the conductor is running.** Neither the CLI nor the conductor ever removes a mount, so a mount written with no conductor behind it stays. Until someone removes it, it publishes whatever listens on its loopback port next, such as the demo or a conductor in none mode, with no identity gate. With the conductor stopped, use `--check`.
 
 ```
 qa-conductor-expose [--check] [--env FILE] [--config MODULE[#export]] [--tailscale BIN] [--socket PATH] [--help|-h]
