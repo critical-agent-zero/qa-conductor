@@ -61,9 +61,20 @@ The token reads PRs and comments and labels on this repository; the README's [To
 
 ## Releasing
 
-1. Bump `version` in `package.json`, turn the CHANGELOG's `## [Unreleased]` heading into `## [X.Y.Z] — YYYY-MM-DD` with its compare link at the end of the file, add a new, empty `## [Unreleased]` heading above it and point the `[Unreleased]` link at the new tag (`compare/vX.Y.Z...HEAD`), and move the git-tag example under the README's [Install](README.md#install) to its tag. `test/package.test.mjs` fails until all of them agree, and on an `[Unreleased]` link with no heading of that name.
-2. Once that is on `main`, tag it `vX.Y.Z` and push the tag.
-3. The [publish workflow](.github/workflows/publish.yml) refuses a tag that isn't `v` plus the `package.json` version. Then it runs the tests and `npm pack --dry-run`, and stages the version on npm with provenance (`npm stage publish`).
-4. A maintainer approves the staged version on npmjs.com. Only then does it go live.
+1. Bump `version` in `package.json` (there is no lockfile), turn the CHANGELOG's `## [Unreleased]` heading into `## [X.Y.Z] — YYYY-MM-DD` with its compare link (`compare/v<previous>...vX.Y.Z`) at the end of the file, add a new, empty `## [Unreleased]` heading above it and point the `[Unreleased]` link at the new tag (`compare/vX.Y.Z...HEAD`), and move the git-tag example under the README's [Install](README.md#install) to its tag. `test/package.test.mjs` fails until all of them agree, and on an `[Unreleased]` link with no heading of that name.
+2. Open the release's section with a few lines on what it brings. If it can break a consumer, or changes what one sees, say so there, and after its changes add a `### Migrating from <previous>` list those lines link to: one numbered item per change, with what to do about it. Build the list from what ships, not from the CHANGELOG's lines alone: `git log v<previous>..main`, and `git diff v<previous>..main -- bin lib public package.json`.
+3. Check the tarball itself, since the tests import the package from the checkout. `npm pack --dry-run` lists what it holds; then pack it, install it in an empty project and load every entry point and the bin:
+   ```sh
+   npm pack --pack-destination /tmp
+   cd "$(mktemp -d)" && npm init -y > /dev/null
+   npm install --offline /tmp/critical-labs-qa-conductor-X.Y.Z.tgz
+   node -e 'const { exports } = require("@critical-labs/qa-conductor/package.json")
+     Promise.all(Object.keys(exports).filter(key => key !== "./package.json").map(key => import(`@critical-labs/qa-conductor${key.slice(1)}`)))
+       .then(() => console.log("every entry point loads"))'
+   npx qa-conductor-expose --help
+   ```
+4. Once the release commit is on `main`, tag it with a signed, annotated tag (`git tag -s vX.Y.Z -m "qa-conductor X.Y.Z: <what it brings>"`) and push the tag (`git push origin vX.Y.Z`).
+5. The [publish workflow](.github/workflows/publish.yml) refuses a tag that isn't `v` plus the `package.json` version. Then it runs the tests and `npm pack --dry-run`, and stages the version on npm with provenance (`npm stage publish`).
+6. A maintainer approves the staged version on npmjs.com. Only then does it go live.
 
 Nothing publishes directly: the workflow's npm token can only stage, and only the stage step gets it. `test/package.test.mjs` pins the workflow's trigger and steps. It fails on any npm or npx command other than the four the workflow runs (npm expands abbreviations such as `npm pub`), on a gate that could be skipped or allowed to fail, and on the token anywhere but the stage step. It reads the file as text, so it catches mistakes, not every way a shell can spell a command: the stage-only token is what refuses a plain publish.
