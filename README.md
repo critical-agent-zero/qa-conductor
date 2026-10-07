@@ -308,34 +308,87 @@ The contract:
 
 ## Configuration
 
-`loadConfig(path, { defaults, required = [] })` reads `KEY=value` lines. File values override `defaults`, and the raw map is returned as `cfg.env` so a platform can read its own keys. `required` lists extra keys the platform insists on (a platform may re-require `QA_OPERATOR_EMAIL`, say); it can't waive the core's.
+`loadConfig(path, { defaults, required = [] })` reads an env file, `.env.qa` by convention, into `cfg`. File values override `defaults`, and the raw map is returned as `cfg.env` so a platform can read its own keys. `required` lists extra keys the platform insists on (a platform may re-require `QA_OPERATOR_EMAIL`, say); it can't waive the core's.
 
-| Key | Default | |
-|---|---|---|
-| `GITHUB_QA_TOKEN` | *(required)* | PR list, head and trust lookups, verdict comment + label |
-| `QA_GHCR_TOKEN` | `GITHUB_QA_TOKEN` | `cfg.ghcrToken`, for `createGithub({ packagesToken })`: the GHCR package version listing, which a fine-grained token can't call (use a classic PAT with `read:packages`), and a platform's registry login |
-| `QA_REPO` | *(required)* | `owner/name` |
-| `QA_OPERATOR_EMAIL` | `null` | the reviewer, passed to `establishSession` |
-| `QA_PUBLIC_HOST` | *(required unless both pane origins are set)*, else `null` | default host for the pane origins; always an allowed `Host` |
-| `QA_BIND_HOST` | `127.0.0.1` | the address all three servers listen on (`[::1]` is read as `::1`); must be loopback in tailscale mode (see [Security](#security)) |
-| `QA_ALLOWED_HOSTS` | *(none)* | extra comma-separated hostnames (no ports) the servers answer to |
-| `QA_EXPOSURE` | `tailscale` if any address the conductor answers to or listens on is off loopback (see below), else `none` | `tailscale`: fronted by `tailscale serve` on this host, so the identity gate is on and the bind must be loopback. `none`: no gate (0.2's behaviour), for loopback or another authenticating front door. Anything else throws |
-| `QA_ALLOWED_LOGINS` | *(none)* | comma-separated Tailscale logins (as `tailscale whois` shows them, e.g. `alice@github`) allowed in when the gate is on; trimmed and lowercased. Required in tailscale mode |
-| `QA_EXPOSURE_INTERVAL_MINUTES` | `5` | minutes between [exposure](#exposure-optional) reconcile passes, when the platform passes an Exposure adapter. Above `0` and at most `35791`, the longest a timer can wait (above it, Node would fire every millisecond); fractions are fine |
-| `QA_TAILSCALE_BIN` | `tailscale` | the tailscale CLI the [expose CLI](#expose-cli) and self-QA run, for an env file they read. On macOS, use the app's `/Applications/Tailscale.app/Contents/MacOS/Tailscale` when the one on `PATH` is older than the daemon. The conductor never reads it: a platform passes `bin` to `createTailscaleExposure` |
-| `QA_HARNESS_PORT` / `QA_BASE_PROXY_PORT` / `QA_PR_PROXY_PORT` | `3100` / `3101` / `3102` | listen ports |
-| `QA_HARNESS_ORIGIN` | `https://<QA_PUBLIC_HOST>:8444`, else `http://<QA_BIND_HOST>:<QA_HARNESS_PORT>` on a loopback bind | the origin viewers open the harness at (any path dropped); the page is under `/qa/`. Required on a non-loopback bind with no public host. On port `0` the conductor derives it from the bound port. Not an IPv6 literal: on a `::1` bind, set `http://localhost:<port>` |
-| `QA_BASE_ORIGIN` / `QA_PR_ORIGIN` | `https://<host>:8443` / `:10000` | public pane origins |
-| `QA_FRAME_ANCESTORS` | *(none)* | extra comma-separated origins allowed to frame the panes, for a harness nested in a pane (self-QA's inner demos). CSP only: they pass no `Referer` check, and the bridge never talks to them |
-| `QA_FORWARD_CLIENT_COOKIES` | *(none)* | `cfg.forwardClientCookies`: comma-separated names of the browser's own cookies the pane proxies pass to the pane apps, beside each pane's jar, whose value wins on a name both have. Unset, the apps get only the jar's cookies (see [Security](#security)). Each must be a cookie name (an RFC 6265 token); `*` and other wildcards throw. Any page on the panes' hostname can set these cookies, the other pane's scripts included, so a value that isn't an RFC 6265 cookie-value (one with a space, a comma, a backslash or a stray double quote) isn't passed. On one hostname both pane apps get the browser's one value of each, so name only cookies both panes may share, such as a preference, never a session |
-| `QA_LABEL_ACCEPT` / `QA_LABEL_REJECT` | `qa-approved` / `qa-changes-requested` | verdict label pair |
-| `QA_IDLE_MINUTES` | `30` | idle sessions are torn down |
+### The env file
+
+- One `KEY=value` per line. Blank lines, lines that start with `#` and lines with no `=` are skipped. Spaces around the key and the value are dropped, and a later line wins.
+- A value in a matching pair of double or single quotes loses them. Nothing is unescaped or expanded, quoted or not: `$HOME` stays `$HOME`.
+- No `export`: `export KEY=value` sets a key named `export KEY`, which nothing reads.
+- No comment after a value: a `#` after a space or a tab in an unquoted value throws, naming the file, the line and the key. Put the comment on a line of its own, or quote the value if the `#` is part of it.
+- **It holds a token.** Keep it out of git (`echo .env.qa >> .gitignore`) and readable by you alone: create it with `(umask 077 && touch .env.qa)`, or `chmod 600` it.
+
+### Sample `.env.qa` files
+
+On one machine, with everything on loopback and no identity gate:
+
+```ini
+GITHUB_QA_TOKEN=<token>
+QA_REPO=acme/widget
+# With both pane origins set, QA_PUBLIC_HOST isn't needed.
+# The harness is at http://127.0.0.1:3100/qa/.
+QA_BASE_ORIGIN=http://127.0.0.1:3101
+QA_PR_ORIGIN=http://127.0.0.1:3102
+```
+
+On a tailnet, behind `tailscale serve` on the conductor's machine, `qa-box.tail1234.ts.net`:
+
+```ini
+GITHUB_QA_TOKEN=<token>
+QA_REPO=acme/widget
+# The harness is at https://qa-box.tail1234.ts.net:8444/qa/, the panes at :8443 and :10000.
+QA_PUBLIC_HOST=qa-box.tail1234.ts.net
+# Who may open them: Tailscale logins, as tailscale whois shows them.
+QA_ALLOWED_LOGINS=alice@github,bob@example.com
+```
+
+That layout is tailscale mode: every server listens on loopback and answers only those logins (see [Security](#security)). The platform's [Exposure adapter](#exposure-optional) mounts the three servers on `tailscale serve`, or you do, with `tailscale serve --bg --https=8444 --set-path=/qa http://127.0.0.1:3100`, `tailscale serve --bg --https=8443 http://127.0.0.1:3101` and `tailscale serve --bg --https=10000 http://127.0.0.1:3102`.
+
+### Tokens
+
+`GITHUB_QA_TOKEN` reads the open PRs and posts each verdict, as the token's owner. Use a fine-grained personal access token with:
+- **Repository access:** only the repository under QA.
+- **Pull requests: read.** The PR list, and each PR's head and author.
+- **Issues: read and write.** The verdict comment and label.
+- **Metadata: read**, which GitHub grants with any other permission. It also covers the author's permission, which the trust gate checks.
+
+Some built-ins need more than this token:
+- `adapters/build-worktree` fetches with plain `git` over https, so a private repository needs a git credential helper that can read it.
+- `createGithub`'s GHCR helpers list container package versions, which a fine-grained token can't. Set `QA_GHCR_TOKEN` to a classic token with `read:packages`, and pass `createGithub` the `packageName`.
+- A BuildConvention that dispatches preview builds with `createGithub`'s `dispatchPreviewBuild` and `findPreviewRun` needs Actions: read and write.
+
+### Keys
+
+| Key | `cfg` | Default | |
+|---|---|---|---|
+| `GITHUB_QA_TOKEN` | `githubToken` | *(required)* | PR list, head and trust lookups, verdict comment + label ([Tokens](#tokens)) |
+| `QA_GHCR_TOKEN` | `ghcrToken` | `GITHUB_QA_TOKEN` | for `createGithub({ packagesToken })`, with its `packageName`: the GHCR package version listing, which a fine-grained token can't call (use a classic PAT with `read:packages`), and a platform's registry login |
+| `QA_REPO` | `repo` | *(required)* | `owner/name` |
+| `QA_OPERATOR_EMAIL` | `operatorEmail` | `null` | the reviewer, passed to `establishSession` |
+| `QA_PUBLIC_HOST` | `publicHost` | *(required unless both pane origins are set)*, else `null` | default host for the harness and pane origins; always an allowed `Host` |
+| `QA_BIND_HOST` | `host` | `127.0.0.1` | the address all three servers listen on (`[::1]` is read as `::1`); must be loopback in tailscale mode (see [Security](#security)) |
+| `QA_ALLOWED_HOSTS` | `allowedHosts` | *(none)* | extra comma-separated hostnames (no ports) the servers answer to |
+| `QA_EXPOSURE` | `exposure` | `tailscale` if any address the conductor answers to or listens on is off loopback (see below), else `none` | `tailscale`: fronted by `tailscale serve --https` on this host, so the identity gate is on and the bind must be loopback. `none`: no gate (0.2's behaviour), for loopback or another authenticating front door. Anything else throws |
+| `QA_ALLOWED_LOGINS` | `allowedLogins` | *(none)* | comma-separated Tailscale logins (as `tailscale whois` shows them, e.g. `alice@github`) allowed in when the gate is on; trimmed and lowercased. Required in tailscale mode |
+| `QA_EXPOSURE_INTERVAL_MINUTES` | `exposureIntervalMinutes` | `5` | minutes between [exposure](#exposure-optional) reconcile passes, when the platform passes an Exposure adapter. Above `0` and at most `35791`, the longest a timer can wait (above it, Node would fire every millisecond); fractions are fine |
+| `QA_TAILSCALE_BIN` | *(only `cfg.env`)* | `tailscale` | the tailscale CLI the [expose CLI](#expose-cli) and this repository's self-QA run, for an env file they read. On macOS, use the app's `/Applications/Tailscale.app/Contents/MacOS/Tailscale` when the one on `PATH` is older than the daemon. The conductor never reads it: a platform passes `bin` to `createTailscaleExposure` |
+| `QA_HARNESS_PORT` / `QA_BASE_PROXY_PORT` / `QA_PR_PROXY_PORT` | `ports.harness` / `ports.base` / `ports.pr` | `3100` / `3101` / `3102` | listen ports |
+| `QA_HARNESS_ORIGIN` | `harnessOrigin` | `https://<QA_PUBLIC_HOST>:8444`, else `http://<QA_BIND_HOST>:<QA_HARNESS_PORT>` on a loopback bind | the origin viewers open the harness at (any path dropped); the page is under `/qa/`. Required on a non-loopback bind with no public host. On port `0` the conductor derives it from the bound port. Not an IPv6 literal: on a `::1` bind, set `http://localhost:<port>` |
+| `QA_BASE_ORIGIN` / `QA_PR_ORIGIN` | `paneOrigins.base` / `paneOrigins.pr` | `https://<QA_PUBLIC_HOST>:8443` / `https://<QA_PUBLIC_HOST>:10000` | the origins viewers reach the panes at |
+| `QA_FRAME_ANCESTORS` | `frameAncestors` | *(none)* | extra comma-separated origins allowed to frame the panes, for a harness nested in a pane (self-QA's inner demos). CSP only: they pass no `Referer` check, and the bridge never talks to them |
+| `QA_FORWARD_CLIENT_COOKIES` | `forwardClientCookies` | *(none)* | comma-separated names of the browser's own cookies the pane proxies pass to the pane apps, beside each pane's jar, whose value wins on a name both have. Unset, the apps get only the jar's cookies (see [Security](#security)). Each must be a cookie name (an RFC 6265 token); `*` and other wildcards throw. Any page on the panes' hostname can set these cookies, the other pane's scripts included, so a value that isn't an RFC 6265 cookie-value (one with a space, a comma, a backslash or a stray double quote) isn't passed. On one hostname both pane apps get the browser's one value of each, so name only cookies both panes may share, such as a preference, never a session |
+| `QA_LABEL_ACCEPT` / `QA_LABEL_REJECT` | `verdictLabels.accept` / `verdictLabels.reject` | `qa-approved` / `qa-changes-requested` | verdict label pair |
+| `QA_IDLE_MINUTES` | `idleMinutes` | `30` | idle sessions are torn down |
 
 Every origin key must be an http(s) URL with a plain hostname. It is normalized to an origin (lowercased, a default port and any path dropped), and anything else throws. An `http:` harness or pane origin must be loopback (`127.0.0.0/8`, `::1`, `localhost`): browsers send the `Sec-Fetch-*` headers the request guards rely on only to https and loopback origins (see [Security](#security)). The harness and the two panes must be three different origins: a page that is same-origin with another could act for the reviewer there.
 
 Unset, `QA_EXPOSURE` is `none` only when all of these are loopback, and `tailscale` otherwise: the harness origin (as derived above; when none can be derived, on a loopback bind on port `0` with no `QA_HARNESS_ORIGIN` or `QA_PUBLIC_HOST`, it adds nothing), both pane origins, `QA_PUBLIC_HOST` and every `QA_ALLOWED_HOSTS` entry (both widen the `Host` allowlist), and `QA_BIND_HOST`. So a non-loopback bind alone makes the mode `tailscale`, which then refuses that bind: behind another authenticating front door, set `QA_EXPOSURE=none`. In tailscale mode, `loadConfig` throws on a non-loopback `QA_BIND_HOST` and on an empty `QA_ALLOWED_LOGINS`, and each error says why the mode is `tailscale`.
 
-A platform that builds `cfg` in code instead can leave out `host` (loopback is the default), `allowedHosts`, `harnessOrigin` (derived as above), `frameAncestors`, `forwardClientCookies` (none: `false` or an array of cookie names), `exposure`, `allowedLogins` and `exposureIntervalMinutes` (`5`). Without `exposure`, `startConductor` resolves the mode as `loadConfig` does, with `defaultExposure({ harnessOrigin, paneOrigins, publicHost, allowedHosts, host })` from `./config`, where a missing or unparseable pane origin counts as off loopback. The mode is fixed at start, so a `cfg` whose non-loopback origins are assigned after start must set `exposure` itself. `startConductor` refuses an unknown `exposure`, a `host` in brackets (write `::1`, not `[::1]`), tailscale mode on a non-loopback `host`, a `harnessOrigin` or `frameAncestors` entry that isn't an http(s) origin, an `http:` harness origin or pane origin (set at start) whose host isn't loopback, a harness origin equal to a pane origin, an `exposureIntervalMinutes` that isn't a number above `0` and at most `35791`, a `forwardClientCookies` that isn't `false` or an array of cookie names, and an `adapters.exposure` in none mode. Startup logs whether the gate is on and, for a defaulted mode, what made it `tailscale`. In tailscale mode with no `allowedLogins` it logs an error, and every request is refused. The core reads `cfg.paneOrigins` per request, so it may be assigned once the proxies are listening.
+### A `cfg` built in code
+
+A platform that builds `cfg` in code instead of with `loadConfig` must set `ports`, `paneOrigins`, `verdictLabels` and `idleMinutes`, in the shapes the table's `cfg` column shows. Without `idleMinutes`, the idle reaper silently never ends a session. The core never reads `githubToken`, `ghcrToken`, `repo` or `env`: they are for the platform's own `createGithub` and adapters. `readBaseEnv` is optional too (see [Use](#use)).
+
+It can leave out `operatorEmail`, `publicHost`, `host` (loopback is the default), `allowedHosts`, `harnessOrigin` (derived as above), `frameAncestors`, `forwardClientCookies` (none: `false` or an array of cookie names), `exposure`, `allowedLogins` and `exposureIntervalMinutes` (`5`). Without `exposure`, `startConductor` resolves the mode as `loadConfig` does, with `defaultExposure({ harnessOrigin, paneOrigins, publicHost, allowedHosts, host })` from `./config`, where a missing or unparseable pane origin counts as off loopback. The mode is fixed at start, so a `cfg` whose non-loopback origins are assigned after start must set `exposure` itself. `startConductor` refuses an unknown `exposure`, a `host` in brackets (write `::1`, not `[::1]`), tailscale mode on a non-loopback `host`, a `harnessOrigin` or `frameAncestors` entry that isn't an http(s) origin, an `http:` harness origin or pane origin (set at start) whose host isn't loopback, a harness origin equal to a pane origin, an `exposureIntervalMinutes` that isn't a number above `0` and at most `35791`, a `forwardClientCookies` that isn't `false` or an array of cookie names, and an `adapters.exposure` in none mode. Startup logs whether the gate is on and, for a defaulted mode, what made it `tailscale`. In tailscale mode with no `allowedLogins` it logs an error, and every request is refused. The core reads `cfg.paneOrigins` per request, so it may be assigned once the proxies are listening.
 
 ## HTTP API (harness port)
 

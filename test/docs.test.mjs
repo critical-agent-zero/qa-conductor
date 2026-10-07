@@ -2,26 +2,36 @@
 // not the source. So every entry point package.json exports, the bin, and
 // every env file key the published code reads must be in it, and the names
 // it says an entry point exports must be exactly the ones it does: a name it
-// leaves out would read as internal, and a later release could drop it.
+// leaves out would read as internal, and a later release could drop it. What
+// a consumer copies from it must work: its examples' imports, its sample
+// .env.qa files and its links.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { loadConfig } from '../lib/config.mjs'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
 const README = readFileSync(path.join(ROOT, 'README.md'), 'utf8')
 
 // The lines of the README section under this heading, up to the next heading
-// of the same or a higher level.
+// of the same or a higher level. A # line in a code block, such as a
+// comment in a sample .env.qa, is no heading.
 function section(heading) {
   const lines = README.split('\n')
   const at = lines.indexOf(heading)
   assert.ok(at >= 0, `the README has a "${heading}" heading`)
   const level = heading.indexOf(' ')
-  const end = lines.findIndex((line, i) => i > at && /^#+ /.test(line) && line.indexOf(' ') <= level)
+  let fenced = false
+  const end = lines.findIndex((line, i) => {
+    if (/^ *```/.test(line)) fenced = !fenced
+    return i > at && !fenced && /^#+ /.test(line) && line.indexOf(' ') <= level
+  })
   return lines.slice(at + 1, end === -1 ? undefined : end)
 }
 
@@ -69,4 +79,32 @@ test('every env file key the published code reads has a Configuration row', () =
   read.delete('QA_ENV_FILE')
   for (const key of ['QA_HARNESS_ORIGIN', 'QA_EXPOSURE', 'QA_TAILSCALE_BIN']) assert.ok(read.has(key), `the scan finds ${key}`)
   for (const key of [...read].sort()) assert.ok(documented.has(key), `${key} has a row in the Configuration table`)
+})
+
+// Fenced code blocks of this language in a markdown text, list items' too,
+// without their indent.
+const codeBlocks = (text, lang) =>
+  [...text.matchAll(new RegExp(`^( *)\`\`\`${lang}\\n([\\s\\S]*?)^\\1\`\`\`$`, 'gm'))]
+    .map(([, indent, body]) => body.split('\n').map(line => line.slice(indent.length)).join('\n'))
+
+// A consumer starts from these: each must load, the local one with no
+// identity gate and the tailnet one behind it.
+test('the README\'s sample .env.qa files load: the local one ungated, the tailnet one gated', () => {
+  const samples = codeBlocks(section('### Sample `.env.qa` files').join('\n'), 'ini')
+  assert.equal(samples.length, 2, 'a local sample and a tailnet sample')
+  const dir = mkdtempSync(path.join(tmpdir(), 'qa-readme-'))
+  const [local, tailnet] = samples.map((text, i) => {
+    const file = path.join(dir, `.env.qa-${i}`)
+    writeFileSync(file, text)
+    return loadConfig(file)
+  })
+  assert.equal(local.exposure, 'none')
+  assert.equal(local.host, '127.0.0.1')
+  assert.equal(local.harnessOrigin, 'http://127.0.0.1:3100')
+  assert.deepEqual(local.paneOrigins, { base: 'http://127.0.0.1:3101', pr: 'http://127.0.0.1:3102' })
+  assert.equal(tailnet.exposure, 'tailscale')
+  assert.equal(tailnet.host, '127.0.0.1')
+  assert.equal(tailnet.harnessOrigin, 'https://qa-box.tail1234.ts.net:8444')
+  assert.deepEqual(tailnet.paneOrigins, { base: 'https://qa-box.tail1234.ts.net:8443', pr: 'https://qa-box.tail1234.ts.net:10000' })
+  assert.ok(tailnet.allowedLogins.length > 0, 'the tailnet sample lets someone in')
 })
