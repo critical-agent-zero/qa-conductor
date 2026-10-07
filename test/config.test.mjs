@@ -120,6 +120,22 @@ test('QA_ALLOWED_HOSTS: comma-separated, trimmed, empties dropped; default none'
   assert.deepEqual(c.allowedHosts, ['qa.example.com', 'host.docker.internal'])
 })
 
+// The pane proxies send the pane apps only their own jar's cookies; these
+// names are the browser cookies a consumer opts in to passing through.
+test('QA_FORWARD_CLIENT_COOKIES: comma-separated cookie names, trimmed, empties dropped; default none; a wildcard or a name that is not a token throws', () => {
+  assert.deepEqual(loadConfig(envFile(REQUIRED)).forwardClientCookies, [])
+  assert.deepEqual(loadConfig(envFile([...REQUIRED, 'QA_FORWARD_CLIENT_COOKIES='])).forwardClientCookies, [])
+  const c = loadConfig(envFile([...REQUIRED, 'QA_FORWARD_CLIENT_COOKIES= csrftoken ,, __Host-locale,csrftoken']))
+  assert.deepEqual(c.forwardClientCookies, ['csrftoken', '__Host-locale'], 'listed once each')
+  for (const [value, shown] of [['*', '*'], ['csrftoken, *', '*'], ['sess*', 'sess*'], ['a b', 'a b'], ['a=b', 'a=b'], ['a;b', 'a;b'], ['"sid"', '"sid"'], ['séance', 'séance']]) {
+    const file = envFile([...REQUIRED, `QA_FORWARD_CLIENT_COOKIES=${value}`])
+    assert.throws(() => loadConfig(file), err => {
+      assert.equal(err.message, `QA_FORWARD_CLIENT_COOKIES must be comma-separated cookie names (RFC 6265 tokens; no wildcards: list each name), got ${JSON.stringify(shown)} in ${file}`)
+      return true
+    }, value)
+  }
+})
+
 // --- 0.3.0: the harness origin --------------------------------------------------
 
 const NO_HOST = REQUIRED.filter(l => !l.startsWith('QA_PUBLIC_HOST='))

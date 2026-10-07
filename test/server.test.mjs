@@ -26,8 +26,10 @@ function makeWorld({
   cfg: cfgOverrides = {}, readBaseEnv: readBaseEnvOverride = null, exposure = null, logThrowsOn = null,
 } = {}) {
   const calls = []
-  // '/page' answers HTML, so the proxy injects the bridge; anything else is text.
+  // '/page' answers HTML, so the proxy injects the bridge; '/cookie' echoes
+  // the Cookie header the app got; anything else is text.
   const app = name => http.createServer((req, res) => {
+    if (req.url === '/cookie') return res.end(req.headers.cookie ?? '(none)')
     if (req.url === '/page') res.setHeader('content-type', 'text/html')
     res.end(req.url === '/page' ? `<head></head>${name}` : name)
   })
@@ -783,6 +785,39 @@ test('startConductor refuses a harness origin, explicit or derived from publicHo
       assert.equal((await api(port, 'GET', '/api/state')).status, 'idle', JSON.stringify(paneOrigins))
     } finally { c.stop() }
   }
+})
+
+// --- 0.3.1: the browser's own cookies ----------------------------------------------
+// Cookies ignore ports: on a hostname the panes share with another app, the
+// browser sends both panes that app's cookies, and those the other pane's
+// scripts set.
+
+test('the pane apps get no browser cookie unless cfg.forwardClientCookies names it', async () => {
+  for (const [forwardClientCookies, want] of [[undefined, '(none)'], [[], '(none)'], [false, '(none)'], [['locale'], 'locale=fr']]) {
+    const { c } = makeWorld({ cfg: { forwardClientCookies } })
+    try {
+      const port = await harnessPort(c)
+      await api(port, 'POST', '/api/session', { pr: 7 })
+      await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+      for (const server of ['baseProxy', 'prProxy']) {
+        const res = await raw(await proxyPort(c.servers[server]), { path: '/cookie', headers: { cookie: 'rc_session=secret; planted=1; locale=fr' } })
+        assert.deepEqual([res.status, res.body], [200, want], `${server} ${JSON.stringify(forwardClientCookies)}`)
+      }
+    } finally { c.stop() }
+  }
+})
+
+test('startConductor refuses a cfg.forwardClientCookies that is not false or an array of cookie names, before anything starts', () => {
+  let swept = false
+  const provisioner = { sweep: () => { swept = true } }
+  for (const bad of [true, '*', 'locale', ['*'], ['sess*'], ['a b'], [42]]) {
+    assert.throws(
+      () => startOnly({ forwardClientCookies: bad }, { provisioner }),
+      /^Error: startConductor: cfg\.forwardClientCookies must be false or an array of cookie names \(RFC 6265 tokens; no wildcards: list each name\), got /,
+      JSON.stringify(bad),
+    )
+  }
+  assert.equal(swept, false, 'refused before the startup sweep')
 })
 
 // --- 0.3.0: the Tailscale identity gate (#307) ------------------------------------
