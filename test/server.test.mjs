@@ -27,9 +27,11 @@ function makeWorld({
 } = {}) {
   const calls = []
   // '/page' answers HTML, so the proxy injects the bridge; '/cookie' echoes
-  // the Cookie header the app got; anything else is text.
+  // the Cookie header the app got; '/set?<pair>' sets that cookie; anything
+  // else is text.
   const app = name => http.createServer((req, res) => {
     if (req.url === '/cookie') return res.end(req.headers.cookie ?? '(none)')
+    if (req.url.startsWith('/set?')) res.setHeader('set-cookie', `${req.url.slice('/set?'.length)}; Path=/; HttpOnly`)
     if (req.url === '/page') res.setHeader('content-type', 'text/html')
     res.end(req.url === '/page' ? `<head></head>${name}` : name)
   })
@@ -805,6 +807,44 @@ test('the pane apps get no browser cookie unless cfg.forwardClientCookies names 
       }
     } finally { c.stop() }
   }
+})
+
+// Each proxy's jar lasts as long as the conductor, and a provisioner may
+// give the next session's app the same port: here every session's pane is
+// the same app server, so a cookie left in a jar would reach it.
+test('a session\'s pane apps never get the cookies an earlier session\'s apps set', async () => {
+  const { c } = makeWorld()
+  try {
+    const port = await harnessPort(c)
+    const panes = { base: await proxyPort(c.servers.baseProxy), pr: await proxyPort(c.servers.prProxy) }
+    const cookieOf = async role => (await raw(panes[role], { path: '/cookie' })).body
+    const open = async (body) => {
+      assert.equal((await api(port, 'POST', '/api/session', body)).ok, true, JSON.stringify(body))
+      await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    }
+    const plant = async (pr) => {
+      for (const role of ['base', 'pr']) {
+        assert.equal((await raw(panes[role], { path: `/set?from_pr=${pr}` })).status, 200)
+        assert.equal(await cookieOf(role), `from_pr=${pr}`, `${role} #${pr}`)
+      }
+    }
+    const assertEmpty = async (how) => {
+      for (const role of ['base', 'pr']) assert.equal(await cookieOf(role), '(none)', `${role} after ${how}`)
+    }
+    await open({ pr: 7 })
+    await plant(7)
+    await api(port, 'POST', '/api/teardown')
+    await open({ pr: 8 })
+    await assertEmpty('a teardown')
+    await plant(8)
+    await open({ pr: 9, takeover: true })
+    await assertEmpty('a takeover')
+    await plant(9)
+    // the same PR opened again: no teardown, and the old apps serve until the new ones are ready
+    assert.equal((await api(port, 'POST', '/api/session', { pr: 9 })).ok, true)
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    await assertEmpty('the same PR opened again')
+  } finally { c.stop() }
 })
 
 test('startConductor refuses a cfg.forwardClientCookies that is not false or an array of cookie names, before anything starts', () => {

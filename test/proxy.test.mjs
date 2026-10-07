@@ -60,7 +60,7 @@ async function setup(t, upstreamHandler, { allowedHosts = [], harnessOrigin, fra
     await new Promise((r) => proxy.close(r))
     await rm(dir, { recursive: true, force: true })
   })
-  return { upstreamPort, proxyPort, activity, bridgePath }
+  return { upstreamPort, proxyPort, activity, bridgePath, handler }
 }
 
 // --- parseSetCookie -------------------------------------------------------
@@ -203,6 +203,19 @@ test('the jar\'s cookies still reach the pane app, and only they', async (t) => 
   await request(proxyPort, '/login', { headers: BROWSER_COOKIES })
   assert.equal((await request(proxyPort, '/echo', { headers: BROWSER_COOKIES })).body.toString(), 'sid=abc; theme=dark', 'the jar\'s theme, not the browser\'s')
   assert.equal((await request(proxyPort, '/echo')).body.toString(), 'sid=abc; theme=dark')
+})
+
+// The jar lasts as long as the proxy; the conductor empties it between
+// sessions (test/server.test.mjs).
+test('clearJar empties the jar, which then fills again from the app\'s Set-Cookie', async (t) => {
+  const { proxyPort, handler } = await setup(t, echoCookie, { forwardClientCookies: ['locale'] })
+  const echo = async () => (await request(proxyPort, '/echo', { headers: BROWSER_COOKIES })).body.toString()
+  await request(proxyPort, '/login')
+  assert.equal(await echo(), 'sid=abc; theme=dark; locale=fr')
+  handler.clearJar()
+  assert.equal(await echo(), 'locale=fr', 'the named browser cookie still passes')
+  await request(proxyPort, '/login')
+  assert.equal(await echo(), 'sid=abc; theme=dark; locale=fr')
 })
 
 test('forwardClientCookies passes the browser cookies it names, and no others', async (t) => {
