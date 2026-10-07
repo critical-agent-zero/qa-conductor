@@ -15,7 +15,7 @@ function envFile(lines) {
 
 // A public host puts the conductor in tailscale mode, which needs an allowlist.
 const REQUIRED = [
-  'GITHUB_QA_TOKEN=tok', 'QA_OPERATOR_EMAIL=op@homefree.local', 'QA_REPO=acme/widget', 'QA_PUBLIC_HOST=w.ts.net',
+  'GITHUB_QA_TOKEN=tok', 'QA_OPERATOR_EMAIL=op@example.com', 'QA_REPO=acme/widget', 'QA_PUBLIC_HOST=w.ts.net',
   'QA_ALLOWED_LOGINS=alice@github',
 ]
 
@@ -26,7 +26,7 @@ test('parseEnvFile: KEY=value lines, comments/blanks ignored, values may contain
 test('generic defaults: ports, pane origins from public host, verdict labels', () => {
   const c = loadConfig(envFile(REQUIRED))
   assert.equal(c.githubToken, 'tok')
-  assert.equal(c.operatorEmail, 'op@homefree.local')
+  assert.equal(c.operatorEmail, 'op@example.com')
   assert.equal(c.repo, 'acme/widget')
   assert.equal(c.publicHost, 'w.ts.net')
   assert.equal(c.idleMinutes, 30)
@@ -50,7 +50,7 @@ test('overrides: ports, origins, labels, idle minutes (a number)', () => {
 
 test('platform defaults fill gaps; file values win', () => {
   // the default public host puts it in tailscale mode, so it needs logins
-  const c = loadConfig(envFile(['GITHUB_QA_TOKEN=tok', 'QA_OPERATOR_EMAIL=op@homefree.local', 'QA_REPO=file/wins', 'QA_ALLOWED_LOGINS=alice@github']),
+  const c = loadConfig(envFile(['GITHUB_QA_TOKEN=tok', 'QA_OPERATOR_EMAIL=op@example.com', 'QA_REPO=file/wins', 'QA_ALLOWED_LOGINS=alice@github']),
     { defaults: { QA_REPO: 'default/repo', QA_PUBLIC_HOST: 'd.ts.net' } })
   assert.equal(c.repo, 'file/wins')
   assert.equal(c.publicHost, 'd.ts.net')
@@ -81,7 +81,7 @@ test('QA_PUBLIC_HOST is required only when the two pane origins are not both set
 test('required: a platform can re-require keys; token and repo stay required', () => {
   const noEmail = REQUIRED.filter(l => !l.startsWith('QA_OPERATOR_EMAIL='))
   assert.throws(() => loadConfig(envFile(noEmail), { required: ['QA_OPERATOR_EMAIL'] }), /QA_OPERATOR_EMAIL/)
-  assert.equal(loadConfig(envFile(REQUIRED), { required: ['QA_OPERATOR_EMAIL'] }).operatorEmail, 'op@homefree.local')
+  assert.equal(loadConfig(envFile(REQUIRED), { required: ['QA_OPERATOR_EMAIL'] }).operatorEmail, 'op@example.com')
   // a re-required key may come from the platform defaults
   assert.equal(loadConfig(envFile(noEmail), { required: ['QA_OPERATOR_EMAIL'], defaults: { QA_OPERATOR_EMAIL: 'd@x' } }).operatorEmail, 'd@x')
   // `required` adds to the core keys; it cannot waive them
@@ -341,7 +341,7 @@ test('defaultExposure: a missing or unparseable pane origin counts as non-loopba
 
 test('tailscale mode refuses a QA_BIND_HOST that is not loopback; none mode accepts 0.0.0.0', () => {
   // Off loopback, anyone who reaches the port can send their own
-  // Tailscale-User-Login (#307).
+  // Tailscale-User-Login.
   for (const host of ['0.0.0.0', '::', '*', '100.64.0.1', '"127.0.0.1"', '127.0.0.1.nip.io', '::ffff:127.0.0.1', 'example.com']) {
     for (const [extra, why] of [
       [[], 'QA_EXPOSURE defaults to tailscale because QA_PUBLIC_HOST=w.ts.net is not loopback'],
@@ -385,10 +385,10 @@ test('tailscale mode with no QA_ALLOWED_LOGINS throws, naming the reason, tailsc
   assert.deepEqual(loadConfig(envFile(withoutLogins([...REQUIRED, 'QA_EXPOSURE=none']))).allowedLogins, [])
 })
 
-test('QA_ALLOWED_LOGINS is split, trimmed and lowercased; unset means nobody (#307)', () => {
+test('QA_ALLOWED_LOGINS is split, trimmed and lowercased; unset means nobody', () => {
   assert.deepEqual(loadConfig(envFile(withoutLogins(LOOPBACK))).allowedLogins, [])
-  const c = loadConfig(envFile([...withoutLogins(REQUIRED), 'QA_ALLOWED_LOGINS= Alice@GitHub , ,bob@homefree.local']))
-  assert.deepEqual(c.allowedLogins, ['alice@github', 'bob@homefree.local'])
+  const c = loadConfig(envFile([...withoutLogins(REQUIRED), 'QA_ALLOWED_LOGINS= Alice@GitHub , ,bob@example.com']))
+  assert.deepEqual(c.allowedLogins, ['alice@github', 'bob@example.com'])
 })
 
 // --- 0.3.0: the exposure reconcile interval -----------------------------------------

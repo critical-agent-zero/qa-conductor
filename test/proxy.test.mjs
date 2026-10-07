@@ -545,7 +545,7 @@ test('no upstream (no session) yields a 503, not a connection attempt', async (t
 })
 
 
-// --- other pages (from homefree #329) -------------------------------------------
+// --- other pages ----------------------------------------------------------------
 // The jar signs every request in as the operator, and a front door that
 // authenticates the device vouches for any page in the operator's browser, so
 // the app's SameSite cookies protect nothing here. ts.net is on the Public

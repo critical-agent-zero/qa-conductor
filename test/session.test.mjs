@@ -52,8 +52,8 @@ test('parseEnv / renderEnv round trip, comments ignored', () => {
 })
 
 test('migrateImageFor', () => {
-  assert.equal(migrateImageFor('ghcr.io/x/homefree-app:1.0.0-rc.38'), 'ghcr.io/x/homefree-app:migrate-1.0.0-rc.38')
-  assert.equal(migrateImageFor('ghcr.io/x/homefree-app:pr-7-abc'), 'ghcr.io/x/homefree-app:migrate-pr-7-abc')
+  assert.equal(migrateImageFor('ghcr.io/x/widget-app:1.0.0-rc.38'), 'ghcr.io/x/widget-app:migrate-1.0.0-rc.38')
+  assert.equal(migrateImageFor('ghcr.io/x/widget-app:pr-7-abc'), 'ghcr.io/x/widget-app:migrate-pr-7-abc')
 })
 
 // --- bootSession: v3 orchestrator over the five adapter seams --------------
@@ -99,8 +99,8 @@ function makeDeps({ failAt = null, migrationStrategy = 'one-shot-image', require
         establishSession: rec('establishSession', ({ pane }) => ({ landingUrl: `login-${pane.ref.role}`, cookies: [] })),
       },
     },
-    readBaseEnv: async () => ({ APP_DOMAIN: 'homefree.cloud' }),
-    env: { operatorEmail: 'op@homefree.local', paneOrigins: ORIGINS },
+    readBaseEnv: async () => ({ APP_DOMAIN: 'widget.example' }),
+    env: { operatorEmail: 'op@example.com', paneOrigins: ORIGINS },
     onProgress: step => calls.push(['progress', step]),
     ...(withOnBuild ? { onBuild: p => calls.push(['onBuild', p]) } : {}),
   }
@@ -143,7 +143,7 @@ test('bootSession happy path: seam order, tags, loginUrls, upstreams', async () 
 test('bootSession: readBaseEnv supplies prodEnv to derivePaneEnv; missing readBaseEnv means {}', async () => {
   const { deps, calls } = makeDeps()
   await bootSession(deps, 7)
-  assert.deepEqual(calls.find(c => c[0] === 'derivePaneEnv')[1].prodEnv, { APP_DOMAIN: 'homefree.cloud' })
+  assert.deepEqual(calls.find(c => c[0] === 'derivePaneEnv')[1].prodEnv, { APP_DOMAIN: 'widget.example' })
   const bare = makeDeps()
   delete bare.deps.readBaseEnv
   await bootSession(bare.deps, 7)

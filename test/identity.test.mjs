@@ -4,13 +4,13 @@ import http from 'node:http'
 
 import { identityGate, isAllowed, normalizeLogins, refusalReason } from '../lib/identity.mjs'
 
-const ALLOWED = ['alice@github', 'Bob@HomeFree.local']
+const ALLOWED = ['alice@github', 'Bob@Example.com']
 const as = login => ({ 'tailscale-user-login': login })
 
 test('an allowed login is served, trimmed and ignoring case on both sides', () => {
   assert.equal(isAllowed(as('alice@github'), ALLOWED), true)
   assert.equal(isAllowed(as('  ALICE@github '), ALLOWED), true)
-  assert.equal(isAllowed(as('bob@homefree.local'), ALLOWED), true)
+  assert.equal(isAllowed(as('bob@example.com'), ALLOWED), true)
   assert.equal(refusalReason(as('alice@github'), ALLOWED), null)
 })
 
@@ -45,7 +45,7 @@ test('an empty or missing allowlist refuses everyone (fail closed)', () => {
 })
 
 test('normalizeLogins trims, lowercases and drops blanks', () => {
-  assert.deepEqual(normalizeLogins([' Alice@GitHub ', '', '  ', 'bob@homefree.local']), ['alice@github', 'bob@homefree.local'])
+  assert.deepEqual(normalizeLogins([' Alice@GitHub ', '', '  ', 'bob@example.com']), ['alice@github', 'bob@example.com'])
   assert.deepEqual(normalizeLogins(undefined), [])
 })
 
