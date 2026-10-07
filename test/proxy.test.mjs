@@ -215,11 +215,32 @@ test('forwardClientCookies passes the browser cookies it names, and no others', 
   assert.equal((await request(proxyPort, '/echo', { headers: { cookie: 'rc_session=secret' } })).body.toString(), '(none)')
 })
 
-test('the jar wins over a named browser cookie of the same name', async (t) => {
+test('the jar wins over a named browser cookie of the same name, and comes first', async (t) => {
   const { proxyPort } = await setup(t, echoCookie, { forwardClientCookies: ['sid', 'locale'] })
   await request(proxyPort, '/login')
   const res = await request(proxyPort, '/echo', { headers: { cookie: 'sid=forged; locale=fr; sid=forged2' } })
-  assert.equal(res.body.toString(), 'locale=fr; sid=abc; theme=dark')
+  assert.equal(res.body.toString(), 'sid=abc; theme=dark; locale=fr')
+})
+
+// A browser keeps whatever a page writes with document.cookie, commas and
+// spaces included, and sends it back as is. So any page on the hostname, the
+// PR pane's included, could hide a cookie that isn't named inside one that
+// is, and a parser that splits on commas or spaces would read it.
+test('a named browser cookie whose value is not an RFC 6265 cookie-value is dropped, so no other cookie hides in it', async (t) => {
+  const { proxyPort } = await setup(t, echoCookie, { forwardClientCookies: ['locale'] })
+  const echo = async cookie => (await request(proxyPort, '/echo', { headers: { cookie } })).body.toString()
+  const SMUGGLED = [
+    'locale=fr, sid=evil', 'locale=fr,sid=evil', 'locale=fr sid=evil', 'locale=fr\tsid=evil',
+    'locale="fr, sid=evil"', 'locale="fr sid=evil"', 'locale=fr\\', 'locale="fr', 'locale=fr"', 'locale=a"b', 'locale=""fr""',
+  ]
+  for (const cookie of SMUGGLED) assert.equal(await echo(cookie), '(none)', cookie)
+  for (const value of ['fr', '"fr-CA"', '', '""', 'a=b', "!#$%&'()*+-./:<=>?@[]^_`{|}~09AZaz"]) {
+    assert.equal(await echo(`rc_session=secret; locale=${value}`), `locale=${value}`, value)
+  }
+  // with a session in the jar: the jar's sid, and a clean locale beside a dropped one
+  await request(proxyPort, '/login')
+  for (const cookie of SMUGGLED) assert.equal(await echo(cookie), 'sid=abc; theme=dark', cookie)
+  assert.equal(await echo('locale=fr, sid=evil; locale=de; locale=fr sid=evil'), 'sid=abc; theme=dark; locale=de')
 })
 
 // Both panes are on one hostname, so a cookie the PR pane's scripts set
