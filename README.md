@@ -4,7 +4,28 @@ A side-by-side PR-QA harness. For a pull request it boots two copies of your app
 
 The conductor owns the choreography: session state, cancellation, the harness UI and API, the pane proxies and the verdict. Everything about *your* app and infrastructure comes from five adapters you supply, plus an optional sixth, [Exposure](#exposure-optional), through which the conductor publishes itself on a front door such as `tailscale serve`.
 
-> **Status: 0.x.** The interface may still change while a second consumer is integrated, and a 0.x minor version may break it: read the migration notes in [CHANGELOG.md](CHANGELOG.md) before upgrading.
+> **Status: 0.x.** The interface may still change, and a 0.x minor version may break it: read the migration notes in [CHANGELOG.md](CHANGELOG.md) before upgrading.
+
+## Try it
+
+```sh
+git clone https://github.com/critical-labs/qa-conductor
+cd qa-conductor
+npm run demo        # then open http://127.0.0.1:4100/
+```
+
+The demo runs the real conductor against fixture PRs and fake adapters, so it needs nothing but Node: no GitHub token, containers or databases. `demo/` is in the repository, not in the npm package. More in [Demo](#demo).
+
+## Requirements
+
+- **Node 22 or later.** The package has no runtime dependencies.
+- **Linux or macOS.** Windows isn't supported: the process Provisioner signals process groups and reads `ps`, and the Docker one runs `sh`.
+- **The tools each built-in adapter runs**, on the conductor's `PATH`:
+  - `adapters/build-worktree`: `git`, with worktree support;
+  - `adapters/provisioner-process`: `ps`, and to tell one boot of the machine from the next, `/proc/sys/kernel/random/boot_id` on Linux or `sysctl` on macOS;
+  - `adapters/provisioner-docker` and `./docker`: the `docker` CLI and `sh`, and a Docker daemon the conductor's user may use;
+  - `adapters/exposure-tailscale` and the [expose CLI](#expose-cli): a `tailscale` CLI no older than the daemon (on macOS, the app's bundled one), run by a user the daemon lets change `tailscale serve` (on Linux, root or the `--operator`).
+- **No TypeScript declarations yet.** The package is plain JavaScript (ES modules); the [Types](#types) below describe what the adapters exchange.
 
 ## Install
 
@@ -12,35 +33,75 @@ The conductor owns the choreography: session state, cancellation, the harness UI
 npm install @critical-labs/qa-conductor
 ```
 
-Consumers that pin a git tag may keep doing so:
+To pin a git tag instead: `npm install github:critical-labs/qa-conductor#v0.3.0`.
 
-```sh
-npm install github:critical-labs/qa-conductor#v0.3.0
-```
+## Quickstart: QA your own app
 
-Node ≥ 22. There are no runtime dependencies.
+This script is a whole conductor for an app that runs from a checkout with one `node` command and needs no database. It QAs `acme/widget`'s pull requests on this machine: each pane is a git worktree, `main` and the PR head, running `node server.js` on a port of its own. It is this repository's own self-QA, [`qa/self.mjs`](qa/self.mjs), cut down.
 
-### Entry points
+1. Create `.env.qa` beside it, readable by you alone, since it holds a token, and keep it out of git:
+   ```sh
+   (umask 077 && touch .env.qa)
+   echo .env.qa >> .gitignore
+   ```
+   Then put in it a GitHub token for the repository (see [Tokens](#tokens)) and the repository's name:
+   ```
+   GITHUB_QA_TOKEN=<token>
+   QA_REPO=acme/widget
+   ```
+2. Save this as `qa.mjs`:
+   ```js
+   import fs from 'node:fs'
+   import os from 'node:os'
+   import path from 'node:path'
+   import { startConductor } from '@critical-labs/qa-conductor'
+   import { loadConfig } from '@critical-labs/qa-conductor/config'
+   import { createGithub } from '@critical-labs/qa-conductor/github'
+   import { createWorktreeBuild } from '@critical-labs/qa-conductor/adapters/build-worktree'
+   import { createProcessProvisioner } from '@critical-labs/qa-conductor/adapters/provisioner-process'
 
-| Import | Exports | |
-|---|---|---|
-| `@critical-labs/qa-conductor` | `startConductor` | the conductor: harness, pane proxies, sessions, the exposure loop ([Use](#use)) |
-| `@critical-labs/qa-conductor/config` | `loadConfig`, `parseEnvFile`, `defaultExposure`, `defaultHarnessOrigin`, `isExposureInterval`, `EXPOSURE_MODES`, `EXPOSURE_INTERVAL_RULE`, `MAX_EXPOSURE_INTERVAL_MINUTES`, `HARNESS_PATH` | reading `.env.qa` into `cfg` ([Configuration](#configuration)), and the rules it checks |
-| `@critical-labs/qa-conductor/session` | `bootSession`, `teardownSession`, `createSession`, `reduce`, `touch`, `isIdle`, `ROLES`, `PANE_STAGES`, `parseEnv`, `renderEnv`, `migrateImageFor` | the boot sequence and session state the conductor runs, and helpers for adapters: parsing and rendering env file text, and the `migrate-<tag>` image beside an app image |
-| `@critical-labs/qa-conductor/github` | `createGithub` | the GitHub effect wrapper |
-| `@critical-labs/qa-conductor/docker` | `createDocker` | the Docker effect wrapper |
-| `@critical-labs/qa-conductor/exec` | `makeExecFileFn` | the `execFile` effect wrapper |
-| `@critical-labs/qa-conductor/identity` | `normalizeLogins`, `refusalReason`, `isAllowed`, `identityGate` | the [Tailscale identity gate](#security) |
-| `@critical-labs/qa-conductor/exposure` | `mountsFor`, `reconcileExposure`, `runExpose` | one [exposure](#exposure-optional) pass, outside a conductor |
-| `@critical-labs/qa-conductor/proxy` | `createPaneProxy`, `panePolicy`, `parseSetCookie`, `isAllowedHost`, `requestHostname`, `misdirected` | the pane proxy, and the [Host allowlist](#security) check every server runs |
-| `@critical-labs/qa-conductor/verdict` | `formatVerdict`, `postVerdict` | the verdict comment and label |
-| `@critical-labs/qa-conductor/adapters/provisioner-docker` | `createDockerProvisioner` | a Provisioner that runs each pane as containers on the host's Docker daemon |
-| `@critical-labs/qa-conductor/adapters/provisioner-process` | `createProcessProvisioner` | a Provisioner for local process groups |
-| `@critical-labs/qa-conductor/adapters/build-worktree` | `createWorktreeBuild`, `trustDecision` | a BuildConvention that runs PRs from git worktrees, behind a trust gate |
-| `@critical-labs/qa-conductor/adapters/exposure-tailscale` | `createTailscaleExposure` | an Exposure adapter on `tailscale serve` |
-| `@critical-labs/qa-conductor/package.json` | *(the manifest)* | |
+   // Panes on loopback: nothing outside this machine reaches them, so no identity gate.
+   const cfg = loadConfig('.env.qa', {
+     defaults: { QA_BASE_ORIGIN: 'http://127.0.0.1:3101', QA_PR_ORIGIN: 'http://127.0.0.1:3102' },
+   })
+   const github = createGithub({ token: cfg.githubToken, repo: cfg.repo, qaLabels: [cfg.verdictLabels.accept, cfg.verdictLabels.reject] })
+   const cacheDir = path.join(os.homedir(), '.cache/qa-conductor', cfg.repo.replace('/', '-'))
 
-Each row lists every name its entry point exports, and no other entry point is exported. The package also installs one bin, `qa-conductor-expose`, the [expose CLI](#expose-cli), for operators.
+   const conductor = startConductor({
+     cfg,
+     github,
+     fsx: { readFile: p => fs.promises.readFile(p) },
+     adapters: {
+       // main and each PR head in a git worktree, a PR only once it passes the trust gate
+       build: createWorktreeBuild({
+         repo: cfg.repo,
+         cacheDir: path.join(cacheDir, 'build'),
+         github,
+         servicesFor: dir => ({ app: dir }),
+         install: { cmd: 'npm', args: ['ci', '--ignore-scripts'] },
+       }),
+       // `node server.js` in each worktree, as a process group on 127.0.0.1
+       provisioner: createProcessProvisioner({
+         stateDir: path.join(cacheDir, 'state'),
+         command: ({ ref }) => ({ cmd: process.execPath, args: ['server.js'], cwd: ref }),
+       }),
+       seed: { databases: [], seedPane: async () => {} },
+       envTransform: { derivePaneEnv: ({ pane }) => ({ app: { PORT: String(pane.services.app.port) } }) },
+       auth: { requiresDb: false, establishSession: async ({ pane }) => ({ landingUrl: `${pane.publicOrigin}/` }) },
+     },
+   })
+
+   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+     process.on(sig, () => conductor.shutdown().then(() => process.exit(0)))
+   }
+   ```
+3. Run `npm install @critical-labs/qa-conductor` beside it, then `node qa.mjs`, open `http://127.0.0.1:3100/qa/`, and open a PR. Ctrl-C tears both panes down.
+
+What the pieces do, and what to change for your app:
+- **The trust gate.** A PR boots only when its author has write access to the repository and its head is in the repository or the author's own fork, since booting it runs its code as you. See [`adapters/build-worktree`](#built-in-adaptersbuild-worktree-git-worktree-buildconvention).
+- **Install and launch.** The install runs with `--ignore-scripts`. The server must be started directly, not through `npm run` or `npx` (the [launch contract](#built-in-adaptersprovisioner-process-process-provisioner)), and must listen on the `PORT` the EnvTransform gives it, on `127.0.0.1`. It counts as up once `/` answers below `500`.
+- **No data, no sign-in.** The Seed clones nothing and the AuthBootstrap lands each pane on `/`. To give each pane its own copy of a database, pass the Provisioner a `database` and write a `seedPane`; to sign the reviewer in, return a sign-in URL from `establishSession`. [The seams](#the-seams) has the contracts.
+- **Other devices.** To open the harness from another machine, read [Security](#security), then [Configuration](#configuration)'s tailnet sample.
 
 ## Use
 
@@ -66,14 +127,48 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 }
 ```
 
-`startConductor` serves the harness on `cfg.ports.harness` and one proxy per pane on `cfg.ports.base` / `cfg.ports.pr`, all on `cfg.host` (**`127.0.0.1` by default**). It returns `{ servers, stop(), shutdown(), exposure }`:
+`startConductor` takes:
+
+| Option | Default | |
+|---|---|---|
+| `cfg` | *(required)* | the configuration, from `loadConfig` or built in code (see [Configuration](#configuration)) |
+| `github` | *(required)* | what the core calls on GitHub: `createGithub(...)`, or anything with the [members the core uses](#effect-wrappers) |
+| `fsx` | *(required)* | `{ readFile(path) }`, which serves the harness UI files from `publicDir` |
+| `adapters` | *(required)* | `{ provisioner, build, seed, envTransform, auth }`, plus `exposure` if you want one ([The seams](#the-seams)) |
+| `readBaseEnv` | `async () => ({})` | the env the panes' env is derived from, such as production's: passed to `derivePaneEnv` as `prodEnv` at each boot |
+| `publicDir` | the package's `public/` | the directory with the harness UI's `index.html` and `harness.js` and the panes' `bridge.js` |
+| `log` | `console` | where the `[qa]` lines go: `log.log` and `log.error` |
+
+It serves the harness on `cfg.ports.harness` and one proxy per pane on `cfg.ports.base` / `cfg.ports.pr`, all on `cfg.host` (**`127.0.0.1` by default**). It returns `{ servers, stop(), shutdown(), exposure }`:
 - `shutdown()` is the graceful exit. It stops the idle reaper and the [exposure loop](#exposure-optional), refuses harness writes from then on (`503`, so no new boot can start), tears the session down (aborting an in-flight boot and tearing down both panes), ends the progress streams, closes every connection and resolves once all three servers are closed. Call it from your signal handlers; calling it again is a no-op.
 - `stop()` only stops the reaper and the exposure loop, and asks the servers to close.
 - `exposure` is the exposure loop's handle, `{ ready, state(), reconcile() }`. `ready` resolves with the state after the first pass, or as it stands when `stop()` or `shutdown()` begins first (at once with no Exposure adapter). `state()` is the last pass, as `GET /api/exposure` reports it. `reconcile()` runs a pass now, or joins the one in flight; before all three servers listen there are no targets to mount yet, so it returns `ready`.
 
 `cfg.paneOrigins` must be the URLs viewers actually reach the panes at, and `cfg.harnessOrigin` the one they open the harness at (see [Configuration](#configuration)). To reach the harness from anywhere but the machine it runs on, read [Security](#security) first, then either:
-- put `tailscale serve` on the same host in front of these ports, in tailscale mode (`QA_EXPOSURE=tailscale`, the default for any layout that isn't loopback throughout): every server then answers only the Tailscale logins in `QA_ALLOWED_LOGINS`, and listens on loopback. Pass an [Exposure adapter](#exposure-optional) and the conductor sets up and keeps those mounts itself; or
+- put `tailscale serve --https` on the same host in front of these ports, in tailscale mode (`QA_EXPOSURE=tailscale`, the default for any layout that isn't loopback throughout): every server then answers only the Tailscale logins in `QA_ALLOWED_LOGINS`, and listens on loopback. Pass an [Exposure adapter](#exposure-optional) and the conductor sets up and keeps those mounts itself; or
 - put another TLS front door that authenticates viewers in front of them, and set `QA_EXPOSURE=none`.
+
+### Entry points
+
+| Import | Exports | |
+|---|---|---|
+| `@critical-labs/qa-conductor` | `startConductor` | the conductor: harness, pane proxies, sessions, the exposure loop ([Use](#use)) |
+| `@critical-labs/qa-conductor/config` | `loadConfig`, `parseEnvFile`, `defaultExposure`, `defaultHarnessOrigin`, `isExposureInterval`, `EXPOSURE_MODES`, `EXPOSURE_INTERVAL_RULE`, `MAX_EXPOSURE_INTERVAL_MINUTES`, `HARNESS_PATH` | reading `.env.qa` into `cfg` ([Configuration](#configuration)), and the rules it checks |
+| `@critical-labs/qa-conductor/session` | `bootSession`, `teardownSession`, `createSession`, `reduce`, `touch`, `isIdle`, `ROLES`, `PANE_STAGES`, `parseEnv`, `renderEnv`, `migrateImageFor` | the boot sequence and session state the conductor runs, and helpers for adapters: parsing and rendering env file text, and the `migrate-<tag>` image beside an app image |
+| `@critical-labs/qa-conductor/github` | `createGithub` | the GitHub [effect wrapper](#effect-wrappers) |
+| `@critical-labs/qa-conductor/docker` | `createDocker` | the Docker [effect wrapper](#effect-wrappers) |
+| `@critical-labs/qa-conductor/exec` | `makeExecFileFn` | the `execFile` [effect wrapper](#effect-wrappers) |
+| `@critical-labs/qa-conductor/identity` | `normalizeLogins`, `refusalReason`, `isAllowed`, `identityGate` | the [Tailscale identity gate](#security) |
+| `@critical-labs/qa-conductor/exposure` | `mountsFor`, `reconcileExposure`, `runExpose` | one [exposure](#exposure-optional) pass, outside a conductor |
+| `@critical-labs/qa-conductor/proxy` | `createPaneProxy`, `panePolicy`, `parseSetCookie`, `isAllowedHost`, `requestHostname`, `misdirected` | the pane proxy, and the [Host allowlist](#security) check every server runs |
+| `@critical-labs/qa-conductor/verdict` | `formatVerdict`, `postVerdict` | the verdict comment and label |
+| `@critical-labs/qa-conductor/adapters/provisioner-docker` | `createDockerProvisioner` | a Provisioner that runs each pane as containers on the host's Docker daemon |
+| `@critical-labs/qa-conductor/adapters/provisioner-process` | `createProcessProvisioner` | a Provisioner for local process groups |
+| `@critical-labs/qa-conductor/adapters/build-worktree` | `createWorktreeBuild`, `trustDecision` | a BuildConvention that runs PRs from git worktrees, behind a trust gate |
+| `@critical-labs/qa-conductor/adapters/exposure-tailscale` | `createTailscaleExposure` | an Exposure adapter on `tailscale serve` |
+| `@critical-labs/qa-conductor/package.json` | *(the manifest)* | |
+
+Each row lists every name its entry point exports, and no other entry point is exported. The package also installs one bin, `qa-conductor-expose`, the [expose CLI](#expose-cli), for operators.
 
 ## Using the harness
 
@@ -575,6 +670,19 @@ Demo mode runs the real conductor with fixture PRs and fake adapters, so you can
 - Verdicts go to an in-memory GitHub fake and are printed to the console. Nothing leaves the machine.
 
 `demo/` is not published with the package. From code, `startDemo({ port, speed, log, harnessOrigin, frameAncestors })` in `demo/index.mjs` returns `{ stop(), ports }`. Without a `harnessOrigin` the core derives `http://127.0.0.1:<port>`. `QA_HARNESS_ORIGIN` and `QA_FRAME_ANCESTORS` set the last two from `npm run demo`.
+
+## Known limits
+
+- **One page of PRs.** The picker lists at most the 50 most recently opened PRs.
+- **A plain expose run can publish an ungated server.** `qa-conductor-expose` without `--check` mounts whatever listens on the configured ports, conductor or not, and nothing removes those mounts ([Expose CLI](#expose-cli)). [#18](https://github.com/critical-labs/qa-conductor/issues/18) tracks a check that refuses an ungated target.
+- **The panes' pages share the browser's cookies with every app on their hostname**, and can send those apps same-site requests that carry them. Serve the panes on a hostname no other app uses ([Security](#security)).
+- **The identity gate keeps out other devices, not PR code** on the same host: a pane process, or a container pane outside native Linux Docker, can send any login ([Security](#security)).
+- **A harness that shares an origin with another app** shares its trust. Give the harness a port of its own.
+- **Browsers without Fetch Metadata** are judged by `Origin` alone, which is why an `http:` origin must be loopback.
+- **An IPv6-literal harness origin** can't be named in `frame-ancestors`: on a `::1` bind, set `QA_HARNESS_ORIGIN=http://localhost:<port>`.
+- **`X-Forwarded-For` reaches the pane apps**, so PR code sees which tailnet address is viewing.
+- **The Docker Provisioner** runs one service per pane, with fixed container names and host ports, and logs in to `ghcr.io` only ([its section](#built-in-adaptersprovisioner-docker-docker-provisioner)). **The GHCR helpers** read packages a user owns, not an organization's.
+- **Linux and macOS only, and no TypeScript declarations yet** ([Requirements](#requirements)).
 
 ## QA this repo's own pull requests
 

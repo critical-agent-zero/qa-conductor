@@ -87,6 +87,20 @@ const codeBlocks = (text, lang) =>
   [...text.matchAll(new RegExp(`^( *)\`\`\`${lang}\\n([\\s\\S]*?)^\\1\`\`\`$`, 'gm'))]
     .map(([, indent, body]) => body.split('\n').map(line => line.slice(indent.length)).join('\n'))
 
+test('every import in the README\'s examples names something its entry point exports', async () => {
+  let checked = 0
+  for (const block of codeBlocks(README, 'js')) {
+    for (const [, names, specifier] of block.matchAll(/^import \{([^}]+)\} from '(@critical-labs\/qa-conductor[^']*)'/gm)) {
+      const mod = await import(specifier)
+      for (const name of names.split(',').map(entry => entry.trim().split(/\s+as\s+/)[0]).filter(Boolean)) {
+        assert.ok(Object.hasOwn(mod, name), `${specifier} exports ${name}`)
+        checked++
+      }
+    }
+  }
+  assert.ok(checked >= 10, `checked ${checked} imported names`)
+})
+
 // A consumer starts from these: each must load, the local one with no
 // identity gate and the tailnet one behind it.
 test('the README\'s sample .env.qa files load: the local one ungated, the tailnet one gated', () => {

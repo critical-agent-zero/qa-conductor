@@ -226,7 +226,8 @@ test('a release names one version: package.json, the CHANGELOG\'s newest release
   }
   assert.equal(versions[0], pkg.version, 'the newest CHANGELOG release is the package.json version')
   const README = readFileSync(path.join(ROOT, 'README.md'), 'utf8')
-  const pins = [...README.matchAll(/github:critical-labs\/qa-conductor#(\S+)/g)].map(match => match[1])
+  // to the end of the code span it sits in, if any
+  const pins = [...README.matchAll(/github:critical-labs\/qa-conductor#([^\s`'")]+)/g)].map(match => match[1])
   assert.ok(pins.length > 0, 'the README shows a git-tag pin')
   for (const pin of pins) assert.equal(pin, `v${pkg.version}`, 'the README\'s git-tag pin is this version\'s tag')
 })
