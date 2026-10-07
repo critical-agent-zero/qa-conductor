@@ -61,7 +61,7 @@ The token reads PRs and comments and labels on this repository; the README's [To
 
 ## Releasing
 
-1. Bump `version` in `package.json`, turn the CHANGELOG's `## [Unreleased]` heading into `## [X.Y.Z] — YYYY-MM-DD` with its compare link at the end of the file (and point `[Unreleased]` at the new tag), and move the git-tag example under the README's [Install](README.md#install) to its tag. `test/package.test.mjs` fails until all of them agree.
+1. Bump `version` in `package.json`, turn the CHANGELOG's `## [Unreleased]` heading into `## [X.Y.Z] — YYYY-MM-DD` with its compare link at the end of the file, add a new, empty `## [Unreleased]` heading above it and point the `[Unreleased]` link at the new tag (`compare/vX.Y.Z...HEAD`), and move the git-tag example under the README's [Install](README.md#install) to its tag. `test/package.test.mjs` fails until all of them agree, and on an `[Unreleased]` link with no heading of that name.
 2. Once that is on `main`, tag it `vX.Y.Z` and push the tag.
 3. The [publish workflow](.github/workflows/publish.yml) refuses a tag that isn't `v` plus the `package.json` version. Then it runs the tests and `npm pack --dry-run`, and stages the version on npm with provenance (`npm stage publish`).
 4. A maintainer approves the staged version on npmjs.com. Only then does it go live.
