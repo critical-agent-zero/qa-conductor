@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Security
+
+- **The pane proxies no longer forward the browser's cookies.** This breaks any consumer whose pane app relied on them. Each proxy sent its pane app the browser's own `Cookie` header, merged with the pane's jar. Cookies ignore ports, so on a hostname the panes share with another app, such as an RC app on another port of the same tailnet host, that app's cookies, its session among them, reached PR code, and a cookie one pane's scripts set reached the other pane's app. A pane app now gets only its jar's cookies, the ones its own responses set, and no `Cookie` header while the jar is empty. An app that reads a cookie its own scripts set, such as a locale or a client-side sign-in's session, must now opt in by name: `QA_FORWARD_CLIENT_COOKIES` (`cfg.forwardClientCookies`) is a comma-separated list of cookie names the proxies pass through, and `createPaneProxy` takes it as `forwardClientCookies`, `false` (the default) or an array of names. The jar's value wins on a name both have. A name that isn't an RFC 6265 token, and `*` or any other wildcard, throws in `loadConfig`, `startConductor` and `createPaneProxy`.
+
+### Known limits
+
+- **The panes' pages share the browser's cookies with every app on their hostname.** The proxies no longer send those cookies to the pane apps, but a pane's scripts (PR code) still run on that hostname. They can read its cookies that aren't `HttpOnly`, and set cookies the browser then sends to every app on it, including one named in `QA_FORWARD_CLIENT_COOKIES`, which the other pane's app then gets. Serve the panes on a hostname no other app uses.
+
 ## 0.3.0 — 2026-10-03
 
 The hardening that homefree #329 shipped for homefree #307, the Tailscale identity gate among it, and an optional Exposure seam through which the conductor publishes and keeps its own `tailscale serve` mounts. The first version on npm. It breaks 0.2 in places: read [Migrating from 0.2](#migrating-from-02) before upgrading.
