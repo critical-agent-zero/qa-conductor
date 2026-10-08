@@ -133,16 +133,29 @@ jobs:
           fi
       # npm applies a tarball's publishConfig to the stage, any key in it: a
       # scoped registry or a proxy there would send the stage, token and all,
-      # elsewhere, whatever --registry says. So read the manifest, with tar
-      # and jq and no code from the repository, and stage only a tarball whose
-      # publishConfig is exactly package.json's.
+      # elsewhere, whatever --registry says. So read the manifest the way the
+      # stage will: with this npm's own pacote.manifest and the options npm's
+      # publish passes it. A second package.json under another directory, a
+      # pax header or an extra gzip member then can't hand npm a manifest this
+      # check didn't see, and no code from the repository runs. Stage only a
+      # tarball whose publishConfig is exactly package.json's.
       - name: Check the tarball's publishConfig
         run: |
-          tar -xzOf "./release/critical-labs-qa-conductor-${GITHUB_REF_NAME#v}.tgz" package/package.json > "$RUNNER_TEMP/manifest.json"
-          if ! jq -e '.publishConfig == {"access": "public", "provenance": true}' "$RUNNER_TEMP/manifest.json" > /dev/null; then
-            echo "::error::the tarball's publishConfig is not exactly {access: public, provenance: true}, and the rest of it would apply to the stage"
-            exit 1
-          fi
+          node -e '
+            const path = require("node:path")
+            const { realpathSync } = require("node:fs")
+            const { isDeepStrictEqual } = require("node:util")
+            const root = path.dirname(path.dirname(realpathSync(process.argv[2])))
+            const pacote = require(path.join(root, "node_modules", "pacote"))
+            pacote.manifest(`file:${process.argv[1]}`, { fullMetadata: true, fullReadJson: true }).then(manifest => {
+              if (isDeepStrictEqual(manifest.publishConfig, { "access": "public", "provenance": true })) return
+              console.log("::error::the tarball publishConfig is not exactly {access: public, provenance: true}, and the rest of it would apply to the stage")
+              process.exitCode = 1
+            }, err => {
+              console.log(`::error::cannot read the tarball manifest: ${err.code ?? err.message}`)
+              process.exitCode = 1
+            })
+          ' "./release/critical-labs-qa-conductor-${GITHUB_REF_NAME#v}.tgz" "$(command -v npm)"
       # The ./ makes it a file: npm would read release/<name>.tgz as a GitHub
       # repository. --registry pins the default registry, and the step above
       # made sure publishConfig adds nothing to it. No npm script runs for a

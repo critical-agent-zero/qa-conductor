@@ -88,12 +88,12 @@ The token reads PRs and comments and labels on this repository; the README's [To
      - **Rebase merges:** with rebase merging allowed on `main`, a rebased pull request's commits land on its first-parent line, so they count as `main`.
      - **Then** it refuses a tag that isn't `v` plus the `package.json` version, runs the tests on the checkout, packs the tarball with `npm pack`, and keeps it as the run's artifact.
    - **`publish`** waits for a maintainer to approve the `npm-release` environment, whose deployment policy admits `v*` tags only.
-     - **Before approving,** check the run's commit against data the run can't produce. `gh run view <run-id> -R critical-labs/qa-conductor --json headSha --jq .headSha` must equal `gh pr view <release PR> -R critical-labs/qa-conductor --json mergeCommit --jq .mergeCommit.oid`, or appear in `git fetch origin && git rev-list --first-parent origin/main`.
+     - **Before approving,** check the run's commit against data the run can't produce. `gh run view <run-id> -R critical-labs/qa-conductor --json headSha --jq .headSha` must equal `gh pr view <release PR> -R critical-labs/qa-conductor --json mergeCommit --jq .mergeCommit.oid`, or appear in `git fetch https://github.com/critical-labs/qa-conductor.git main && git rev-list --first-parent FETCH_HEAD`. That fetches from the canonical repository, never a fork's `origin`.
      - **Until it matches, the run's own results prove nothing,** `test` and both on-main checks included: a tag on another commit runs that commit's copy of the workflow.
      - **Once approved,** it:
        - checks the commit again, as `test` did;
        - downloads the tarball and checks that its file name is the tag's version;
-       - checks that the tarball's `publishConfig` is exactly `package.json`'s, since npm applies any other key in it, a scoped registry or a proxy included, to the stage;
+       - checks that the tarball's `publishConfig` is exactly `package.json`'s, since npm applies any other key in it, a scoped registry or a proxy included, to the stage. It reads the manifest with the stage's own npm (its `pacote`), so a second `package.json` elsewhere in the archive can't hand npm a different one;
        - stages it on npm with provenance (`npm stage publish`).
 
        It checks out nothing and runs no code from the repository.

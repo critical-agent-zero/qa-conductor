@@ -181,16 +181,29 @@ const TARBALL_CHECK_SCRIPT = [
 ].join('\n')
 // npm applies a tarball's publishConfig to the stage, any key in it: a scoped
 // registry or a proxy there would send the stage, token and all, elsewhere,
-// whatever --registry says. So the publish job reads the tarball's manifest
-// (tar and jq, no repository code) and stages only one whose publishConfig is
-// exactly package.json's.
+// whatever --registry says. So the publish job reads the tarball's manifest the
+// way the stage will: with the npm on PATH's own pacote.manifest and the
+// options npm's publish passes it. That npm, not repository code, unpacks the
+// tarball, so no second entry, pax header or extra gzip member can hand npm a
+// manifest the check didn't see. It stages only a tarball whose publishConfig
+// is exactly package.json's.
 const PUBLISH_CONFIG_CHECK = 'Check the tarball\'s publishConfig'
 const PUBLISH_CONFIG_SCRIPT = [
-  `tar -xzOf "./release/${TARBALL}-\${GITHUB_REF_NAME#v}.tgz" package/package.json > "$RUNNER_TEMP/manifest.json"`,
-  'if ! jq -e \'.publishConfig == {"access": "public", "provenance": true}\' "$RUNNER_TEMP/manifest.json" > /dev/null; then',
-  '  echo "::error::the tarball\'s publishConfig is not exactly {access: public, provenance: true}, and the rest of it would apply to the stage"',
-  '  exit 1',
-  'fi',
+  'node -e \'',
+  '  const path = require("node:path")',
+  '  const { realpathSync } = require("node:fs")',
+  '  const { isDeepStrictEqual } = require("node:util")',
+  '  const root = path.dirname(path.dirname(realpathSync(process.argv[2])))',
+  '  const pacote = require(path.join(root, "node_modules", "pacote"))',
+  '  pacote.manifest(`file:${process.argv[1]}`, { fullMetadata: true, fullReadJson: true }).then(manifest => {',
+  '    if (isDeepStrictEqual(manifest.publishConfig, { "access": "public", "provenance": true })) return',
+  '    console.log("::error::the tarball publishConfig is not exactly {access: public, provenance: true}, and the rest of it would apply to the stage")',
+  '    process.exitCode = 1',
+  '  }, err => {',
+  '    console.log(`::error::cannot read the tarball manifest: ${err.code ?? err.message}`)',
+  '    process.exitCode = 1',
+  '  })',
+  `' "./release/${TARBALL}-\${GITHUB_REF_NAME#v}.tgz" "$(command -v npm)"`,
 ].join('\n')
 const SHA_PINNED = /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}( # \S+)?$/
 // A `run: |` step's lines as jobSteps reads them.
@@ -275,24 +288,25 @@ function assertStagesOnly(text) {
   assert.deepEqual(tarballCheck.name, [TARBALL_CHECK])
   assert.deepEqual(tarballCheck.run, runLines(TARBALL_CHECK_SCRIPT))
   assert.deepEqual(publishConfigCheck.name, [PUBLISH_CONFIG_CHECK])
-  assert.deepEqual(publishConfigCheck.run, runLines(PUBLISH_CONFIG_SCRIPT), 'the publishConfig check reads the manifest with tar and jq alone, before the stage')
+  assert.deepEqual(publishConfigCheck.run, runLines(PUBLISH_CONFIG_SCRIPT), 'the publishConfig check reads the manifest with the stage\'s own npm, before the stage')
   assert.deepEqual(stage.run, [STAGE_RUN])
   assert.deepEqual(stage.env, ['', 'NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}', 'NPM_CONFIG_PROVENANCE: "true"'], 'the stage step gets the token')
 
+  // The publishConfig check's own lines, pinned word for word above, name npm
+  // (whose manifest reader they load) and publishConfig, and run no npm
+  // command and no publish: the two checks below leave them out.
+  const publishConfigLines = new Set(PUBLISH_CONFIG_SCRIPT.split('\n').map(line => line.trim()))
   // Across every line, block scripts included. npm expands any unambiguous
   // abbreviation (`npm pub`, `npm pu`), so every npm or npx line must be one
   // of the four the workflow needs, not just free of the word publish. (The
   // environment's name, pinned above, is a name, not a command.)
   assert.deepEqual(
-    lines.filter(line => /\bnp[mx]\b/.test(line) && line !== '    environment: npm-release').map(line => line.trim()),
+    lines.filter(line => /\bnp[mx]\b/.test(line) && line !== '    environment: npm-release' && !publishConfigLines.has(line.trim())).map(line => line.trim()),
     ['- run: npm test', '- run: npm pack', `- run: ${NPM_UPGRADE}`, `run: ${STAGE_RUN}`],
     'every npm or npx command is one of the four the workflow needs',
   )
   // No third-party publish action or other publisher (pnpm, yarn): apart from
   // names, the stage command is the only line that says pub.
-  // (The publishConfig check's own lines, pinned word for word above, say
-  // publishConfig and are no publish.)
-  const publishConfigLines = new Set(PUBLISH_CONFIG_SCRIPT.split('\n').map(line => line.trim()))
   assert.deepEqual(
     lines.filter(line => /pub/i.test(line) && !/^\s*(-\s+)?name:|^ {2}publish:$/.test(line) && !publishConfigLines.has(line.trim())).map(line => line.trim()),
     [`run: ${STAGE_RUN}`],
@@ -561,7 +575,7 @@ test('nothing in the package runs with the publish token, or sends it elsewhere'
   assert.deepEqual(pkg.publishConfig, { access: 'public', provenance: true }, 'publishConfig sets no registry, proxy or other config')
   assert.ok(!existsSync(path.join(ROOT, '.npmrc')), 'no project .npmrc')
   // The publish job's manifest check compares against this same object.
-  const literal = /jq -e '\.publishConfig == (\{.*\})'/.exec(PUBLISH_CONFIG_SCRIPT)?.[1]
+  const literal = /isDeepStrictEqual\(manifest\.publishConfig, (\{[^}]*\})\)/.exec(PUBLISH_CONFIG_SCRIPT)?.[1]
   assert.deepEqual(JSON.parse(literal), pkg.publishConfig, 'the publishConfig check expects package.json\'s publishConfig')
 })
 
@@ -671,7 +685,8 @@ test('the workflow check refuses a publish, a skippable gate, a token or id-toke
       assert.ok(start >= 0, 'the workflow has the publishConfig check')
       return text.slice(0, start) + text.slice(text.indexOf('\n      - ', start + PUBLISH_CONFIG_STEP.length) + 1)
     },
-    'the publishConfig check made to pass': replace('if ! jq -e \'.publishConfig == {"access": "public", "provenance": true}\'', 'if ! jq -e \'true\''),
+    'the publishConfig check made to pass': replace('if (isDeepStrictEqual(manifest.publishConfig, { "access": "public", "provenance": true })) return', 'return'),
+    'the publishConfig check reading the manifest with tar instead of npm': replace('pacote.manifest(`file:${process.argv[1]}`, { fullMetadata: true, fullReadJson: true })', 'Promise.resolve(JSON.parse(require("node:child_process").execSync(`tar -xzOf ${process.argv[1]} package/package.json`)))'),
     'the publishConfig check after the stage': text => {
       const start = text.indexOf(PUBLISH_CONFIG_STEP)
       const end = text.indexOf('\n      - ', start + PUBLISH_CONFIG_STEP.length) + 1
@@ -801,43 +816,57 @@ test('the publish job\'s on-main check passes a commit that was main itself, and
 test('the publish job\'s publishConfig check stages only a tarball whose publishConfig is exactly package.json\'s', { timeout: 60_000 }, async t => {
   const script = stepScript(readFileSync(WORKFLOW, 'utf8'), PUBLISH_CONFIG_CHECK)
   assert.doesNotMatch(script, /\$\{\{/)
-  try {
-    await execFileP('jq', ['--version'])
-  } catch {
-    return t.skip('jq is not installed here (GitHub\'s ubuntu runners have it)')
-  }
   const scratch = mkdtempSync(path.join(tmpdir(), 'qa-publish-config-'))
   t.after(() => rmSync(scratch, { recursive: true, force: true }))
   const tgz = `${TARBALL}-${pkg.version}.tgz`
-  // A release directory holding a tarball whose package.json is `manifest`
-  // (a string, written as is), packed the way npm does: under package/.
-  const run = async (name, manifest) => {
+  // A release directory holding a tarball built from `entries`, in order:
+  // [top-level directory, package.json text]. A directory named twice is
+  // appended as a second copy of the same path. npm reads the archive with
+  // its first directory stripped, so every <dir>/package.json lands as the
+  // manifest, the last one winning.
+  const run = async (name, entries) => {
     const dir = path.join(scratch, name)
-    mkdirSync(path.join(dir, 'src', 'package'), { recursive: true })
-    mkdirSync(path.join(dir, 'release'))
+    mkdirSync(path.join(dir, 'release'), { recursive: true })
     mkdirSync(path.join(dir, 'runner'))
-    if (manifest !== null) {
-      writeFileSync(path.join(dir, 'src', 'package', 'package.json'), manifest)
-      await execFileP('tar', ['-czf', path.join(dir, 'release', tgz), '-C', path.join(dir, 'src'), 'package'])
+    if (entries) {
+      const tar = path.join(dir, 'archive.tar')
+      for (const [i, [top, text]] of entries.entries()) {
+        const src = path.join(dir, `src${i}`)
+        mkdirSync(path.join(src, top), { recursive: true })
+        writeFileSync(path.join(src, top, 'package.json'), text)
+        await execFileP('tar', [i === 0 ? '-cf' : '-rf', tar, '-C', src, top])
+      }
+      await execFileP('gzip', ['-n', tar])
+      await execFileP('mv', [`${tar}.gz`, path.join(dir, 'release', tgz)])
     }
+    // GitHub runs the step as bash -e, with npm 11.21.0 on PATH; here, this
+    // node's own npm, whose pacote reads tarballs the same way.
     return execFileP('bash', ['-e', '-c', script], {
       cwd: dir,
-      timeout: 10_000,
-      env: { PATH: process.env.PATH, GITHUB_REF_NAME: `v${pkg.version}`, RUNNER_TEMP: path.join(dir, 'runner') },
+      timeout: 30_000,
+      env: { PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}`, HOME: dir, npm_config_cache: path.join(dir, 'cache'), GITHUB_REF_NAME: `v${pkg.version}`, RUNNER_TEMP: path.join(dir, 'runner') },
     })
   }
   const manifest = publishConfig => JSON.stringify({ name: pkg.name, version: pkg.version, ...(publishConfig === undefined ? {} : { publishConfig }) })
-  await run('ok', manifest({ provenance: true, access: 'public' }))
-  for (const [name, text] of [
-    ['a scoped registry', manifest({ ...pkg.publishConfig, '@critical-labs:registry': 'https://registry.example/' })],
-    ['a registry', manifest({ ...pkg.publishConfig, registry: 'https://registry.example/' })],
-    ['a proxy', manifest({ ...pkg.publishConfig, proxy: 'http://127.0.0.1:8080/' })],
-    ['no provenance', manifest({ access: 'public' })],
-    ['no publishConfig', manifest(undefined)],
-    ['a manifest that is not JSON', '{ "publishConfig": '],
+  const good = manifest({ provenance: true, access: 'public' })
+  const evil = manifest({ ...pkg.publishConfig, '@critical-labs:registry': 'https://registry.example/' })
+  await run('ok', [['package', good]])
+  await run('a bad copy first, the good one last', [['package', evil], ['package', good]])
+  for (const [name, entries] of [
+    ['a scoped registry', [['package', evil]]],
+    ['a registry', [['package', manifest({ ...pkg.publishConfig, registry: 'https://registry.example/' })]]],
+    ['a proxy', [['package', manifest({ ...pkg.publishConfig, proxy: 'http://127.0.0.1:8080/' })]]],
+    ['provenance off', [['package', manifest({ access: 'public', provenance: false })]]],
+    ['restricted', [['package', manifest({ access: 'restricted', provenance: true })]]],
+    ['no provenance', [['package', manifest({ access: 'public' })]]],
+    ['no publishConfig', [['package', manifest(undefined)]]],
+    ['a manifest that is not JSON', [['package', '{ "publishConfig": ']]],
+    // The ones a check of package/package.json alone would pass:
+    ['a later manifest under another directory', [['package', good], ['x', evil]]],
+    ['a later copy of package/package.json', [['package', good], ['package', evil]]],
     ['no tarball', null],
   ]) {
-    await assert.rejects(run(name, text), err => err.code !== 0, name)
+    await assert.rejects(run(name, entries), err => err.code !== 0 && /::error::/.test(err.stdout), name)
   }
 })
 
