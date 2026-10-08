@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
+import net from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -496,6 +497,31 @@ test('the default probe reaches a gated conductor on a port fetch refuses', PROB
   }
 })
 
+// node:http hands a 101 with Upgrade to an 'upgrade' listener, not the
+// response callback: without one, the probe would wait out its timeout.
+test('a target that answers 101 Switching Protocols is named at once, not timed out', PROBE, async () => {
+  const sockets = new Set()
+  const upgrader = net.createServer(socket => {
+    sockets.add(socket)
+    socket.once('data', () => socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n'))
+  })
+  await new Promise(resolve => upgrader.listen(0, '127.0.0.1', resolve))
+  const others = await targets(['gated', 'gated'])
+  try {
+    const port = upgrader.address().port
+    const { lines, log } = recordLog()
+    const started = Date.now()
+    const cfg = { ...CFG, ports: { harness: port, base: others.ports[0], pr: others.ports[1] } }
+    assert.equal(await runExpose({ cfg, exposure: fakeExposure(), probeTimeoutMs: 3000, log }), 2)
+    assert.ok(Date.now() - started < 2500, `named before the timeout (${Date.now() - started}ms)`)
+    assert.deepEqual(lines[0], ['err', `qa exposure: 127.0.0.1:${port} (harness) is not a gated conductor (got 101); refusing to publish it`])
+  } finally {
+    others.close()
+    for (const socket of sockets) socket.destroy()
+    upgrader.close()
+  }
+})
+
 test('over real loopback: gated targets are mounted; an open server, or a closed port, beside them is not', PROBE, async () => {
   const gated = await targets(['gated', 'gated', 'gated'])
   const mixed = await targets(['gated', 'open', 'closed'])
@@ -590,8 +616,9 @@ test('with a gated conductor on each port, mounts all three, then exits 1 becaus
     const env = { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: proxy, http_proxy: proxy }
     const started = Date.now()
     const r = await w.run(['--env', w.envFile([...FIXTURE, ...portLines(t.ports)]), '--tailscale', w.shim('tailscale')], { env })
-    // no probe timer outlives its answer to hold the process (5s each)
-    assert.ok(Date.now() - started < 4000, `the CLI exited promptly (${Date.now() - started}ms)`)
+    // No probe timer outlives its answer to hold the process: one that did
+    // would keep it 5s. A normal run takes well under a second.
+    assert.ok(Date.now() - started < 4500, `the CLI exited promptly (${Date.now() - started}ms)`)
     assert.equal(r.code, 1, r.stderr)
     // ensure reads the status, writes each missing mount; check reads it again
     assert.deepEqual(w.calls(), [STATUS, ...ensureFor(t.ports), STATUS])
