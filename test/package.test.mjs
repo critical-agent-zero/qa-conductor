@@ -49,8 +49,10 @@ const inFiles = file =>
     return file === dir || file.startsWith(`${dir}/`)
   })
 
-// The scripts `npm stage publish` would run, as `npm publish` does, with the
-// token in their env.
+// The lifecycle scripts npm runs when it packs or publishes a directory.
+// Staged from a tarball, npm runs none of them. The test job's `npm pack`
+// still runs prepack, prepare and postpack (with no token), and a directory
+// publish would run them all with the token, so the package defines none.
 const PUBLISH_SCRIPTS = ['prepublish', 'prepublishOnly', 'prepack', 'prepare', 'postpack', 'publish', 'postpublish']
 
 // The workflow's lines without blank lines and full-line comments, so prose
@@ -177,16 +179,31 @@ const TARBALL_CHECK_SCRIPT = [
   '  exit 1',
   'fi',
 ].join('\n')
+// npm applies a tarball's publishConfig to the stage, any key in it: a scoped
+// registry or a proxy there would send the stage, token and all, elsewhere,
+// whatever --registry says. So the publish job reads the tarball's manifest
+// (tar and jq, no repository code) and stages only one whose publishConfig is
+// exactly package.json's.
+const PUBLISH_CONFIG_CHECK = 'Check the tarball\'s publishConfig'
+const PUBLISH_CONFIG_SCRIPT = [
+  `tar -xzOf "./release/${TARBALL}-\${GITHUB_REF_NAME#v}.tgz" package/package.json > "$RUNNER_TEMP/manifest.json"`,
+  'if ! jq -e \'.publishConfig == {"access": "public", "provenance": true}\' "$RUNNER_TEMP/manifest.json" > /dev/null; then',
+  '  echo "::error::the tarball\'s publishConfig is not exactly {access: public, provenance: true}, and the rest of it would apply to the stage"',
+  '  exit 1',
+  'fi',
+].join('\n')
 const SHA_PINNED = /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}( # \S+)?$/
 // A `run: |` step's lines as jobSteps reads them.
 const runLines = script => ['|', ...script.split('\n').map(line => line.trim())]
 
 // Throws unless the workflow runs on v* tags only, in two jobs:
-// - test: no secrets and no id-token; it checks the tag, runs the tests and
+// - test: no secrets and no id-token; before any checkout it checks that the
+//   tagged commit was main itself, then checks the tag, runs the tests and
 //   packs the tarball;
-// - publish: after test, behind the npm-release environment; it checks that
-//   the tagged commit is on main, then stages test's tarball, the token in
-//   the stage step alone, and runs no code from the repository.
+// - publish: after test, behind the npm-release environment; it checks the
+//   commit again, checks the tarball's name and publishConfig, then stages
+//   it, the token in the stage step alone, and runs no code from the
+//   repository.
 // It reads the file as text, so it catches mistakes, not every way a shell
 // could spell a command: the stage-only token is what refuses a plain publish.
 function assertStagesOnly(text) {
@@ -224,8 +241,8 @@ function assertStagesOnly(text) {
   )
   assert.deepEqual(
     publish.steps.map(step => Object.keys(step).join(' ')),
-    ['name run', 'uses with', 'run', 'uses with', 'name run', 'name run env'],
-    'publish: the on-main check, setup-node, the npm upgrade, the download, the tarball check, then the stage, and nothing else',
+    ['name run', 'uses with', 'run', 'uses with', 'name run', 'name run', 'name run env'],
+    'publish: the on-main check, setup-node, the npm upgrade, the download, the tarball and publishConfig checks, then the stage, and nothing else',
   )
   for (const step of [...test.steps, ...publish.steps].filter(step => step.uses)) {
     assert.match(step.uses[0], SHA_PINNED, `${step.uses[0]} is pinned to a commit SHA`)
@@ -247,7 +264,7 @@ function assertStagesOnly(text) {
   assert.match(upload.uses[0], /^actions\/upload-artifact@/)
   assert.deepEqual(upload.with, ['', 'name: tarball', `path: ${TARBALL}-*.tgz`, 'if-no-files-found: error', 'retention-days: 30'])
 
-  const [onMain, publishNode, upgrade, download, tarballCheck, stage] = publish.steps
+  const [onMain, publishNode, upgrade, download, tarballCheck, publishConfigCheck, stage] = publish.steps
   assert.deepEqual(onMain.name, [ON_MAIN])
   assert.deepEqual(onMain.run, runLines(ON_MAIN_SCRIPT), 'the on-main check runs git alone, first')
   assert.match(publishNode.uses[0], /^actions\/setup-node@/)
@@ -257,6 +274,8 @@ function assertStagesOnly(text) {
   assert.deepEqual(download.with, ['', 'name: tarball', 'path: release'])
   assert.deepEqual(tarballCheck.name, [TARBALL_CHECK])
   assert.deepEqual(tarballCheck.run, runLines(TARBALL_CHECK_SCRIPT))
+  assert.deepEqual(publishConfigCheck.name, [PUBLISH_CONFIG_CHECK])
+  assert.deepEqual(publishConfigCheck.run, runLines(PUBLISH_CONFIG_SCRIPT), 'the publishConfig check reads the manifest with tar and jq alone, before the stage')
   assert.deepEqual(stage.run, [STAGE_RUN])
   assert.deepEqual(stage.env, ['', 'NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}', 'NPM_CONFIG_PROVENANCE: "true"'], 'the stage step gets the token')
 
@@ -271,8 +290,11 @@ function assertStagesOnly(text) {
   )
   // No third-party publish action or other publisher (pnpm, yarn): apart from
   // names, the stage command is the only line that says pub.
+  // (The publishConfig check's own lines, pinned word for word above, say
+  // publishConfig and are no publish.)
+  const publishConfigLines = new Set(PUBLISH_CONFIG_SCRIPT.split('\n').map(line => line.trim()))
   assert.deepEqual(
-    lines.filter(line => /pub/i.test(line) && !/^\s*(-\s+)?name:|^ {2}publish:$/.test(line)).map(line => line.trim()),
+    lines.filter(line => /pub/i.test(line) && !/^\s*(-\s+)?name:|^ {2}publish:$/.test(line) && !publishConfigLines.has(line.trim())).map(line => line.trim()),
     [`run: ${STAGE_RUN}`],
     'the stage command is the only publish',
   )
@@ -533,9 +555,14 @@ test('the release steps\' tarball check loads every entry point and runs the bin
 
 test('nothing in the package runs with the publish token, or sends it elsewhere', () => {
   for (const script of PUBLISH_SCRIPTS) assert.equal(pkg.scripts?.[script], undefined, `package.json has no ${script} script`)
-  // A registry here, or a project .npmrc, outranks setup-node's npmjs.org.
-  assert.deepEqual(pkg.publishConfig, { access: 'public', provenance: true }, 'publishConfig sets no registry')
+  // npm applies publishConfig to the stage, a scoped registry or proxy in it
+  // included. The publish job refuses a tarball whose publishConfig is not
+  // exactly this; a project .npmrc would matter to a directory publish.
+  assert.deepEqual(pkg.publishConfig, { access: 'public', provenance: true }, 'publishConfig sets no registry, proxy or other config')
   assert.ok(!existsSync(path.join(ROOT, '.npmrc')), 'no project .npmrc')
+  // The publish job's manifest check compares against this same object.
+  const literal = /jq -e '\.publishConfig == (\{.*\})'/.exec(PUBLISH_CONFIG_SCRIPT)?.[1]
+  assert.deepEqual(JSON.parse(literal), pkg.publishConfig, 'the publishConfig check expects package.json\'s publishConfig')
 })
 
 test('the publish workflow stages the tag\'s version and never publishes directly', () => {
@@ -568,6 +595,7 @@ test('the workflow check refuses a publish, a skippable gate, a token or id-toke
   }
   const EARLY_STEP = `      - name: ${ON_MAIN_EARLY}\n`
   const TARBALL_STEP = `      - name: ${TARBALL_CHECK}\n`
+  const PUBLISH_CONFIG_STEP = `      - name: ${PUBLISH_CONFIG_CHECK}\n`
   // A decoy copy of publish's on-main step, hidden in a heredoc at the end of
   // the tag check's script, and the real one made to pass.
   const decoyed = text => {
@@ -638,6 +666,17 @@ test('the workflow check refuses a publish, a skippable gate, a token or id-toke
     'a decoy on-main step in the tag check\'s script, the real one made to pass': decoyed,
     'npm by version range': replace(NPM_UPGRADE, 'npm install -g npm@^11.15.0'),
     'no registry on the stage': replace(' --access public --registry https://registry.npmjs.org/', ' --access public'),
+    'no publishConfig check': text => {
+      const start = text.indexOf(PUBLISH_CONFIG_STEP)
+      assert.ok(start >= 0, 'the workflow has the publishConfig check')
+      return text.slice(0, start) + text.slice(text.indexOf('\n      - ', start + PUBLISH_CONFIG_STEP.length) + 1)
+    },
+    'the publishConfig check made to pass': replace('if ! jq -e \'.publishConfig == {"access": "public", "provenance": true}\'', 'if ! jq -e \'true\''),
+    'the publishConfig check after the stage': text => {
+      const start = text.indexOf(PUBLISH_CONFIG_STEP)
+      const end = text.indexOf('\n      - ', start + PUBLISH_CONFIG_STEP.length) + 1
+      return text.slice(0, start) + text.slice(end) + text.slice(start, end)
+    },
     'the first-parent list piped into grep -q': replace(
       'git rev-list --first-parent refs/remotes/origin/main > "$RUNNER_TEMP/main-first-parent"\n          if ! grep -qxF "$GITHUB_SHA" "$RUNNER_TEMP/main-first-parent"; then',
       'if ! git rev-list --first-parent refs/remotes/origin/main | grep -qxF "$GITHUB_SHA"; then',
@@ -647,7 +686,7 @@ test('the workflow check refuses a publish, a skippable gate, a token or id-toke
       return text.replace(step, '') + step
     },
     'no on-main check': text => text.replace(onMainStep(text), ''),
-    'the stage on a path npm reads as a GitHub repo': replace('"./release/', '"release/'),
+    'the stage on a path npm reads as a GitHub repo': replace(`npm stage publish "./release/`, `npm stage publish "release/`),
     'a looser tarball check': replace('if [ "$have" != "$want" ]; then', 'if [ -z "$have" ]; then'),
     'the upload from anywhere': replace(`path: ${TARBALL}-*.tgz`, 'path: "*"'),
     'an action by tag, not SHA': replace('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'actions/checkout@v7'),
@@ -729,31 +768,77 @@ async function releaseRepo(t) {
 test('the publish job\'s on-main check passes a commit that was main itself, and stops any other with an error naming the tag', { timeout: 60_000 }, async t => {
   const script = stepScript(readFileSync(WORKFLOW, 'utf8'), ON_MAIN)
   const repo = await releaseRepo(t)
-  // GitHub runs a step's script as bash -eo pipefail; the tag, SHA and URLs
-  // reach it as the runner's env, never as ${{ }} expressions spliced into
-  // shell source.
+  // GitHub runs a step with no `shell:` as `bash -e {0}`; the script must also
+  // hold under pipefail. The tag, SHA and URLs reach it as the runner's env,
+  // never as ${{ }} expressions spliced into shell source.
   assert.doesNotMatch(script, /\$\{\{/)
-  const run = sha => execFileP('bash', ['-e', '-o', 'pipefail', '-c', script], {
-    cwd: repo.root,
-    timeout: 20_000,
-    env: {
-      ...repo.env,
-      GITHUB_SERVER_URL: repo.server,
-      GITHUB_REPOSITORY: 'acme/widget',
-      GITHUB_REF_NAME: 'v1.2.3',
-      GITHUB_SHA: sha,
-      RUNNER_TEMP: mkdtempSync(path.join(repo.root, 'runner-')),
-    },
-  })
-  // Main's own commits, the merge commit among them: what a release tags.
-  for (const sha of [repo.first, repo.second, repo.tip]) await run(sha)
-  // Never merged, or unknown: not on main at all.
-  for (const sha of [repo.side, 'f'.repeat(40)]) {
-    await assert.rejects(run(sha), err => err.code === 1 && err.stdout.includes(`::error::v1.2.3 (${sha}) is not on main`), sha)
+  for (const shell of [['-e'], ['-e', '-o', 'pipefail']]) {
+    const run = sha => execFileP('bash', [...shell, '-c', script], {
+      cwd: repo.root,
+      timeout: 20_000,
+      env: {
+        ...repo.env,
+        GITHUB_SERVER_URL: repo.server,
+        GITHUB_REPOSITORY: 'acme/widget',
+        GITHUB_REF_NAME: 'v1.2.3',
+        GITHUB_SHA: sha,
+        RUNNER_TEMP: mkdtempSync(path.join(repo.root, 'runner-')),
+      },
+    })
+    const how = `bash ${shell.join(' ')}`
+    // Main's own commits, the merge commit among them: what a release tags.
+    for (const sha of [repo.first, repo.second, repo.tip]) await run(sha)
+    // Never merged, or unknown: not on main at all.
+    for (const sha of [repo.side, 'f'.repeat(40)]) {
+      await assert.rejects(run(sha), err => err.code === 1 && err.stdout.includes(`::error::v1.2.3 (${sha}) is not on main`), `${how}: ${sha}`)
+    }
+    // Merged, but never main itself: a release branch's own commit, or one
+    // from inside a pull request.
+    await assert.rejects(run(repo.merged), err => err.code === 1 && err.stdout.includes(`::error::v1.2.3 (${repo.merged}) was merged into main but never was main`), `${how}: merged`)
   }
-  // Merged, but never main itself: a release branch's own commit, or one
-  // from inside a pull request. Its tree is not what main was.
-  await assert.rejects(run(repo.merged), err => err.code === 1 && err.stdout.includes(`::error::v1.2.3 (${repo.merged}) was merged into main but never was main`), 'merged')
+})
+
+test('the publish job\'s publishConfig check stages only a tarball whose publishConfig is exactly package.json\'s', { timeout: 60_000 }, async t => {
+  const script = stepScript(readFileSync(WORKFLOW, 'utf8'), PUBLISH_CONFIG_CHECK)
+  assert.doesNotMatch(script, /\$\{\{/)
+  try {
+    await execFileP('jq', ['--version'])
+  } catch {
+    return t.skip('jq is not installed here (GitHub\'s ubuntu runners have it)')
+  }
+  const scratch = mkdtempSync(path.join(tmpdir(), 'qa-publish-config-'))
+  t.after(() => rmSync(scratch, { recursive: true, force: true }))
+  const tgz = `${TARBALL}-${pkg.version}.tgz`
+  // A release directory holding a tarball whose package.json is `manifest`
+  // (a string, written as is), packed the way npm does: under package/.
+  const run = async (name, manifest) => {
+    const dir = path.join(scratch, name)
+    mkdirSync(path.join(dir, 'src', 'package'), { recursive: true })
+    mkdirSync(path.join(dir, 'release'))
+    mkdirSync(path.join(dir, 'runner'))
+    if (manifest !== null) {
+      writeFileSync(path.join(dir, 'src', 'package', 'package.json'), manifest)
+      await execFileP('tar', ['-czf', path.join(dir, 'release', tgz), '-C', path.join(dir, 'src'), 'package'])
+    }
+    return execFileP('bash', ['-e', '-c', script], {
+      cwd: dir,
+      timeout: 10_000,
+      env: { PATH: process.env.PATH, GITHUB_REF_NAME: `v${pkg.version}`, RUNNER_TEMP: path.join(dir, 'runner') },
+    })
+  }
+  const manifest = publishConfig => JSON.stringify({ name: pkg.name, version: pkg.version, ...(publishConfig === undefined ? {} : { publishConfig }) })
+  await run('ok', manifest({ provenance: true, access: 'public' }))
+  for (const [name, text] of [
+    ['a scoped registry', manifest({ ...pkg.publishConfig, '@critical-labs:registry': 'https://registry.example/' })],
+    ['a registry', manifest({ ...pkg.publishConfig, registry: 'https://registry.example/' })],
+    ['a proxy', manifest({ ...pkg.publishConfig, proxy: 'http://127.0.0.1:8080/' })],
+    ['no provenance', manifest({ access: 'public' })],
+    ['no publishConfig', manifest(undefined)],
+    ['a manifest that is not JSON', '{ "publishConfig": '],
+    ['no tarball', null],
+  ]) {
+    await assert.rejects(run(name, text), err => err.code !== 0, name)
+  }
 })
 
 test('the publish job\'s tarball check passes only a release directory that holds the tag\'s tarball and nothing else', { timeout: 30_000 }, async t => {

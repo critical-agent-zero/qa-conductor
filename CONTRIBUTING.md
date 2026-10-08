@@ -80,30 +80,41 @@ The token reads PRs and comments and labels on this repository; the README's [To
    )
    ```
    It runs the bin from `node_modules/.bin`, never through `npx`. If the tarball lacked the bin, `npx` would look the name up on the registry, where anyone can claim it, and run what it found as you, without asking when stdin isn't a terminal. A fixed path in the shared `/tmp` is no safer: another local user could put a tarball there first. `test/package.test.mjs` runs this block too.
-4. Once the release pull request is merged, tag `main`'s merge commit, as every earlier tag is, with a signed, annotated tag. Run `git fetch origin` and check that `git log -1 origin/main` is that merge, then `git tag -s vX.Y.Z origin/main -m "qa-conductor X.Y.Z: <what it brings>"` and `git push origin vX.Y.Z`. Name `origin/main`: without it the tag goes on whatever is checked out, such as the release branch's own commit, which differs from `main` whenever `main` merged anything else meanwhile, and the workflow stages the tagged tree.
+4. Once the release pull request is merged, tag `main`'s merge commit, as every earlier tag is, with a signed, annotated tag. Run `git fetch origin` and check that `git log -1 origin/main` is that merge, then `git tag -s vX.Y.Z origin/main -m "qa-conductor X.Y.Z: <what it brings>"` and `git push origin vX.Y.Z`. Name `origin/main`: without it the tag goes on whatever is checked out, such as the release branch's own commit, and the publish workflow's on-main check refuses that (step 5).
+   - **If the check refuses a tag,** delete it and tag `main`'s merge commit again. Once the release-tag ruleset is on, only an admin can delete a `v*` tag: `gh api -X DELETE repos/critical-labs/qa-conductor/git/refs/tags/vX.Y.Z`. A refused tag staged nothing, so the version can be tagged again.
 5. The [publish workflow](.github/workflows/publish.yml) runs two jobs.
    - **`test`** has no secrets and no `id-token`.
-     - First, before any checkout, it checks that the tagged commit was `main` itself: an ancestor of `main` (`git merge-base --is-ancestor`), on its first-parent line, as a release's merge commit is. A tag on any other commit stops here, before anyone is asked to approve it. That includes the release branch's own commit from step 4, even once `main` has merged it.
-     - Then it refuses a tag that isn't `v` plus the `package.json` version, runs the tests on the checkout, packs the tarball with `npm pack`, and keeps it as the run's artifact.
-   - **`publish`** waits for a maintainer to approve the `npm-release` environment, whose deployment policy admits `v*` tags only. Before approving, check that the run's commit is `main`'s merge commit and that `test` passed. Then it:
-     - checks the commit again, as `test` did;
-     - downloads the tarball and checks that its file name is the tag's version;
-     - stages it on npm with provenance (`npm stage publish`).
+     - **First, before any checkout,** it checks that the tagged commit was `main` itself: an ancestor of `main` (`git merge-base --is-ancestor`), on its first-parent line, as a release's merge commit is. A tag put on any other commit by mistake stops here, before anyone is asked to approve it. That includes the release branch's own commit from step 4, even once `main` has merged it.
+     - **Rebase merges:** with rebase merging allowed on `main`, a rebased pull request's commits land on its first-parent line, so they count as `main`.
+     - **Then** it refuses a tag that isn't `v` plus the `package.json` version, runs the tests on the checkout, packs the tarball with `npm pack`, and keeps it as the run's artifact.
+   - **`publish`** waits for a maintainer to approve the `npm-release` environment, whose deployment policy admits `v*` tags only.
+     - **Before approving,** check the run's commit against data the run can't produce. `gh run view <run-id> -R critical-labs/qa-conductor --json headSha --jq .headSha` must equal `gh pr view <release PR> -R critical-labs/qa-conductor --json mergeCommit --jq .mergeCommit.oid`, or appear in `git fetch origin && git rev-list --first-parent origin/main`.
+     - **Until it matches, the run's own results prove nothing,** `test` and both on-main checks included: a tag on another commit runs that commit's copy of the workflow.
+     - **Once approved,** it:
+       - checks the commit again, as `test` did;
+       - downloads the tarball and checks that its file name is the tag's version;
+       - checks that the tarball's `publishConfig` is exactly `package.json`'s, since npm applies any other key in it, a scoped registry or a proxy included, to the stage;
+       - stages it on npm with provenance (`npm stage publish`).
 
-     It checks out nothing and runs no code from the repository.
+       It checks out nothing and runs no code from the repository.
 6. A maintainer approves the staged version on npmjs.com. Only then does it go live.
 
 **What stops a direct publish.**
-- **The approval and the token's home.** The workflow's npm token can only stage, and only the stage step gets it, in the job that runs no repository code. A tag runs the workflow file of the commit it names, so someone who can push tags could tag a commit whose workflow drops the checks. What holds against that is the `npm-release` approval, and `NPM_TOKEN` living in that environment alone.
-- **The checks in the file catch mistakes.** A tag on the wrong commit, or a token or permission that strays.
-- **The pin.** `test/package.test.mjs` pins:
+- **The approval and the token's home.** The workflow's npm token can only stage, and only the stage step gets it, in the job that runs no repository code. A tag runs the workflow file of the commit it names, so someone who can push tags could tag a commit whose workflow drops the checks. What holds against that is the approver comparing the run's SHA with `main`'s (step 5), and `NPM_TOKEN` living in the `npm-release` environment alone.
+- **The workflow's checks catch mistakes:**
+  - a tag on the wrong commit;
+  - a tag that isn't the `package.json` version;
+  - a tarball that isn't the tag's, or whose `publishConfig` adds anything.
+- **The pin catches a stray token or permission.** `test/package.test.mjs` pins:
   - the workflow's trigger, jobs, permissions and steps;
-  - both jobs' on-main checks and the tarball check, word for word.
+  - both jobs' on-main checks, the tarball check and the `publishConfig` check, word for word.
 
   It fails:
   - on any npm or npx command other than the four the workflow runs (npm expands abbreviations such as `npm pub`);
   - on a gate that could be skipped or allowed to fail;
   - on the token or an `id-token` anywhere but the stage step and the publish job;
-  - on a publish job without the environment or the on-main check.
-- **The scripts are run in tests too.** The on-main check runs against a test repository, and the tarball check against good and bad release directories.
+  - on a publish job without the environment, the on-main check or the `publishConfig` check.
+- **The scripts are run in tests too:**
+  - the on-main check, against a test repository, under GitHub's `bash -e` and under pipefail;
+  - the tarball and `publishConfig` checks, against good and bad tarballs.
 - **Text, not a parser.** The test reads the file as text, so it catches mistakes, not every way a shell can spell a command: the stage-only token is what refuses a plain publish.

@@ -35,9 +35,12 @@ What changed in each release, newest first. A 0.x minor version may break the in
 
 - **The npm token never meets the repository's code, and only `main` is released.** The publish workflow is now two jobs.
   - **`test`** first checks that the tagged commit was `main` itself: an ancestor of `main` on its first-parent line, as a release's merge commit is. It then checks the tag, runs the tests and packs the tarball, with no secrets and no `id-token`.
-  - **`publish`** waits for a maintainer to approve the `npm-release` environment, checks the commit again, and stages the test job's tarball with provenance. It checks out nothing and runs no repository code.
-  - **What's refused:** a `v*` tag on any other commit fails before anyone is asked to approve it. That covers a branch, a pull request, or a release branch's own commit, even once merged.
-  - **What holds against an edited workflow:** since a tag runs the workflow file of the commit it names, it is the environment approval, and the token living in that environment alone. The staged version still goes live only once a maintainer approves it on npmjs.com.
+  - **`publish`** waits for a maintainer to approve the `npm-release` environment, checks the commit again, and checks the test job's tarball: its name, and that its `publishConfig` is exactly `package.json`'s, since npm would apply a scoped registry or proxy there to the stage. Then it stages the tarball with provenance. It checks out nothing and runs no repository code.
+  - **What's refused:** a `v*` tag on any other commit fails before anyone is asked to approve it. That covers a branch, a pull request, or a release branch's own commit, even once merged. The exception is a rebase-merged pull request, whose commits land on `main`'s first-parent line and so count as `main`.
+  - **What holds against an edited workflow:** a tag runs the workflow file of the commit it names, so a run's own results prove nothing until its commit is `main`'s.
+    - The approver compares the run's SHA with the release pull request's merge commit, from data the run can't produce. CONTRIBUTING's Releasing steps give the commands.
+    - The token lives in the `npm-release` environment alone.
+    - The staged version still goes live only once a maintainer approves it on npmjs.com.
 
 ## [0.3.1] — 2026-10-07
 

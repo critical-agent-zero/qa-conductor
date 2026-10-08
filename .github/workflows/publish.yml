@@ -8,11 +8,13 @@ name: publish
 # - test checks that the tagged commit was main itself, checks the tag, runs
 #   the tests and packs the tarball, with no secrets and no id-token;
 # - publish waits for a maintainer to approve the npm-release environment,
-#   checks the commit again, and stages test's tarball. It checks out nothing
-#   and runs no code from the repository.
+#   checks the commit again, checks the tarball, and stages it. It checks out
+#   nothing and runs no code from the repository.
 # A tag runs the workflow file of the commit it names, so these checks catch
-# mistakes. What holds against an edited file is the approval, and NPM_TOKEN
-# living in the npm-release environment alone.
+# mistakes, and a run's own results, these checks included, prove nothing
+# until its commit is main's. What holds against an edited file is the
+# approver comparing the run's SHA with main's (CONTRIBUTING.md, Releasing,
+# step 5), and NPM_TOKEN living in the npm-release environment alone.
 # test/package.test.mjs pins the shape of this file.
 
 on:
@@ -28,9 +30,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      # The publish job's check, run first here too, before any checkout: a
-      # tag on a commit main never was fails before anyone is asked to approve
-      # it, and the approver sees this check pass.
+      # The publish job's check, run first here too, before any checkout, so
+      # a tag put on the wrong commit by mistake fails before anyone is asked
+      # to approve it. It is no evidence for the approver: a tag on another
+      # commit runs that commit's copy of this file.
       - name: Check the tagged commit is on main, before the approval
         run: |
           git init --quiet "$RUNNER_TEMP/main-history"
@@ -84,12 +87,13 @@ jobs:
       id-token: write
     steps:
       # Only a commit that was main itself may be released, as a release's
-      # merge commit was: a v* tag on any other commit stops here. That
-      # includes a branch's or a pull request's own commit, even once main
-      # has merged it, since its tree is not one main ever had. Git alone, in
-      # a directory of its own: main's history, and no files from the tag.
-      # The first-parent list goes through a file: under pipefail, grep -q
-      # quitting early would fail the pipe.
+      # merge commit is: a v* tag on any other commit stops here. That
+      # includes a branch's or a pull request's own commit, even once main has
+      # merged it, unless it was rebase-merged, which puts it on main's
+      # first-parent line. Git alone, in a directory of its own: main's
+      # history, and no files from the tag. GitHub runs this as bash -e; the
+      # first-parent list goes through a file so that it would hold under
+      # pipefail too, where grep -q quitting early would fail the pipe.
       - name: Check the tagged commit is on main
         run: |
           git init --quiet "$RUNNER_TEMP/main-history"
@@ -127,9 +131,22 @@ jobs:
             echo "::error::the test job's tarball is $have, not $want"
             exit 1
           fi
+      # npm applies a tarball's publishConfig to the stage, any key in it: a
+      # scoped registry or a proxy there would send the stage, token and all,
+      # elsewhere, whatever --registry says. So read the manifest, with tar
+      # and jq and no code from the repository, and stage only a tarball whose
+      # publishConfig is exactly package.json's.
+      - name: Check the tarball's publishConfig
+        run: |
+          tar -xzOf "./release/critical-labs-qa-conductor-${GITHUB_REF_NAME#v}.tgz" package/package.json > "$RUNNER_TEMP/manifest.json"
+          if ! jq -e '.publishConfig == {"access": "public", "provenance": true}' "$RUNNER_TEMP/manifest.json" > /dev/null; then
+            echo "::error::the tarball's publishConfig is not exactly {access: public, provenance: true}, and the rest of it would apply to the stage"
+            exit 1
+          fi
       # The ./ makes it a file: npm would read release/<name>.tgz as a GitHub
-      # repository. --registry, because a tarball's publishConfig.registry
-      # would outrank setup-node's. No npm script runs for a tarball.
+      # repository. --registry pins the default registry, and the step above
+      # made sure publishConfig adds nothing to it. No npm script runs for a
+      # tarball.
       - name: Stage publish (a maintainer approves on npmjs.com to go live)
         run: npm stage publish "./release/critical-labs-qa-conductor-${GITHUB_REF_NAME#v}.tgz" --access public --registry https://registry.npmjs.org/
         env:
