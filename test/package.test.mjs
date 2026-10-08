@@ -7,7 +7,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -151,12 +151,18 @@ const ON_MAIN = 'Check the tagged commit is on main'
 const ON_MAIN_EARLY = 'Check the tagged commit is on main, before the approval'
 const TARBALL_CHECK = 'Check the tarball is the tag\'s version'
 // `./` makes it a file: npm reads release/x.tgz as the GitHub repo release/x.tgz.
-// --registry: a tarball's publishConfig.registry outranks the user config.
+// --registry pins the default registry, which a tarball's
+// publishConfig.registry would otherwise outrank; the publishConfig check
+// refuses any other key there (a scoped registry, a proxy) that --registry
+// would not override.
 const STAGE_RUN = `npm stage publish "./release/${TARBALL}-\${GITHUB_REF_NAME#v}.tgz" --access public --registry https://registry.npmjs.org/`
-// One npm, by exact version: the job that runs it holds the token.
+// One npm, by exact version: the job that runs it holds the token. CI's
+// Node 22 leg installs the same npm before the suite, so the publishConfig
+// check's test reads tarballs with the npm that stages them.
 const NPM_UPGRADE = 'npm install -g --ignore-scripts npm@11.21.0'
-// The publish job's two scripts, whole: it runs git, ls and npm stage, and no
-// code from the repository.
+// The publish job's scripts, whole: these two run git and ls, the
+// publishConfig check below runs node with npm's own pacote, and the stage
+// runs npm. None runs code from the repository.
 const ON_MAIN_SCRIPT = [
   'git init --quiet "$RUNNER_TEMP/main-history"',
   'cd "$RUNNER_TEMP/main-history"',
@@ -182,26 +188,30 @@ const TARBALL_CHECK_SCRIPT = [
 // npm applies a tarball's publishConfig to the stage, any key in it: a scoped
 // registry or a proxy there would send the stage, token and all, elsewhere,
 // whatever --registry says. So the publish job reads the tarball's manifest the
-// way the stage will: with the npm on PATH's own pacote.manifest and the
-// options npm's publish passes it. That npm, not repository code, unpacks the
-// tarball, so no second entry, pax header or extra gzip member can hand npm a
-// manifest the check didn't see. It stages only a tarball whose publishConfig
-// is exactly package.json's.
+// way the stage will: with the npm on PATH's own pacote.manifest and the same
+// read options (fullMetadata, fullReadJson) npm's publish passes it. npm's
+// other options only affect caching and file modes for a tarball. That npm,
+// not repository code, unpacks the tarball, so no second entry, pax header or
+// extra gzip member can hand npm a manifest the check didn't see. Refusal is
+// the default exit code: only an exact match clears it, so a read that never
+// settles fails the step too.
 const PUBLISH_CONFIG_CHECK = 'Check the tarball\'s publishConfig'
 const PUBLISH_CONFIG_SCRIPT = [
   'node -e \'',
   '  const path = require("node:path")',
   '  const { realpathSync } = require("node:fs")',
   '  const { isDeepStrictEqual } = require("node:util")',
+  '  process.exitCode = 1',
   '  const root = path.dirname(path.dirname(realpathSync(process.argv[2])))',
   '  const pacote = require(path.join(root, "node_modules", "pacote"))',
   '  pacote.manifest(`file:${process.argv[1]}`, { fullMetadata: true, fullReadJson: true }).then(manifest => {',
-  '    if (isDeepStrictEqual(manifest.publishConfig, { "access": "public", "provenance": true })) return',
+  '    if (isDeepStrictEqual(manifest.publishConfig, { "access": "public", "provenance": true })) {',
+  '      process.exitCode = 0',
+  '      return',
+  '    }',
   '    console.log("::error::the tarball publishConfig is not exactly {access: public, provenance: true}, and the rest of it would apply to the stage")',
-  '    process.exitCode = 1',
   '  }, err => {',
   '    console.log(`::error::cannot read the tarball manifest: ${err.code ?? err.message}`)',
-  '    process.exitCode = 1',
   '  })',
   `' "./release/${TARBALL}-\${GITHUB_REF_NAME#v}.tgz" "$(command -v npm)"`,
 ].join('\n')
@@ -685,7 +695,8 @@ test('the workflow check refuses a publish, a skippable gate, a token or id-toke
       assert.ok(start >= 0, 'the workflow has the publishConfig check')
       return text.slice(0, start) + text.slice(text.indexOf('\n      - ', start + PUBLISH_CONFIG_STEP.length) + 1)
     },
-    'the publishConfig check made to pass': replace('if (isDeepStrictEqual(manifest.publishConfig, { "access": "public", "provenance": true })) return', 'return'),
+    'the publishConfig check made to pass': replace('if (isDeepStrictEqual(manifest.publishConfig, { "access": "public", "provenance": true })) {', 'if (true) {'),
+    'the publishConfig check passing by default': replace('  process.exitCode = 1\n            const root', '  process.exitCode = 0\n            const root'),
     'the publishConfig check reading the manifest with tar instead of npm': replace('pacote.manifest(`file:${process.argv[1]}`, { fullMetadata: true, fullReadJson: true })', 'Promise.resolve(JSON.parse(require("node:child_process").execSync(`tar -xzOf ${process.argv[1]} package/package.json`)))'),
     'the publishConfig check after the stage': text => {
       const start = text.indexOf(PUBLISH_CONFIG_STEP)
@@ -824,7 +835,7 @@ test('the publish job\'s publishConfig check stages only a tarball whose publish
   // appended as a second copy of the same path. npm reads the archive with
   // its first directory stripped, so every <dir>/package.json lands as the
   // manifest, the last one winning.
-  const run = async (name, entries) => {
+  const run = async (name, entries, { npmBin = null } = {}) => {
     const dir = path.join(scratch, name)
     mkdirSync(path.join(dir, 'release'), { recursive: true })
     mkdirSync(path.join(dir, 'runner'))
@@ -839,12 +850,14 @@ test('the publish job\'s publishConfig check stages only a tarball whose publish
       await execFileP('gzip', ['-n', tar])
       await execFileP('mv', [`${tar}.gz`, path.join(dir, 'release', tgz)])
     }
-    // GitHub runs the step as bash -e, with npm 11.21.0 on PATH; here, this
-    // node's own npm, whose pacote reads tarballs the same way.
+    // GitHub runs the step as bash -e, with npm 11.21.0 on PATH. Here it is
+    // the npm beside this node, unless npmBin names another: CI's Node 22 leg
+    // runs this test again with that same npm 11.21.0 (see the next test).
+    const bin = npmBin ?? path.dirname(process.execPath)
     return execFileP('bash', ['-e', '-c', script], {
       cwd: dir,
       timeout: 30_000,
-      env: { PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}`, HOME: dir, npm_config_cache: path.join(dir, 'cache'), GITHUB_REF_NAME: `v${pkg.version}`, RUNNER_TEMP: path.join(dir, 'runner') },
+      env: { PATH: `${bin}${path.delimiter}${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}`, HOME: dir, npm_config_cache: path.join(dir, 'cache'), GITHUB_REF_NAME: `v${pkg.version}`, RUNNER_TEMP: path.join(dir, 'runner') },
     })
   }
   const manifest = publishConfig => JSON.stringify({ name: pkg.name, version: pkg.version, ...(publishConfig === undefined ? {} : { publishConfig }) })
@@ -867,6 +880,63 @@ test('the publish job\'s publishConfig check stages only a tarball whose publish
     ['no tarball', null],
   ]) {
     await assert.rejects(run(name, entries), err => err.code !== 0 && /::error::/.test(err.stdout), name)
+  }
+  // An npm whose manifest reader never settles: node then exits with
+  // whatever exit code is set, so refusal must be the default. The stub says
+  // what it was asked to read, so a stub that failed to load can't pass.
+  const stub = path.join(scratch, 'stuck-npm')
+  mkdirSync(path.join(stub, 'bin'), { recursive: true })
+  mkdirSync(path.join(stub, 'node_modules', 'pacote'), { recursive: true })
+  writeFileSync(path.join(stub, 'bin', 'npm'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+  writeFileSync(path.join(stub, 'node_modules', 'pacote', 'index.js'), 'exports.manifest = spec => (console.log(`read ${spec}`), new Promise(() => {}))\n')
+  await assert.rejects(
+    run('a manifest read that never settles', [['package', good]], { npmBin: path.join(stub, 'bin') }),
+    err => err.code === 1 && err.stdout === `read file:./release/${tgz}\n` && err.stderr === '',
+    'a read that never settles',
+  )
+})
+
+// CI's Node 22 leg runs the suite as publish.yml's test job does, with Node
+// 22's own npm, which packs the release. Then it runs this file again with
+// NPM_UPGRADE's npm, the one the publish job reads and stages tarballs with,
+// so the publishConfig check's test runs against that npm on every pull
+// request. The whole job is pinned, and on that second run the npm beside
+// node must be NPM_UPGRADE's.
+test('CI\'s Node 22 leg runs the package tests again with the npm the publish job stages with', () => {
+  const ci = contentLines(readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8'))
+  const jobs = ci.slice(ci.indexOf('jobs:')).map(line => {
+    const uses = /^( +- uses: )(.*)$/.exec(line)
+    return uses && SHA_PINNED.test(uses[2]) ? `${uses[1]}<pinned>` : line
+  })
+  assert.deepEqual(jobs, [
+    'jobs:',
+    '  test:',
+    '    runs-on: ubuntu-latest',
+    '    timeout-minutes: 10',
+    '    strategy:',
+    '      matrix:',
+    '        node: [22, 24]',
+    '    steps:',
+    '      - uses: <pinned>',
+    '        with:',
+    '          persist-credentials: false',
+    '      - uses: <pinned>',
+    '        with:',
+    '          node-version: ${{ matrix.node }}',
+    '      - run: npm test',
+    '      - if: matrix.node == 22',
+    `        run: ${NPM_UPGRADE}`,
+    '      - if: matrix.node == 22',
+    '        run: node --test test/package.test.mjs',
+    '        env:',
+    '          CI_EXPECTS_PUBLISH_NPM: "true"',
+  ])
+  assert.ok(readFileSync(WORKFLOW, 'utf8').includes(`      - run: ${NPM_UPGRADE}\n`), 'the publish job installs the same npm')
+  if (process.env.CI_EXPECTS_PUBLISH_NPM === 'true') {
+    // As the publishConfig check finds npm's root: its realpath, two levels up.
+    const cli = realpathSync(path.join(path.dirname(process.execPath), 'npm'))
+    const { version } = JSON.parse(readFileSync(path.join(path.dirname(path.dirname(cli)), 'package.json'), 'utf8'))
+    assert.equal(`npm install -g --ignore-scripts npm@${version}`, NPM_UPGRADE, 'the npm beside node is the one the publish job installs')
   }
 })
 

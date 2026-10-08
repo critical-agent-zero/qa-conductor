@@ -81,15 +81,22 @@ The token reads PRs and comments and labels on this repository; the README's [To
    ```
    It runs the bin from `node_modules/.bin`, never through `npx`. If the tarball lacked the bin, `npx` would look the name up on the registry, where anyone can claim it, and run what it found as you, without asking when stdin isn't a terminal. A fixed path in the shared `/tmp` is no safer: another local user could put a tarball there first. `test/package.test.mjs` runs this block too.
 4. Once the release pull request is merged, tag `main`'s merge commit, as every earlier tag is, with a signed, annotated tag. Run `git fetch origin` and check that `git log -1 origin/main` is that merge, then `git tag -s vX.Y.Z origin/main -m "qa-conductor X.Y.Z: <what it brings>"` and `git push origin vX.Y.Z`. Name `origin/main`: without it the tag goes on whatever is checked out, such as the release branch's own commit, and the publish workflow's on-main check refuses that (step 5).
-   - **If the check refuses a tag,** delete it and tag `main`'s merge commit again. Once the release-tag ruleset is on, only an admin can delete a `v*` tag: `gh api -X DELETE repos/critical-labs/qa-conductor/git/refs/tags/vX.Y.Z`. A refused tag staged nothing, so the version can be tagged again.
+   - **If the check refuses a tag,** delete it and tag `main`'s merge commit again. Once the release-tag ruleset is on, only an admin can delete a `v*` tag: `gh api -X DELETE repos/critical-labs/qa-conductor/git/refs/tags/vX.Y.Z`. Then delete your clone's copy with `git tag -d vX.Y.Z`, or `git tag -s` refuses to make the new one. A refused tag staged nothing, so the version can be tagged again.
 5. The [publish workflow](.github/workflows/publish.yml) runs two jobs.
    - **`test`** has no secrets and no `id-token`.
      - **First, before any checkout,** it checks that the tagged commit was `main` itself: an ancestor of `main` (`git merge-base --is-ancestor`), on its first-parent line, as a release's merge commit is. A tag put on any other commit by mistake stops here, before anyone is asked to approve it. That includes the release branch's own commit from step 4, even once `main` has merged it.
-     - **Rebase merges:** with rebase merging allowed on `main`, a rebased pull request's commits land on its first-parent line, so they count as `main`.
+     - **Rebase merges are disabled** by the `main` ruleset, which allows merge and squash merges only. So a pull request reaches `main`'s first-parent line only as its merge or squash commit, unless an admin bypasses the ruleset. Re-enabling rebase merges would weaken this check: a rebased pull request's own commits would count as `main`.
      - **Then** it refuses a tag that isn't `v` plus the `package.json` version, runs the tests on the checkout, packs the tarball with `npm pack`, and keeps it as the run's artifact.
-   - **`publish`** waits for a maintainer to approve the `npm-release` environment, whose deployment policy admits `v*` tags only.
-     - **Before approving,** check the run's commit against data the run can't produce. `gh run view <run-id> -R critical-labs/qa-conductor --json headSha --jq .headSha` must equal `gh pr view <release PR> -R critical-labs/qa-conductor --json mergeCommit --jq .mergeCommit.oid`, or appear in `git fetch https://github.com/critical-labs/qa-conductor.git main && git rev-list --first-parent FETCH_HEAD`. That fetches from the canonical repository, never a fork's `origin`.
-     - **Until it matches, the run's own results prove nothing,** `test` and both on-main checks included: a tag on another commit runs that commit's copy of the workflow.
+   - **`publish`** waits for the `npm-release` environment's approval (who gives it is below). The environment's deployment policy admits `v*` tags only.
+     - **Before approving,** find the run's commit in data the run can't produce: `main`'s first-parent history, fetched from the canonical repository, never a fork's `origin`.
+       - Take `<run-id>` from the run you are approving: its page address (`.../actions/runs/<run-id>`), or the run id you pass to the approval. Never take it from a pull request number in a run's title: the tagged commit sets that title, with its message or its workflow's `run-name`.
+       - Run `sha=$(gh run view <run-id> -R critical-labs/qa-conductor --json headSha --jq .headSha)`. Then, in a new empty repository, so that no clone's own git config can redirect the fetch, run `(cd "$(mktemp -d)" && git init -q && git fetch -q https://github.com/critical-labs/qa-conductor.git main && git rev-list --first-parent FETCH_HEAD | grep -xF "$sha" > /dev/null && echo "on main: $sha")`. It works in bash and zsh, with or without pipefail.
+       - Approve only if it prints `on main:` and the run's SHA. Anything else means don't approve: no output means the commit was never `main`, and an error means a command failed.
+     - **Until then, the run's own results prove nothing,** `test` and both on-main checks included: a tag on another commit runs that commit's copy of the workflow.
+     - **Who approves:**
+       - the owner, or an agent acting on the owner's instruction;
+       - whoever approves runs this check first;
+       - a maintainer's approval of the staged version on npmjs.com (step 6), today the owner's, is the final human gate.
      - **Once approved,** it:
        - checks the commit again, as `test` did;
        - downloads the tarball and checks that its file name is the tag's version;
@@ -100,7 +107,7 @@ The token reads PRs and comments and labels on this repository; the README's [To
 6. A maintainer approves the staged version on npmjs.com. Only then does it go live.
 
 **What stops a direct publish.**
-- **The approval and the token's home.** The workflow's npm token can only stage, and only the stage step gets it, in the job that runs no repository code. A tag runs the workflow file of the commit it names, so someone who can push tags could tag a commit whose workflow drops the checks. What holds against that is the approver comparing the run's SHA with `main`'s (step 5), and `NPM_TOKEN` living in the `npm-release` environment alone.
+- **The approval and the token's home.** The workflow's npm token can only stage, and only the stage step gets it, in the job that runs no repository code. A tag runs the workflow file of the commit it names, so someone who can push tags could tag a commit whose workflow drops the checks. What holds against that is the approver finding the run's SHA in `main`'s first-parent history (step 5), and `NPM_TOKEN` living in the `npm-release` environment alone.
 - **The workflow's checks catch mistakes:**
   - a tag on the wrong commit;
   - a tag that isn't the `package.json` version;

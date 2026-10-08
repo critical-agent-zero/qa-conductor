@@ -7,14 +7,15 @@ name: publish
 # Two jobs, so the token never meets the repository's code:
 # - test checks that the tagged commit was main itself, checks the tag, runs
 #   the tests and packs the tarball, with no secrets and no id-token;
-# - publish waits for a maintainer to approve the npm-release environment,
-#   checks the commit again, checks the tarball, and stages it. It checks out
+# - publish waits for the npm-release environment's approval, checks the
+#   commit again, checks the tarball, and stages it. It checks out
 #   nothing and runs no code from the repository.
 # A tag runs the workflow file of the commit it names, so these checks catch
 # mistakes, and a run's own results, these checks included, prove nothing
 # until its commit is main's. What holds against an edited file is the
-# approver comparing the run's SHA with main's (CONTRIBUTING.md, Releasing,
-# step 5), and NPM_TOKEN living in the npm-release environment alone.
+# approver finding the run's SHA in main's first-parent history
+# (CONTRIBUTING.md, Releasing, step 5), and NPM_TOKEN living in the
+# npm-release environment alone.
 # test/package.test.mjs pins the shape of this file.
 
 on:
@@ -80,7 +81,8 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # A maintainer approves each run. The environment admits v* tags only.
+    # Each run waits for approval (CONTRIBUTING.md, Releasing, step 5). The
+    # environment admits v* tags only.
     environment: npm-release
     permissions:
       contents: read
@@ -89,8 +91,9 @@ jobs:
       # Only a commit that was main itself may be released, as a release's
       # merge commit is: a v* tag on any other commit stops here. That
       # includes a branch's or a pull request's own commit, even once main has
-      # merged it, unless it was rebase-merged, which puts it on main's
-      # first-parent line. Git alone, in a directory of its own: main's
+      # merged it: the main ruleset allows merge and squash merges only, and a
+      # rebase merge, re-enabled, would put a pull request's own commits on
+      # main's first-parent line. Git alone, in a directory of its own: main's
       # history, and no files from the tag. GitHub runs this as bash -e; the
       # first-parent list goes through a file so that it would hold under
       # pipefail too, where grep -q quitting early would fail the pipe.
@@ -134,26 +137,31 @@ jobs:
       # npm applies a tarball's publishConfig to the stage, any key in it: a
       # scoped registry or a proxy there would send the stage, token and all,
       # elsewhere, whatever --registry says. So read the manifest the way the
-      # stage will: with this npm's own pacote.manifest and the options npm's
-      # publish passes it. A second package.json under another directory, a
-      # pax header or an extra gzip member then can't hand npm a manifest this
-      # check didn't see, and no code from the repository runs. Stage only a
-      # tarball whose publishConfig is exactly package.json's.
+      # stage will: with this npm's own pacote.manifest and the same read
+      # options (fullMetadata, fullReadJson); npm's other options only touch
+      # caching and file modes for a tarball. A second package.json under
+      # another directory, a pax header or an extra gzip member then can't
+      # hand npm a manifest this check didn't see, and no code from the
+      # repository runs. It refuses by default, so a read that never settles
+      # refuses too. Stage only a tarball whose publishConfig is exactly
+      # package.json's.
       - name: Check the tarball's publishConfig
         run: |
           node -e '
             const path = require("node:path")
             const { realpathSync } = require("node:fs")
             const { isDeepStrictEqual } = require("node:util")
+            process.exitCode = 1
             const root = path.dirname(path.dirname(realpathSync(process.argv[2])))
             const pacote = require(path.join(root, "node_modules", "pacote"))
             pacote.manifest(`file:${process.argv[1]}`, { fullMetadata: true, fullReadJson: true }).then(manifest => {
-              if (isDeepStrictEqual(manifest.publishConfig, { "access": "public", "provenance": true })) return
+              if (isDeepStrictEqual(manifest.publishConfig, { "access": "public", "provenance": true })) {
+                process.exitCode = 0
+                return
+              }
               console.log("::error::the tarball publishConfig is not exactly {access: public, provenance: true}, and the rest of it would apply to the stage")
-              process.exitCode = 1
             }, err => {
               console.log(`::error::cannot read the tarball manifest: ${err.code ?? err.message}`)
-              process.exitCode = 1
             })
           ' "./release/critical-labs-qa-conductor-${GITHUB_REF_NAME#v}.tgz" "$(command -v npm)"
       # The ./ makes it a file: npm would read release/<name>.tgz as a GitHub
