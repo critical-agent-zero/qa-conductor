@@ -568,6 +568,12 @@ test('the workflow check refuses a publish, a skippable gate, a token or id-toke
   }
   const EARLY_STEP = `      - name: ${ON_MAIN_EARLY}\n`
   const TARBALL_STEP = `      - name: ${TARBALL_CHECK}\n`
+  // A decoy copy of publish's on-main step, hidden in a heredoc at the end of
+  // the tag check's script, and the real one made to pass.
+  const decoyed = text => {
+    const decoy = ['          cat <<\'DECOY\'', `          - name: ${ON_MAIN}`, '            run: |', ...ON_MAIN_SCRIPT.split('\n').map(line => `              ${line}`), '          DECOY']
+    return replaceLast('if ! git merge-base', 'if false && ! git merge-base')(replace(TESTS, `${decoy.join('\n')}\n${TESTS}`)(text))
+  }
   // The on-main step, from its name to the start of the next step.
   const onMainStep = text => {
     const start = text.indexOf(ON_MAIN_STEP)
@@ -581,7 +587,10 @@ test('the workflow check refuses a publish, a skippable gate, a token or id-toke
     'npm pu': after(TESTS, '      - run: npm pu --access public'),
     'npx publish': after(TESTS, '      - run: npx --yes npm@11 publish'),
     'a quoted # before npm publish in a run: | block': after(TESTS, '      - run: |', '          echo "x #" && npm publish --access public'),
-    'npm pub in the tag check\'s script': after('          fi\n', '          npm pub --access public'),
+    // The tag check's script is the one run block not pinned word for word:
+    // these lines land at its end, just before the next step.
+    'npm pub in the tag check\'s script': replace(TESTS, `          npm pub --access public\n${TESTS}`),
+    '"shell": node {0} on the tag check, after its script': replace(TESTS, `        "shell": node {0}\n${TESTS}`),
     'pnpm publish': after(TESTS, '      - run: pnpm publish --no-git-checks'),
     'a third-party publish action': after(TESTS, `      - uses: JS-DevTools/npm-publish@${PIN}`),
     'if: false on the tag check': after(`      - name: ${TAG_CHECK}\n`, '        if: false'),
@@ -602,7 +611,7 @@ test('the workflow check refuses a publish, a skippable gate, a token or id-toke
     'the token on the test job': after('    timeout-minutes: 15\n', '    env:', `      ${TOKEN.trim()}`),
     'the token on the whole publish job': after(ENVIRONMENT, '    env:', `      ${TOKEN.trim()}`),
     'the token on the tests too': after(TESTS, '        env:', TOKEN.trimEnd()),
-    'the token in the tag check\'s script': after('          fi\n', '          echo "${{ secrets.NPM_TOKEN }}"'),
+    'the token in the tag check\'s script': replace(TESTS, `          echo "\${{ secrets.NPM_TOKEN }}"\n${TESTS}`),
     'no environment': replace(ENVIRONMENT, ''),
     'another environment': replace(ENVIRONMENT, '    environment: production\n'),
     'publish without needs': replace('    needs: test\n', ''),
@@ -626,10 +635,7 @@ test('the workflow check refuses a publish, a skippable gate, a token or id-toke
     '\'continue-on-error\': true on the tarball check, quoted': after(TARBALL_STEP, '        \'continue-on-error\': true'),
     '"shell": node {0} on the tarball check': after(TARBALL_STEP, '        "shell": node {0}'),
     'if: false on the early on-main step': after(EARLY_STEP, '        if: false'),
-    'a decoy on-main step in the tag check\'s script, the real one made to pass': text => {
-      const decoy = ['          cat <<\'DECOY\'', `          - name: ${ON_MAIN}`, '            run: |', ...ON_MAIN_SCRIPT.split('\n').map(line => `              ${line}`), '          DECOY']
-      return replaceLast('if ! git merge-base', 'if false && ! git merge-base')(after('          fi\n', ...decoy)(text))
-    },
+    'a decoy on-main step in the tag check\'s script, the real one made to pass': decoyed,
     'npm by version range': replace(NPM_UPGRADE, 'npm install -g npm@^11.15.0'),
     'no registry on the stage': replace(' --access public --registry https://registry.npmjs.org/', ' --access public'),
     'the first-parent list piped into grep -q': replace(
@@ -653,6 +659,9 @@ test('the workflow check refuses a publish, a skippable gate, a token or id-toke
     assert.notEqual(mutated, yaml, what)
     assert.throws(() => assertStagesOnly(mutated), assert.AssertionError, `${what} passes the check`)
   }
+  // The behaviour tests read the scripts they run with stepScript: a decoy
+  // copy of a step must not stand in for the real one there either.
+  assert.throws(() => stepScript(decoyed(yaml), ON_MAIN), /one line names the step/)
 })
 
 test('the workflow\'s tag check passes only for v<package.json version>', { timeout: 30_000 }, async () => {
