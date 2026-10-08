@@ -1319,6 +1319,22 @@ test('an ensureBuilt error\'s run updates buildRun only with string fields, and 
   }
 })
 
+test('a run on an error from a later stage than the build is not taken for the build\'s', async () => {
+  const { c, adapters } = makeWorld()
+  adapters.build.subscribeBuild = cb => { adapters.notify = cb }
+  adapters.build.ensureBuilt = async () => { adapters.notify({ message: 'built' }) }
+  adapters.provisioner.launchServices = async () => {
+    throw Object.assign(new Error('launch failed'), { run: { url: 'https://example.com/runs/1', status: 'completed', conclusion: 'failure' } })
+  }
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const st = await waitFor(async () => { const s = await api(port, 'GET', '/api/state'); return s.status === 'error' && s })
+    assert.equal(st.error.step, 'starting')
+    assert.deepEqual(st.buildRun, { url: null, status: null, conclusion: null, message: 'built' })
+  } finally { c.stop() }
+})
+
 // --- 0.2.0: blocked readiness ---------------------------------------------------
 
 test('/api/prs passes a blocked reason through', async () => {

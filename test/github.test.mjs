@@ -821,6 +821,41 @@ for (const [how, firstTags] of [['rejected', () => []], ['resolved', () => [PREV
   })
 }
 
+// The run is in progress at the first poll and has failed by the next.
+const failsAfterFirstPoll = poll => [previewRun(7, poll < 2 ? {} : { status: 'completed', conclusion: 'failure' })]
+
+test('a wait claims its dispatch as it starts: one that starts while an aborted wait sleeps is not armed', async () => {
+  const ac = new AbortController()
+  let wake = null
+  const w = previewWorld({ runs: failsAfterFirstPoll })
+  await w.gh.dispatchPreviewBuild(41)
+  const first = w.gh.awaitPreviewImage(41, PREVIEW_SHA, { signal: ac.signal, sleepFn: () => new Promise(r => { wake = r }) })
+  while (!wake) await new Promise(r => setImmediate(r))
+  ac.abort() // teardown, while the first wait sleeps
+  const lookups = w.runCalls().length
+  // The PR is opened again at once, and this boot's wait dispatched nothing.
+  await assert.rejects(
+    w.gh.awaitPreviewImage(41, 'd'.repeat(40), { sleepFn: async () => {}, timeoutMs: 30000 }),
+    /^Error: timed out/,
+  )
+  assert.equal(w.runCalls().length, lookups) // it looked up no runs
+  wake()
+  await assert.rejects(first, err => err.name === 'AbortError')
+})
+
+test('a dispatch made during a wait arms the next wait, even in the same second', async () => {
+  const w = previewWorld({ runs: failsAfterFirstPoll })
+  await w.gh.dispatchPreviewBuild(41)
+  // While the first wait sleeps, the PR is dispatched again (the same Date).
+  await assert.rejects(
+    w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: () => w.gh.dispatchPreviewBuild(41) }),
+    /preview build failed/,
+  )
+  const lookups = w.runCalls().length
+  await assert.rejects(w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: async () => {} }), /preview build failed/)
+  assert.ok(w.runCalls().length > lookups, 'the next wait was armed')
+})
+
 test('a digit in the workflow\'s name or the dispatch ref names no PR', async () => {
   // Two runs since the dispatch, neither with a run-name: no telling which is ours.
   const unnamed = { status: 'completed', conclusion: 'failure', name: 'Preview (node 41)' }
