@@ -240,7 +240,7 @@ A boot runs these five seams in order: `ensureBuilt` → per pane (`provisionDat
 | Seam | Members | Owns |
 |---|---|---|
 | **Provisioner** | `provisionDatabase({paneRef, databases, signal}) → {dsn, db}`, `reserveServices({paneRef, services, signal}) → {name: {url, port}}`, `launchServices({paneRef, services, env, reserved, signal})`, `waitHealthy({services, signal})`, `teardown({paneRef})`; optional `runMigrate({paneRef, migrate, env, signal})`, `sweep()`, `logs({paneRef, stage, lines}) → string` (or a promise of one) | Where panes run: databases, processes or containers, ports, env at rest, cleanup |
-| **BuildConvention** | `migrationStrategy` (`'one-shot-image' \| 'on-boot' \| 'none'`), `ensureBuilt(pr, {signal})`, `resolvePrImages(pr)`, `resolveBaseImages()` → `{services: {name: ref}, migrate?, label?}`; optional `subscribeBuild(cb)` with `cb({runUrl?, runStatus?, message?})`, `describePrs(prs) → [{number, status: 'built'\|'building'\|'none'\|'blocked', runUrl, reason?}]` | What gets run for base and PR, whether it's ready, and whether it may run at all |
+| **BuildConvention** | `migrationStrategy` (`'one-shot-image' \| 'on-boot' \| 'none'`), `ensureBuilt(pr, {signal})`, `resolvePrImages(pr)`, `resolveBaseImages()` → `{services: {name: ref}, migrate?, label?}`; optional `subscribeBuild(cb)` with `cb({runUrl?, runStatus?, runConclusion?, message?})`, `describePrs(prs) → [{number, status: 'built'\|'building'\|'none'\|'blocked', runUrl, reason?}]` | What gets run for base and PR, whether it's ready, and whether it may run at all |
 | **Seed** | `databases`, `seedPane({paneRef, db, databases})` | Where each pane's data comes from and how it moves |
 | **EnvTransform** | `derivePaneEnv({prodEnv, pane}) → {service: env}` (pure) | Pointing a pane at its own DB and origin, and neutralizing side effects (email, payments, storage) |
 | **AuthBootstrap** | `requiresDb`, `establishSession({pane, operator, db?}) → {landingUrl}`; optional `envContributions() → {service: env}` | Getting the reviewer logged in to each pane |
@@ -262,7 +262,7 @@ What the seams pass each other. Any method above may return its result or a prom
 - **Pane**: `{ ref, dsn, db, services, publicOrigin, env }`. `ref` is the PaneRef, `dsn` and `db` come from `provisionDatabase`, `services` is the Reserved map, and `env` is the pane's env. `derivePaneEnv` gets the pane before it has an `env`; `establishSession` gets it whole.
 - **PaneEnv**: `{ service: { KEY: value } }`, from `derivePaneEnv`. **EnvContributions**, the same shape from `auth.envContributions()`, is merged over it service by service. `runMigrate` and `launchServices` get the result as `env`.
 - **SessionResult**: `{ landingUrl }`, from `establishSession`: the URL the harness loads in the pane's frame. The core reads nothing else from it, so a session cookie must reach the pane's jar as a `Set-Cookie` the landing URL answers with (see below).
-- **BuildEvent**: `{ runUrl?, runStatus?, message? }`, what `subscribeBuild`'s callback gets.
+- **BuildEvent**: `{ runUrl?, runStatus?, runConclusion?, message? }`, what `subscribeBuild`'s callback gets.
 - **Readiness**: `{ number, status, runUrl, reason? }`, one per PR from `describePrs`, with `status` one of `'built'`, `'building'`, `'none'` and `'blocked'`.
 
 ### Contracts between the seams
@@ -270,7 +270,7 @@ What the seams pass each other. Any method above may return its result or a prom
 - **`db` is opaque to the core.** Whatever `provisionDatabase` returns as `db` is passed unchanged to `seedPane` and (when `requiresDb`) to `establishSession`. Its shape is a contract among a consumer's own adapters.
 - **Cancellation (`signal`).** Teardown and takeover abort the in-flight boot. The core checks the signal between stages, at the top of each pane's provisioning, before each `launchServices` and before the `waitHealthy` loop. It also passes the signal to `ensureBuilt` and to every Provisioner call above, so a long wait can stop early. Provisioners may ignore it (the Docker one does). An aborted boot never tears anything down, even when the abort lands while its failure log tail is being read: whoever aborted it already did.
 - **Startup sweep.** The conductor calls `sweep()` once, at startup. A boot started before it settles waits for it before `ensureBuilt`, so the sweep can't remove the new session's panes. While it waits, the harness shows `waiting for startup cleanup…` under the first boot step, then `startup cleanup done`, and counts the wait in that step's time and the boot's. There is no timeout. A failed sweep is logged and doesn't block boots, even one that throws synchronously or rejects with something other than an `Error`. A teardown or takeover during the wait cancels the waiting boot, as it would at any other point.
-- **Build progress.** `subscribeBuild(cb)` payloads are `{runUrl?, runStatus?, message?}`. The harness shows `message` (plain text, e.g. `installing dependencies for #12 (abc1234)…`) under the first boot step, else a summary of the run's status, and links the run when `runUrl` is `https://`. `/api/state` returns the latest as `buildRun: {url, status, message}`.
+- **Build progress.** `subscribeBuild(cb)` payloads are `{runUrl?, runStatus?, runConclusion?, message?}`. The harness shows `message` (plain text, e.g. `installing dependencies for #12 (abc1234)…`) under the first boot step, else a summary of the run's status that names a `completed` run's conclusion when it isn't `success` (`Build ended: failure`), and links the run when `runUrl` is `https://`. `/api/state` returns the latest as `buildRun: {url, status, conclusion, message}`. A boot that fails at `ensuring-image` with an error that carries `run: {url, status, conclusion}`, as `awaitPreviewImage`'s does, gets that run as its last build event before the error, so `buildRun` and the error's run link show the run that failed. Only string fields are kept, and only when there is a `url` or a `status`.
 - **`blocked`.** `describePrs` may report a PR as `blocked`, with a plain-text `reason` (for example, an untrusted author or a head branch in someone else's fork). The picker shows it as `can't boot: <reason>`. Opening the PR is still allowed, because `ensureBuilt` is the real gate. `describePrs` receives `listOpenPrs()` items, or for `/api/build-status` an item built from `github.prInfo(pr)` (`{number, headSha, author, authorAssociation, headRepo, headOwner}`), falling back to `{number, headSha}` from `prHead` when `github` has no `prInfo`.
 - **Display `label`.** `resolveBaseImages` / `resolvePrImages` may return a `label` string, used as the pane's tag instead of the primary service's ref (`app`, else the first service). The label appears in the harness header and in the **public** verdict comment. Consumers whose service refs are local paths or objects must set one, so no path or object leaks into the PR. It must not contain `:`.
 - **Failure log tails.** When a boot fails at a pane stage (`cloning`, `migrating`, `starting`), the core calls `logs({paneRef: {role}, stage, lines: 40})` for the failing pane *before* tearing the panes down, and attaches the result to the error as `err.logTail` (with the pane's role as `err.failedRole`). An error that already carries a string `logTail` keeps it, so a BuildConvention can attach its own tail to an `ensuring-image` failure (for example, installer output). The harness shows the tail under the error.
@@ -448,14 +448,19 @@ Its limits:
 | `packagesToken` | `token` | the GHCR package version listing only (`cfg.ghcrToken`) |
 | `packageName` | `null` | the container package the GHCR helpers read; they throw without it |
 | `rcTagPattern` | `/-rc\.\d+$/` | which tags `latestRcTag()` counts as release candidates |
-| `previewWorkflow` | `'pr-preview.yml'` | the workflow `dispatchPreviewBuild(num)` runs, with the input `pr`, and `findPreviewRun(num)` reads |
+| `previewWorkflow` | `'pr-preview.yml'` | the workflow `dispatchPreviewBuild(num)` runs, with the input `pr`, and whose runs `findPreviewRun(num)` and `awaitPreviewImage` read |
 | `previewRef` | `'main'` | the ref that workflow is dispatched on |
 | `fetchFn` | `fetch` | |
 
 - `listOpenPrs()` returns at most the 50 most recently opened PRs: it reads one page.
 - `headRepo` (`owner/name`) and `headOwner` are `null` when the head repository was deleted.
 - `authorPermission(login)` returns the login's `admin`, `write`, `read` or `none` permission on the repo, and throws on a non-2xx response. `author_association` alone is no access check: `COLLABORATOR` includes read-only outside collaborators.
-- The GHCR and preview-build helpers are for a BuildConvention that runs CI-built images: `ghcrTagExists(tag)`, `latestRcTag()`, `listPrImageTags()`, `awaitPreviewImage(num, sha, { timeoutMs, pollMs, signal })`, which waits for the tag `pr-<num>-<the sha's first 12 characters>`, `dispatchPreviewBuild(num)` and `findPreviewRun(num)`. They read a package that the token's own user owns, not an organization's.
+- The GHCR and preview-build helpers are for a BuildConvention that runs CI-built images: `ghcrTagExists(tag)`, `latestRcTag()`, `listPrImageTags()`, `awaitPreviewImage(num, sha, { timeoutMs, pollMs, signal, migrate, onRun })`, `dispatchPreviewBuild(num)` and `findPreviewRun(num)`. They read a package that the token's own user owns, not an organization's.
+- `awaitPreviewImage` polls every `pollMs` (15000) for up to `timeoutMs` (900000) for the tag `pr-<num>-<the sha's first 12 characters>`, and with `migrate: true` for its `migrate-<tag>` companion too, then resolves with the tag.
+  - **The dispatched run.** The first wait for a PR that starts after this client's `dispatchPreviewBuild(num)` resolves also looks up the run that dispatch started, on each poll that misses a tag. The wait claims the dispatch as it starts, so the dispatch arms no other wait. If that run completes with any conclusion but `success`, the wait rejects at once with `preview build failed (conclusion: <conclusion>): <run url>`, and the error carries the run as `err.run`. A `success` keeps the wait polling, since GHCR can lag the run.
+  - **Which run is the dispatch's.** Only `workflow_dispatch` runs created in or after the second the dispatch was accepted count, so a run created in an earlier second never does. The time comes from the dispatch response's `Date` header (GitHub's clock), else the local clock. Of those runs, the dispatch's is the earliest whose `run-name` names the PR. Failing that, it is the only one, if that run has no `run-name`, since its title is then just the workflow's name. A workflow whose `run-name` holds the PR number, such as `run-name: Preview #${{ inputs.pr }}`, lets the run be told apart even when other dispatches run at the same time.
+  - **Otherwise it just polls GHCR.** That happens while the run can't be told apart, after a failed lookup, and in every other wait for the PR, such as one for a build this client didn't dispatch.
+  - **`onRun(run)`** hears the run, in `findPreviewRun`'s shape `{url, status, conclusion, startedAt}`, each time the run taken for the dispatch's changes, or its status or conclusion does. A throw or rejection in `onRun` is ignored. Pass `onRun` on to the `subscribeBuild` callback as `runUrl`, `runStatus` and `runConclusion`, and `buildRun` follows the run while the wait lasts. Without it, the core still shows a failed run, from `err.run` (see [Build progress](#contracts-between-the-seams)).
 
 **`docker`.** `createDocker({ execFileFn, label, postgres })` runs the `docker` CLI for the Docker Provisioner, and for a Seed that copies databases between containers:
 
@@ -586,7 +591,7 @@ That layout is tailscale mode: every server listens on loopback and answers only
 Some built-ins need more than this token:
 - `adapters/build-worktree` fetches with plain `git` over https, so a private repository needs a git credential helper that can read it.
 - `createGithub`'s GHCR helpers list container package versions, which a fine-grained token can't. Set `QA_GHCR_TOKEN` to a classic token with `read:packages`, and pass `createGithub` the `packageName`.
-- A BuildConvention that dispatches preview builds with `createGithub`'s `dispatchPreviewBuild` and `findPreviewRun` needs Actions: read and write.
+- A BuildConvention that dispatches preview builds with `createGithub`'s `dispatchPreviewBuild`, and reads their runs with `findPreviewRun` or `awaitPreviewImage`, needs Actions: read and write.
 
 ### Keys
 
@@ -626,7 +631,7 @@ It can leave out `operatorEmail`, `publicHost`, `host` (loopback is the default)
 | | |
 |---|---|
 | `GET /` | harness UI |
-| `GET /api/state` | session status, tags, `buildRun: {url, status, message}`, pane login URLs + origins, `harnessOrigin` |
+| `GET /api/state` | session status, tags, `buildRun: {url, status, conclusion, message}`, pane login URLs + origins, `harnessOrigin` |
 | `GET /api/prs` | open PRs with build readiness (`imageStatus`, `runUrl`, `reason`) |
 | `GET /api/build-status?pr=N` | `{pr, status, exists, runUrl}`, plus `reason` when `status` is `blocked` |
 | `GET /api/exposure` | the last [exposure](#exposure-optional) reconcile pass: `{mode, managed, ok, checkedAt, drift, added, error}`. Read-only: it never calls the front door. With no adapter, `managed` is `false` and `ok` and `checkedAt` are `null` |
