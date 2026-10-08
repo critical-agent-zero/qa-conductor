@@ -148,6 +148,21 @@ test('Tailscale identity headers never reach the pane app', async (t) => {
   }
 })
 
+// The identity gate's marker is the conductor's to send. A pane app (PR code)
+// that sets it must not make an ungated pane look gated to the expose CLI.
+test('a pane app\'s X-QA-Refusal never reaches the client', async (t) => {
+  const { proxyPort } = await setup(t, (req, res) => {
+    res.statusCode = 403
+    res.setHeader('x-qa-refusal', 'identity')
+    res.setHeader('x-other', 'kept')
+    res.end('nope')
+  })
+  const res = await request(proxyPort, '/')
+  assert.equal(res.status, 403)
+  assert.equal(res.headers['x-qa-refusal'], undefined)
+  assert.equal(res.headers['x-other'], 'kept')
+})
+
 // --- cookie jar -----------------------------------------------------------
 
 test('absorbs Set-Cookie into the jar, replays it upstream, honors deletions', async (t) => {

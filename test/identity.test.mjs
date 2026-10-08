@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 
-import { identityGate, isAllowed, normalizeLogins, refusalReason } from '../lib/identity.mjs'
+import { identityGate, isAllowed, isIdentityRefusal, normalizeLogins, refusalReason } from '../lib/identity.mjs'
 
 const ALLOWED = ['alice@github', 'Bob@Example.com']
 const as = login => ({ 'tailscale-user-login': login })
@@ -77,4 +77,39 @@ test('identityGate serves an allowed login and 403s the rest without calling the
     assert.match((await get(server, as('mallory@github'))).body, /^403: mallory@github is not in QA_ALLOWED_LOGINS/)
     assert.equal(calls, 1)
   } finally { server.close() }
+})
+
+// The expose CLI tells the gate's 403 from any other by this header, never by
+// the body text, which is for people and may change.
+test('the gate\'s 403 says so in X-QA-Refusal: identity, and a request it serves carries no such header', async () => {
+  const server = await serve((req, res) => res.end('inner'))
+  try {
+    for (const headers of [{}, as('mallory@github')]) {
+      const res = await get(server, headers)
+      assert.equal(res.status, 403)
+      assert.equal(res.headers.get('x-qa-refusal'), 'identity')
+      assert.equal(isIdentityRefusal(res), true)
+    }
+    const served = await get(server, as('alice@github'))
+    assert.equal(served.headers.get('x-qa-refusal'), null)
+    assert.equal(isIdentityRefusal(served), false)
+  } finally { server.close() }
+})
+
+test('isIdentityRefusal: a 403 with X-QA-Refusal: identity, and nothing else', () => {
+  const res = (status, headers = {}) => ({ status, headers: new Headers(headers) })
+  assert.equal(isIdentityRefusal(res(403, { 'x-qa-refusal': 'identity' })), true)
+  assert.equal(isIdentityRefusal(res(403, { 'X-QA-Refusal': ' Identity ' })), true)
+  for (const [status, headers] of [
+    [403, {}],
+    [403, { 'x-qa-refusal': 'host' }],
+    [403, { 'x-qa-refusal': 'identity, identity' }],
+    [200, { 'x-qa-refusal': 'identity' }],
+    [401, { 'x-qa-refusal': 'identity' }],
+  ]) {
+    assert.equal(isIdentityRefusal(res(status, headers)), false, `${status} ${JSON.stringify(headers)}`)
+  }
+  for (const odd of [null, undefined, {}, { status: 403 }, { status: 403, headers: {} }]) {
+    assert.equal(isIdentityRefusal(odd), false, JSON.stringify(odd))
+  }
 })

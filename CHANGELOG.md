@@ -18,6 +18,19 @@ What changed in each release, newest first. A 0.x minor version may break the in
   - **Live progress:** `awaitPreviewImage` takes `onRun(run)`, which hears the dispatched run as it changes. A BuildConvention that passes `onRun` on to `subscribeBuild`'s callback shows the run's progress while the wait lasts.
   - **Harness text:** the harness names a completed run's conclusion when it isn't `success`, as in `Build ended: failure`, where it said `Build complete`.
 
+### The expose CLI
+
+- **A plain run publishes only a gated conductor.** `qa-conductor-expose` without `--check` mounted whatever listened on the configured ports. That could be the demo, a conductor in none mode, another server, or nothing yet. Nothing removes a mount, so it went on publishing that port, with no identity gate, to the tailnet.
+  - **The check:** before it writes, it now sends each target a request over loopback with no `Tailscale-User-Login`: `GET /qa/api/state` on the harness port, `GET /` on each pane port. It expects the identity gate's `403`, by its `X-QA-Refusal: identity` header.
+  - **All or nothing:** if any target answers otherwise, doesn't answer within 5 seconds, or has nothing listening, it writes no mount and runs no `tailscale` command. It exits `2` with a line for each such target, such as `qa exposure: 127.0.0.1:3101 (base) is not a gated conductor (got 200); refusing to publish it`, and one saying what to do.
+  - **Unchanged:** `--check` and the conductor's own reconcile loop send no such requests.
+  - **Scope:** the check guards against a wrong env file or a stopped conductor, not against another process on this host, which could send the same header. It checks that each target is gated, not which conductor or which role each one is.
+  - **What breaks:** a script that ran a plain pass with no conductor up now fails. So does a plain pass against a conductor older than this release, whose gate doesn't send the header: upgrade the conductor first.
+- **The identity gate's `403` carries `X-QA-Refusal: identity`**, so a client can tell it from any other `403` without reading the body text. `./identity` exports `isIdentityRefusal(res)`, which recognises it. The pane proxies drop an `X-QA-Refusal` from the pane app's responses, so PR code can't make an ungated pane look gated.
+- **`runExpose` takes `fetchFn` and `probeTimeoutMs`.**
+  - **`fetchFn`** sends those requests. It is fetch-shaped, and the default is plain HTTP over `node:http`, since `fetch` refuses some ports a conductor may listen on (`6000` and `10080`, among others).
+  - **`probeTimeoutMs`** defaults to `5000`. Any value but a whole number of milliseconds from 1 to 2147483647 returns `2`.
+
 ## [0.3.1] — 2026-10-07
 
 Cookie isolation for the panes, a stricter `.env.qa` parser, seams that may be async, and the documentation a public package needs: a README to start from, `CONTRIBUTING.md` and `SECURITY.md`. It is a patch release, but its cookie and `.env.qa` fixes break consumers that relied on what 0.3.0 did: read [Migrating from 0.3.0](#migrating-from-030) before upgrading.
