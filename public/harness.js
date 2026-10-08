@@ -39,6 +39,11 @@ function buildSummary({ url, status, conclusion, message } = {}) {
   return conclusion && conclusion !== 'success' ? `Build ended: ${String(conclusion).replace(/_/g, ' ')}` : 'Build complete'
 }
 
+// An SSE `build` event, in buildRun's shape.
+function buildFromEvent(e) {
+  return { url: e.runUrl, status: e.runStatus, conclusion: e.runConclusion, message: e.message }
+}
+
 ;(() => {
   if (typeof window === 'undefined') return
   const $ = id => document.getElementById(id)
@@ -294,7 +299,7 @@ function buildSummary({ url, status, conclusion, message } = {}) {
     es.onmessage = ev => {
       const e = JSON.parse(ev.data)
       if (e.kind === 'step') markStep(e.step, e.at)
-      else if (e.kind === 'build') setBuildSub({ url: e.runUrl, status: e.runStatus, conclusion: e.runConclusion, message: e.message })
+      else if (e.kind === 'build') setBuildSub(buildFromEvent(e))
       else if (e.kind === 'ready') { closeSse(); onReady(e) }
       else if (e.kind === 'error') showBootError(e)
       else if (e.kind === 'torn-down') { closeSse(); go('#/') }
@@ -548,5 +553,5 @@ function buildSummary({ url, status, conclusion, message } = {}) {
 // --- test exports (node --test evaluates this file through a CJS wrapper) ---
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { esc, isHttpsUrl, LABELS, harnessOriginNotice, buildSummary }
+  module.exports = { esc, isHttpsUrl, LABELS, harnessOriginNotice, buildSummary, buildFromEvent }
 }

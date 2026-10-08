@@ -11,10 +11,17 @@ import { dirname, join } from 'node:path'
 const harnessPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'harness.js')
 const cjsModule = { exports: {} }
 new Function('module', 'exports', readFileSync(harnessPath, 'utf8'))(cjsModule, cjsModule.exports)
-const { esc, isHttpsUrl, LABELS, harnessOriginNotice, buildSummary } = cjsModule.exports
+const { esc, isHttpsUrl, LABELS, harnessOriginNotice, buildSummary, buildFromEvent } = cjsModule.exports
 
 test('the CJS guard exports the pure helpers only', () => {
-  assert.deepEqual(Object.keys(cjsModule.exports).sort(), ['LABELS', 'buildSummary', 'esc', 'harnessOriginNotice', 'isHttpsUrl'])
+  assert.deepEqual(Object.keys(cjsModule.exports).sort(), ['LABELS', 'buildFromEvent', 'buildSummary', 'esc', 'harnessOriginNotice', 'isHttpsUrl'])
+})
+
+test('buildFromEvent reads an SSE build event as buildRun\'s shape, conclusion included', () => {
+  const url = 'https://github.com/acme/widget/actions/runs/7'
+  const ev = { at: 1, kind: 'build', runUrl: url, runStatus: 'completed', runConclusion: 'failure', message: null }
+  assert.deepEqual(buildFromEvent(ev), { url, status: 'completed', conclusion: 'failure', message: null })
+  assert.equal(buildSummary(buildFromEvent(ev)), 'Build ended: failure')
 })
 
 test('buildSummary: the message, else the run\'s status, naming a conclusion other than success', () => {

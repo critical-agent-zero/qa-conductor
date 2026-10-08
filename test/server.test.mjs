@@ -1253,6 +1253,72 @@ test('a preview run that fails ends the boot at ensuring-image, and buildRun kee
   } finally { c.stop() }
 })
 
+// The same, for a BuildConvention written before onRun: it surfaced one
+// findPreviewRun snapshot right after dispatching, before GitHub listed the
+// new run, so the snapshot is an older run. The failure's err.run still lands
+// in buildRun, and the error's run link is the run that failed.
+test('a failed preview run reaches buildRun and the error event through err.run, with no onRun', async () => {
+  const OLD = 'https://github.com/acme/widget/actions/runs/3'
+  const RUN = 'https://github.com/acme/widget/actions/runs/7'
+  let polls = 0
+  const reply = (status, body, headers = {}) => ({ ok: true, status, headers: new Headers(headers), json: async () => body, text: async () => '' })
+  const fetchFn = async url => {
+    if (url.endsWith('/dispatches')) return reply(204, null, { date: 'Wed, 07 Oct 2026 12:00:00 GMT' })
+    if (url.includes('/user/packages/')) { polls += 1; return reply(200, []) }
+    if (url.includes('/runs?')) {
+      const old = { id: 3, html_url: OLD, event: 'workflow_dispatch', created_at: '2026-10-07T11:00:00Z', name: 'Preview', display_title: 'Preview', head_branch: 'main', status: 'completed', conclusion: 'failure' }
+      const ours = { id: 7, html_url: RUN, event: 'workflow_dispatch', created_at: '2026-10-07T12:00:03Z', name: 'Preview', display_title: 'Preview', head_branch: 'main', status: 'completed', conclusion: 'failure' }
+      return reply(200, { workflow_runs: polls === 0 ? [old] : [ours, old] })
+    }
+    throw new Error(`unexpected ${url}`)
+  }
+  const gh = createGithub({ token: 't', repo: 'acme/widget', fetchFn, packageName: 'widget' })
+  const { c, adapters } = makeWorld()
+  let onBuild = null
+  adapters.build.subscribeBuild = cb => { onBuild = cb }
+  adapters.build.ensureBuilt = async (pr, { signal } = {}) => {
+    await gh.dispatchPreviewBuild(pr)
+    const run = await gh.findPreviewRun(pr)
+    onBuild({ runUrl: run.url, runStatus: run.status })
+    await gh.awaitPreviewImage(pr, 'a'.repeat(40), { signal, sleepFn: async () => {} })
+  }
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const st = await waitFor(async () => { const s = await api(port, 'GET', '/api/state'); return s.status === 'error' && s })
+    assert.deepEqual(st.error, { step: 'ensuring-image', message: `preview build failed (conclusion: failure): ${RUN}` })
+    assert.deepEqual(st.buildRun, { url: RUN, status: 'completed', conclusion: 'failure', message: null })
+    const events = await sseEvents(port, evs => evs.some(e => e.kind === 'error'))
+    const builds = events.filter(e => e.kind === 'build').map(e => [e.runUrl, e.runStatus, e.runConclusion])
+    assert.deepEqual(builds, [[OLD, 'completed', null], [RUN, 'completed', 'failure']])
+    const error = events.find(e => e.kind === 'error')
+    assert.equal(error.runUrl, RUN)
+    assert.ok(events.indexOf(error) > events.findLastIndex(e => e.kind === 'build'), 'the run is broadcast before the error')
+  } finally { c.stop() }
+})
+
+test('an ensureBuilt error\'s run updates buildRun only with string fields, and only when it names a run', async () => {
+  for (const [run, want] of [
+    [{ url: 'https://github.com/acme/widget/actions/runs/9', status: 'completed', conclusion: 'cancelled', extra: 1 }, { url: 'https://github.com/acme/widget/actions/runs/9', status: 'completed', conclusion: 'cancelled', message: null }],
+    [{ url: 42, status: 'completed', conclusion: { x: 1 } }, { url: null, status: 'completed', conclusion: null, message: null }],
+    ['not an object', { url: null, status: null, conclusion: null, message: 'before' }],
+    [{ conclusion: 'failure' }, { url: null, status: null, conclusion: null, message: 'before' }],
+  ]) {
+    const { c, adapters } = makeWorld()
+    adapters.build.subscribeBuild = cb => { adapters.notify = cb }
+    adapters.build.ensureBuilt = async () => {
+      adapters.notify({ message: 'before' })
+      throw Object.assign(new Error('build failed'), { run })
+    }
+    try {
+      const port = await harnessPort(c)
+      await api(port, 'POST', '/api/session', { pr: 7 })
+      const st = await waitFor(async () => { const s = await api(port, 'GET', '/api/state'); return s.status === 'error' && s })
+      assert.deepEqual(st.buildRun, want, JSON.stringify(run))
+    } finally { c.stop() }
+  }
+})
+
 // --- 0.2.0: blocked readiness ---------------------------------------------------
 
 test('/api/prs passes a blocked reason through', async () => {

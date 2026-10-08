@@ -525,11 +525,11 @@ const RUN_URL = id => `https://github.com/acme/widget/actions/runs/${id}`
 // A workflow run as GitHub lists it. By default, a run the dispatch started two
 // seconds after DISPATCHED_AT, of a workflow with no run-name: its title is the
 // workflow's name, so it doesn't name the PR.
-function previewRun(id, { status = 'in_progress', conclusion = null, createdAt = '2026-10-07T12:00:02Z', title = 'PR Preview Images', event = 'workflow_dispatch' } = {}) {
+function previewRun(id, { status = 'in_progress', conclusion = null, createdAt = '2026-10-07T12:00:02Z', name = 'PR Preview Images', title = name, headBranch = 'main', event = 'workflow_dispatch' } = {}) {
   return {
     id, html_url: RUN_URL(id), status, conclusion, event,
     created_at: createdAt, run_started_at: createdAt,
-    display_title: title, head_branch: 'main', name: 'PR Preview Images',
+    display_title: title, head_branch: headBranch, name,
   }
 }
 
@@ -765,6 +765,90 @@ test('without a Date header on the dispatch response, the local clock marks the 
   const fresh = previewWorld({ date: null, runs: failedAt(60_000) })
   await fresh.gh.dispatchPreviewBuild(41)
   await assert.rejects(fresh.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: fresh.sleepFn }), /preview build failed \(conclusion: failure\)/)
+})
+
+// GitHub reports created_at to the second, so the local fallback truncates to
+// the second too: a run created later in the dispatch's own second counts.
+test('without a Date header, the local clock marks the dispatch to the second', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-07T12:00:00.700Z') })
+  const w = previewWorld({ date: null, runs: () => [previewRun(7, { status: 'completed', conclusion: 'failure', createdAt: '2026-10-07T12:00:00Z' })] })
+  await w.gh.dispatchPreviewBuild(41)
+  await assert.rejects(w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn }), { message: `preview build failed (conclusion: failure): ${RUN_URL(7)}` })
+})
+
+test('onRun hears it when the run taken for the dispatch\'s changes', async () => {
+  // At first the only run since the dispatch, with no run-name, is taken for
+  // ours; once a run whose run-name names the PR is listed, that one is.
+  const w = previewWorld({
+    runs: poll => [
+      ...(poll >= 2 ? [previewRun(8, { title: 'Preview #41', createdAt: '2026-10-07T12:00:03Z' })] : []),
+      previewRun(9, { createdAt: '2026-10-07T12:00:01Z' }),
+    ],
+    tags: poll => (poll >= 3 ? [PREVIEW_TAG] : []),
+  })
+  const heard = []
+  await w.gh.dispatchPreviewBuild(41)
+  await w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn, onRun: run => { heard.push(run.url) } })
+  assert.deepEqual(heard, [RUN_URL(9), RUN_URL(8)])
+})
+
+test('the rejection carries the run, so a caller can show it', async () => {
+  const w = previewWorld({ runs: () => [previewRun(7, { status: 'completed', conclusion: 'failure' })] })
+  await w.gh.dispatchPreviewBuild(41)
+  const err = await w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn }).catch(e => e)
+  assert.match(err.message, /^preview build failed/)
+  assert.deepEqual(err.run, { url: RUN_URL(7), status: 'completed', conclusion: 'failure', startedAt: '2026-10-07T12:00:02Z' })
+})
+
+// A dispatch arms the next wait for its PR only: a later wait that dispatched
+// nothing (the next commit's build started some other way, say) must never be
+// ended by the earlier dispatch's failed run.
+for (const [how, firstTags] of [['rejected', () => []], ['resolved', () => [PREVIEW_TAG]]]) {
+  test(`a dispatch arms only the next wait for its PR (that wait ${how})`, async () => {
+    const nextSha = 'd'.repeat(40)
+    const nextTag = `pr-41-${'d'.repeat(12)}`
+    let first = true
+    const w = previewWorld({
+      runs: () => [previewRun(7, { status: 'completed', conclusion: 'failure' })],
+      tags: poll => (first ? firstTags(poll) : poll >= 4 ? [nextTag] : []),
+    })
+    await w.gh.dispatchPreviewBuild(41)
+    await w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn }).catch(() => {})
+    first = false
+    const lookups = w.runCalls().length
+    assert.equal(await w.gh.awaitPreviewImage(41, nextSha, { sleepFn: w.sleepFn }), nextTag)
+    assert.equal(w.runCalls().length, lookups) // the second wait looked up no runs
+  })
+}
+
+test('a digit in the workflow\'s name or the dispatch ref names no PR', async () => {
+  // Two runs since the dispatch, neither with a run-name: no telling which is ours.
+  const unnamed = { status: 'completed', conclusion: 'failure', name: 'Preview (node 41)' }
+  const w = previewWorld({
+    runs: () => [
+      previewRun(8, { ...unnamed, createdAt: '2026-10-07T12:00:03Z', headBranch: 'release-41' }),
+      previewRun(7, unnamed),
+    ],
+  })
+  await w.gh.dispatchPreviewBuild(41)
+  await assert.rejects(w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn, timeoutMs: 30000 }), /^Error: timed out/)
+
+  // the only one is still the dispatch's
+  const lone = previewWorld({ runs: () => [previewRun(7, unnamed)] })
+  await lone.gh.dispatchPreviewBuild(41)
+  await assert.rejects(lone.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: lone.sleepFn }), { message: `preview build failed (conclusion: failure): ${RUN_URL(7)}` })
+})
+
+test('of two runs created in the same second that name the PR, the lower id is the earlier', async () => {
+  const at = '2026-10-07T12:00:02Z'
+  const w = previewWorld({
+    runs: () => [
+      previewRun(12, { title: 'Preview #41', createdAt: at }),
+      previewRun(11, { title: 'Preview #41', createdAt: at, status: 'completed', conclusion: 'failure' }),
+    ],
+  })
+  await w.gh.dispatchPreviewBuild(41)
+  await assert.rejects(w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn }), { message: `preview build failed (conclusion: failure): ${RUN_URL(11)}` })
 })
 
 test('an abort during the runs lookup ends the wait as an abort, not a build failure', async () => {
