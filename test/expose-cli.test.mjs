@@ -8,11 +8,13 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import http from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { runExpose } from '../lib/exposure.mjs'
+import { identityGate } from '../lib/identity.mjs'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BIN = path.join(ROOT, 'bin', 'qa-conductor-expose.mjs')
@@ -37,6 +39,55 @@ function recordLog() {
   return { lines, log: { log: line => lines.push(['out', line]), error: line => lines.push(['err', line]) } }
 }
 
+// The identity gate's refusal, as a conductor in tailscale mode answers a
+// request with no Tailscale identity.
+const refusal = () => new Response('403: no Tailscale identity\n', { status: 403, headers: { 'x-qa-refusal': 'identity' } })
+const gatedFetch = async () => refusal()
+
+// runExpose with every target answering as a gated conductor, for the tests
+// about what comes after the probe.
+const expose = opts => runExpose({ fetchFn: gatedFetch, ...opts })
+
+// A fetchFn that records each request and answers by the target's port:
+// `answers[port]` is a Response, or a function of the request's init that
+// returns (or rejects) one. Unlisted ports answer as the gate does.
+function probeFetch(answers = {}) {
+  const calls = []
+  const fetchFn = async (url, init = {}) => {
+    calls.push({ url, init })
+    const answer = answers[new URL(url).port]
+    return typeof answer === 'function' ? answer(init) : (answer ?? refusal())
+  }
+  return { calls, fetchFn }
+}
+
+// What fetch rejects with when nothing listens on the port.
+const refused = port => Object.assign(new TypeError('fetch failed'), {
+  cause: Object.assign(new Error(`connect ECONNREFUSED 127.0.0.1:${port}`), { code: 'ECONNREFUSED' }),
+})
+
+// Real loopback targets on free ports, one per kind: 'gated' answers as the
+// identity gate does, 'open' serves anyone, 'closed' has nothing listening.
+async function targets(kinds) {
+  const servers = []
+  const ports = []
+  for (const kind of kinds) {
+    const handler = (req, res) => res.end('{"status":"idle"}')
+    const server = http.createServer(kind === 'gated' ? identityGate(handler, ['a@github']) : handler)
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    ports.push(server.address().port)
+    if (kind === 'closed') await new Promise(resolve => server.close(resolve))
+    else servers.push(server)
+  }
+  const close = () => {
+    for (const server of servers) {
+      server.closeAllConnections()
+      server.close()
+    }
+  }
+  return { ports, close }
+}
+
 // A fake adapter that records its calls. `drift` is what check reports.
 function fakeExposure({ drift = [], added = [], ensureFails = null } = {}) {
   const calls = []
@@ -57,8 +108,8 @@ function fakeExposure({ drift = [], added = [], ensureFails = null } = {}) {
 test('none: 0, no adapter calls', async () => {
   const exposure = fakeExposure()
   const { lines, log } = recordLog()
-  assert.equal(await runExpose({ cfg: { ...CFG, exposure: 'none' }, exposure, log }), 0)
-  assert.equal(await runExpose({ cfg: { ...CFG, exposure: 'none' }, exposure, checkOnly: true, log }), 0)
+  assert.equal(await expose({ cfg: { ...CFG, exposure: 'none' }, exposure, log }), 0)
+  assert.equal(await expose({ cfg: { ...CFG, exposure: 'none' }, exposure, checkOnly: true, log }), 0)
   assert.deepEqual(exposure.calls, [])
   assert.deepEqual(lines, [['out', 'qa exposure: QA_EXPOSURE=none, nothing to do'], ['out', 'qa exposure: QA_EXPOSURE=none, nothing to do']])
 })
@@ -67,7 +118,7 @@ test('check-only with drift: 1, no ensure', async () => {
   const drift = [{ mount: MOUNTS[1], actual: null }, { mount: MOUNTS[2], actual: 'http://127.0.0.1:9' }]
   const exposure = fakeExposure({ drift })
   const { lines, log } = recordLog()
-  assert.equal(await runExpose({ cfg: CFG, exposure, checkOnly: true, log }), 1)
+  assert.equal(await expose({ cfg: CFG, exposure, checkOnly: true, log }), 1)
   assert.deepEqual(exposure.calls, [['check', MOUNTS]])
   assert.deepEqual(lines, [
     ['err', 'qa exposure: drift 8443/: want http://127.0.0.1:3101, have nothing'],
@@ -78,7 +129,7 @@ test('check-only with drift: 1, no ensure', async () => {
 test('ensured and clean: 0, mounted lines printed', async () => {
   const exposure = fakeExposure({ added: [MOUNTS[0], MOUNTS[2]] })
   const { lines, log } = recordLog()
-  assert.equal(await runExpose({ cfg: CFG, exposure, log }), 0)
+  assert.equal(await expose({ cfg: CFG, exposure, log }), 0)
   assert.deepEqual(exposure.calls, [['ensure', MOUNTS], ['check', MOUNTS]])
   assert.deepEqual(lines, [
     ['out', 'qa exposure: mounted 8444/qa -> http://127.0.0.1:3100'],
@@ -88,28 +139,28 @@ test('ensured and clean: 0, mounted lines printed', async () => {
 
   // nothing to add: only the ok line
   const quiet = recordLog()
-  assert.equal(await runExpose({ cfg: CFG, exposure: fakeExposure(), log: quiet.log }), 0)
+  assert.equal(await expose({ cfg: CFG, exposure: fakeExposure(), log: quiet.log }), 0)
   assert.deepEqual(quiet.lines, [['out', `qa exposure: ok (harness https://${HOST}:8444/qa/)`]])
 })
 
 test('adapter error: 1', async () => {
   const { lines, log } = recordLog()
   const failing = fakeExposure({ ensureFails: new Error('tailscale serve: exit status 1') })
-  assert.equal(await runExpose({ cfg: CFG, exposure: failing, log }), 1)
+  assert.equal(await expose({ cfg: CFG, exposure: failing, log }), 1)
   assert.deepEqual(lines, [['err', 'qa exposure: tailscale serve: exit status 1']])
 
   // a pass that wrote some mounts before it failed says which
   const partial = recordLog()
   const err = Object.assign(new Error('could not mount 8443/ -> http://127.0.0.1:3101: busy'), { added: [MOUNTS[0]] })
-  assert.equal(await runExpose({ cfg: CFG, exposure: fakeExposure({ ensureFails: err }), log: partial.log }), 1)
+  assert.equal(await expose({ cfg: CFG, exposure: fakeExposure({ ensureFails: err }), log: partial.log }), 1)
   assert.deepEqual(partial.lines, [
     ['out', 'qa exposure: mounted 8444/qa -> http://127.0.0.1:3100'],
     ['err', 'qa exposure: could not mount 8443/ -> http://127.0.0.1:3101: busy'],
   ])
 
   // no adapter at all, or one that throws something that isn't an Error
-  assert.equal(await runExpose({ cfg: CFG, exposure: undefined, log: recordLog().log }), 1)
-  assert.equal(await runExpose({ cfg: CFG, exposure: fakeExposure({ ensureFails: Object.create(null) }), log: recordLog().log }), 1)
+  assert.equal(await expose({ cfg: CFG, exposure: undefined, log: recordLog().log }), 1)
+  assert.equal(await expose({ cfg: CFG, exposure: fakeExposure({ ensureFails: Object.create(null) }), log: recordLog().log }), 1)
 })
 
 test('mount layout error: 2', async () => {
@@ -122,7 +173,7 @@ test('mount layout error: 2', async () => {
   for (const [overrides, message] of layouts) {
     const exposure = fakeExposure()
     const { lines, log } = recordLog()
-    assert.equal(await runExpose({ cfg: { ...CFG, ...overrides }, exposure, log }), 2, JSON.stringify(overrides))
+    assert.equal(await expose({ cfg: { ...CFG, ...overrides }, exposure, log }), 2, JSON.stringify(overrides))
     assert.deepEqual(exposure.calls, [], 'no adapter call')
     assert.equal(lines.length, 1)
     assert.equal(lines[0][0], 'err')
@@ -135,14 +186,14 @@ test('a cfg without exposure or harnessOrigin resolves both as the conductor doe
   const { exposure: _mode, harnessOrigin: _origin, ...bare } = CFG
   const exposure = fakeExposure()
   const { lines, log } = recordLog()
-  assert.equal(await runExpose({ cfg: { ...bare, publicHost: HOST }, exposure, log }), 0)
+  assert.equal(await expose({ cfg: { ...bare, publicHost: HOST }, exposure, log }), 0)
   assert.deepEqual(exposure.calls.map(([member, mounts]) => [member, mounts[0].port, mounts[0].path]), [['ensure', 8444, '/qa'], ['check', 8444, '/qa']])
   assert.deepEqual(lines, [['out', `qa exposure: ok (harness https://${HOST}:8444/qa/)`]])
 
   // all loopback: none
   const local = fakeExposure()
   const loopback = { ports: CFG.ports, paneOrigins: { base: 'http://127.0.0.1:3101', pr: 'http://127.0.0.1:3102' } }
-  assert.equal(await runExpose({ cfg: loopback, exposure: local, log: recordLog().log }), 0)
+  assert.equal(await expose({ cfg: loopback, exposure: local, log: recordLog().log }), 0)
   assert.deepEqual(local.calls, [])
 
   // https origins on loopback are none too, until an allowed host or a public
@@ -151,7 +202,7 @@ test('a cfg without exposure or harnessOrigin resolves both as the conductor doe
   for (const [extra, mode] of [[{}, 'none'], [{ allowedHosts: ['box.ts.net'] }, 'tailscale'], [{ publicHost: 'box.ts.net' }, 'tailscale']]) {
     const probe = fakeExposure()
     const seen = recordLog()
-    assert.equal(await runExpose({ cfg: { ...https, ...extra }, exposure: probe, log: seen.log }), 0, JSON.stringify(extra))
+    assert.equal(await expose({ cfg: { ...https, ...extra }, exposure: probe, log: seen.log }), 0, JSON.stringify(extra))
     if (mode === 'none') {
       assert.deepEqual(probe.calls, [], JSON.stringify(extra))
       assert.deepEqual(seen.lines, [['out', 'qa exposure: QA_EXPOSURE=none, nothing to do']])
@@ -167,11 +218,11 @@ test('a cfg without exposure or harnessOrigin resolves both as the conductor doe
   // refuses: see the next test
 
   const odd = recordLog()
-  assert.equal(await runExpose({ cfg: { ...CFG, exposure: 'caddy' }, exposure, log: odd.log }), 2)
+  assert.equal(await expose({ cfg: { ...CFG, exposure: 'caddy' }, exposure, log: odd.log }), 2)
   assert.deepEqual(odd.lines, [['err', 'qa exposure: QA_EXPOSURE must be none or tailscale, got "caddy"']])
   // a public host no origin can be derived from
   const bad = recordLog()
-  assert.equal(await runExpose({ cfg: { ...bare, publicHost: 'a b' }, exposure, log: bad.log }), 2)
+  assert.equal(await expose({ cfg: { ...bare, publicHost: 'a b' }, exposure, log: bad.log }), 2)
   assert.match(bad.lines[0][1], /^qa exposure: the harness origin derived from QA_PUBLIC_HOST must be an origin/)
 })
 
@@ -187,7 +238,7 @@ test('tailscale mode off a loopback bind host, or a bracketed one, is a config e
   for (const [cfg, line] of cases) {
     const exposure = fakeExposure()
     const { lines, log } = recordLog()
-    assert.equal(await runExpose({ cfg, exposure, log }), 2, cfg.host)
+    assert.equal(await expose({ cfg, exposure, log }), 2, cfg.host)
     assert.deepEqual(exposure.calls, [], `${cfg.host}: no adapter call`)
     assert.equal(lines.length, 1)
     assert.equal(lines[0][0], 'err')
@@ -198,7 +249,7 @@ test('tailscale mode off a loopback bind host, or a bracketed one, is a config e
   // loopback binds are fine, ::1 included
   for (const [host, target] of [['127.0.0.2', 'http://127.0.0.2:3100'], ['localhost', 'http://localhost:3100'], ['::1', 'http://[::1]:3100']]) {
     const exposure = fakeExposure()
-    assert.equal(await runExpose({ cfg: { ...CFG, host }, exposure, log: recordLog().log }), 0, host)
+    assert.equal(await expose({ cfg: { ...CFG, host }, exposure, log: recordLog().log }), 0, host)
     assert.equal(exposure.calls[0][1][0].target, target)
   }
 })
@@ -206,7 +257,7 @@ test('tailscale mode off a loopback bind host, or a bracketed one, is a config e
 test('a handler that takes some of a mount\'s requests is named as such, and an adapter that reports no mount still fails', async () => {
   const drift = [{ mount: MOUNTS[0], actual: '/qa/ -> http://127.0.0.1:9' }, { mount: MOUNTS[0], actual: '/qa/api (not a proxy)' }]
   const { lines, log } = recordLog()
-  assert.equal(await runExpose({ cfg: CFG, exposure: fakeExposure({ drift }), checkOnly: true, log }), 1)
+  assert.equal(await expose({ cfg: CFG, exposure: fakeExposure({ drift }), checkOnly: true, log }), 1)
   assert.deepEqual(lines, [
     ['err', 'qa exposure: drift 8444/qa: the handler at /qa/ -> http://127.0.0.1:9 takes some of its requests; remove it'],
     ['err', 'qa exposure: drift 8444/qa: the handler at /qa/api (not a proxy) takes some of its requests; remove it'],
@@ -215,22 +266,138 @@ test('a handler that takes some of a mount\'s requests is named as such, and an 
   // not ok, and no drift or error to show for it
   const vague = recordLog()
   const exposure = { ensure: async () => ({ added: [], ok: [] }), check: async () => ({ ok: false, drift: [] }) }
-  assert.equal(await runExpose({ cfg: CFG, exposure, log: vague.log }), 1)
+  assert.equal(await expose({ cfg: CFG, exposure, log: vague.log }), 1)
   assert.deepEqual(vague.lines, [['err', 'qa exposure: the adapter reported drift but named no mount']])
 
   // mount fields that aren't strings or integer ports
   const garbled = recordLog()
   const odd = { port: { toString() { throw new Error('no') } }, path: null, target: new URL('http://127.0.0.1:3100') }
   const weird = { ensure: async () => ({ added: [odd], ok: [] }), check: async () => ({ ok: false, drift: [{ mount: odd, actual: 42 }] }) }
-  assert.equal(await runExpose({ cfg: CFG, exposure: weird, log: garbled.log }), 1)
+  assert.equal(await expose({ cfg: CFG, exposure: weird, log: garbled.log }), 1)
   assert.deepEqual(garbled.lines, [['out', 'qa exposure: mounted ?? -> ?'], ['err', 'qa exposure: drift ??: want ?, have nothing']])
 
   // getters that throw: 1, not a rejection
   const sly = { get port() { throw new Error('no') } }
   const trap = recordLog()
   const traps = { ensure: async () => ({ added: [sly], ok: [] }), check: async () => ({ ok: false, drift: [{ get mount() { throw new Error('no') } }] }) }
-  assert.equal(await runExpose({ cfg: CFG, exposure: traps, log: trap.log }), 1)
+  assert.equal(await expose({ cfg: CFG, exposure: traps, log: trap.log }), 1)
   assert.deepEqual(trap.lines.at(-1), ['err', 'qa exposure: the adapter returned a result that cannot be printed'])
+})
+
+// --- the probe: only a gated conductor is published --------------------------------
+
+const NOT_MOUNTED = 'qa exposure: nothing was mounted. Start the conductor in tailscale mode on these ports first, or use --check to only report drift'
+
+test('a plain run first asks each target, over loopback and with no Tailscale identity, then mounts once all three are the gate', async () => {
+  const { calls, fetchFn } = probeFetch()
+  const exposure = fakeExposure()
+  const { lines, log } = recordLog()
+  assert.equal(await runExpose({ cfg: CFG, exposure, fetchFn, log }), 0)
+  assert.deepEqual(calls.map(c => c.url), ['http://127.0.0.1:3100/qa/api/state', 'http://127.0.0.1:3101/', 'http://127.0.0.1:3102/'])
+  for (const { init } of calls) {
+    assert.equal(init.method, 'GET')
+    assert.equal(init.redirect, 'manual') // a redirect is an answer, not a hop to follow
+    assert.ok(init.signal instanceof AbortSignal)
+    assert.equal(new Headers(init.headers).has('tailscale-user-login'), false)
+  }
+  assert.deepEqual(exposure.calls, [['ensure', MOUNTS], ['check', MOUNTS]])
+  assert.deepEqual(lines, [['out', `qa exposure: ok (harness https://${HOST}:8444/qa/)`]])
+
+  // an IPv6 loopback bind asks [::1]
+  const v6 = probeFetch()
+  assert.equal(await runExpose({ cfg: { ...CFG, host: '::1' }, exposure: fakeExposure(), fetchFn: v6.fetchFn, log: recordLog().log }), 0)
+  assert.equal(v6.calls[0].url, 'http://[::1]:3100/qa/api/state')
+})
+
+test('targets that are not the gate: nothing is mounted, and it exits 2 with a line for each, then what to do', async () => {
+  const { fetchFn } = probeFetch({
+    3100: new Response('{"status":"idle"}', { status: 200 }), // a none-mode conductor, the demo, any server
+    3101: new Response('Forbidden', { status: 403 }), // a 403 that isn't the gate's
+    3102: () => Promise.reject(refused(3102)), // nothing listens
+  })
+  const exposure = fakeExposure()
+  const { lines, log } = recordLog()
+  assert.equal(await runExpose({ cfg: CFG, exposure, fetchFn, log }), 2)
+  assert.deepEqual(exposure.calls, [], 'no adapter call: nothing written, nothing read')
+  assert.deepEqual(lines, [
+    ['err', 'qa exposure: 127.0.0.1:3100 (harness) is not a gated conductor (got 200); refusing to publish it'],
+    ['err', 'qa exposure: 127.0.0.1:3101 (base) is not a gated conductor (got 403 without X-QA-Refusal: identity); refusing to publish it'],
+    ['err', 'qa exposure: 127.0.0.1:3102 (pr) is not a gated conductor (nothing listens there); refusing to publish it'],
+    ['err', NOT_MOUNTED],
+  ])
+})
+
+test('one target that is not the gate is enough: nothing is mounted for the others either', async () => {
+  for (const [port, answer, got] of [
+    ['3101', new Response(null, { status: 302, headers: { location: 'http://127.0.0.1:3100/' } }), 'got 302'],
+    ['3102', new Response('{}', { status: 200 }), 'got 200'],
+    ['3100', () => Promise.reject(Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }) })), 'no answer: ECONNRESET'],
+    ['3100', () => Promise.reject('boom'), 'no answer: boom'],
+    ['3101', () => ({ status: 403, headers: {} }), 'got 403 without X-QA-Refusal: identity'],
+    ['3101', () => null, 'got no response'],
+  ]) {
+    const exposure = fakeExposure()
+    const { lines, log } = recordLog()
+    assert.equal(await runExpose({ cfg: CFG, exposure, fetchFn: probeFetch({ [port]: answer }).fetchFn, log }), 2, got)
+    assert.deepEqual(exposure.calls, [], got)
+    const name = { 3100: 'harness', 3101: 'base', 3102: 'pr' }[port]
+    assert.deepEqual(lines, [
+      ['err', `qa exposure: 127.0.0.1:${port} (${name}) is not a gated conductor (${got}); refusing to publish it`],
+      ['err', NOT_MOUNTED],
+    ], got)
+  }
+})
+
+test('a target that does not answer within probeTimeoutMs is not the gate', async () => {
+  const hang = init => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)))
+  const exposure = fakeExposure()
+  const { lines, log } = recordLog()
+  const started = Date.now()
+  assert.equal(await runExpose({ cfg: CFG, exposure, fetchFn: probeFetch({ 3102: hang }).fetchFn, probeTimeoutMs: 50, log }), 2)
+  assert.ok(Date.now() - started < 2000, 'the probe gave up at its timeout')
+  assert.deepEqual(exposure.calls, [])
+  assert.deepEqual(lines[0], ['err', 'qa exposure: 127.0.0.1:3102 (pr) is not a gated conductor (no answer within 50ms); refusing to publish it'])
+})
+
+test('the probe frees each answer\'s body without reading it', async () => {
+  const cancelled = []
+  const streamed = (status, headers) => new Response(new ReadableStream({ cancel: () => { cancelled.push(status) } }), { status, headers })
+  const { fetchFn } = probeFetch({ 3100: () => streamed(403, { 'x-qa-refusal': 'identity' }), 3101: () => streamed(200) })
+  assert.equal(await runExpose({ cfg: CFG, exposure: fakeExposure(), fetchFn, log: recordLog().log }), 2)
+  assert.deepEqual(cancelled.sort(), [200, 403])
+})
+
+test('--check, none mode and a layout the conductor can\'t publish ask no target', async () => {
+  const { calls, fetchFn } = probeFetch({ 3100: new Response('{}', { status: 200 }) })
+  assert.equal(await runExpose({ cfg: CFG, exposure: fakeExposure(), checkOnly: true, fetchFn, log: recordLog().log }), 0)
+  assert.equal(await runExpose({ cfg: { ...CFG, exposure: 'none' }, exposure: fakeExposure(), fetchFn, log: recordLog().log }), 0)
+  assert.equal(await runExpose({ cfg: { ...CFG, ports: { ...CFG.ports, pr: 0 } }, exposure: fakeExposure(), fetchFn, log: recordLog().log }), 2)
+  assert.equal(await runExpose({ cfg: { ...CFG, host: '0.0.0.0' }, exposure: fakeExposure(), fetchFn, log: recordLog().log }), 2)
+  assert.deepEqual(calls, [])
+})
+
+test('over real loopback: gated targets are mounted; an open server, or a closed port, beside them is not', async () => {
+  const gated = await targets(['gated', 'gated', 'gated'])
+  const mixed = await targets(['gated', 'open', 'closed'])
+  try {
+    const cfg = ports => ({ ...CFG, ports: { harness: ports[0], base: ports[1], pr: ports[2] } })
+    const ok = fakeExposure()
+    assert.equal(await runExpose({ cfg: cfg(gated.ports), exposure: ok, log: recordLog().log }), 0)
+    assert.deepEqual(ok.calls.map(([member]) => member), ['ensure', 'check'])
+
+    const no = fakeExposure()
+    const { lines, log } = recordLog()
+    assert.equal(await runExpose({ cfg: cfg(mixed.ports), exposure: no, log }), 2)
+    assert.deepEqual(no.calls, [])
+    assert.deepEqual(lines, [
+      ['err', `qa exposure: 127.0.0.1:${mixed.ports[1]} (base) is not a gated conductor (got 200); refusing to publish it`],
+      ['err', `qa exposure: 127.0.0.1:${mixed.ports[2]} (pr) is not a gated conductor (nothing listens there); refusing to publish it`],
+      ['err', NOT_MOUNTED],
+    ])
+  } finally {
+    gated.close()
+    mixed.close()
+  }
 })
 
 // --- the bin -------------------------------------------------------------------
@@ -246,16 +413,19 @@ if (args.filter(a => !a.startsWith('--socket=')).join(' ') === 'serve status --j
 `
 const FIXTURE = ['GITHUB_QA_TOKEN=unused', 'QA_REPO=acme/widget', 'QA_PUBLIC_HOST=h.ts.net', 'QA_ALLOWED_LOGINS=a@github']
 const STATUS = ['serve', 'status', '--json']
-const ENSURE = [
-  ['serve', '--bg', '--https=8444', '--set-path=/qa', 'http://127.0.0.1:3100'],
-  ['serve', '--bg', '--https=8443', 'http://127.0.0.1:3101'],
-  ['serve', '--bg', '--https=10000', 'http://127.0.0.1:3102'],
+// The env lines that put the harness and the pane proxies on these ports.
+const portLines = ([harness, base, pr]) => [`QA_HARNESS_PORT=${harness}`, `QA_BASE_PROXY_PORT=${base}`, `QA_PR_PROXY_PORT=${pr}`]
+const ensureFor = ([harness, base, pr]) => [
+  ['serve', '--bg', '--https=8444', '--set-path=/qa', `http://127.0.0.1:${harness}`],
+  ['serve', '--bg', '--https=8443', `http://127.0.0.1:${base}`],
+  ['serve', '--bg', '--https=10000', `http://127.0.0.1:${pr}`],
 ]
-const MISSING = [
-  'qa exposure: drift 8444/qa: want http://127.0.0.1:3100, have nothing',
-  'qa exposure: drift 8443/: want http://127.0.0.1:3101, have nothing',
-  'qa exposure: drift 10000/: want http://127.0.0.1:3102, have nothing',
+const missingFor = ([harness, base, pr]) => [
+  `qa exposure: drift 8444/qa: want http://127.0.0.1:${harness}, have nothing`,
+  `qa exposure: drift 8443/: want http://127.0.0.1:${base}, have nothing`,
+  `qa exposure: drift 10000/: want http://127.0.0.1:${pr}, have nothing`,
 ]
+const MISSING = missingFor([3100, 3101, 3102])
 
 // A scratch dir with the shim as `tailscale` (and any other names) in
 // dir/bin, beside a `node` link for its #! line.
@@ -289,18 +459,39 @@ function world({ shims = [] } = {}) {
 }
 const outLines = text => text.split('\n').filter(Boolean)
 
-test('mounts all three, then exits 1 because the shim still reports none', async () => {
-  const w = world()
-  const r = await w.run(['--env', w.envFile(FIXTURE), '--tailscale', w.shim('tailscale')])
-  assert.equal(r.code, 1, r.stderr)
-  // ensure reads the status, writes each missing mount; check reads it again
-  assert.deepEqual(w.calls(), [STATUS, ...ENSURE, STATUS])
-  assert.deepEqual(outLines(r.stdout), [
-    'qa exposure: mounted 8444/qa -> http://127.0.0.1:3100',
-    'qa exposure: mounted 8443/ -> http://127.0.0.1:3101',
-    'qa exposure: mounted 10000/ -> http://127.0.0.1:3102',
-  ])
-  assert.deepEqual(outLines(r.stderr), MISSING)
+test('with a gated conductor on each port, mounts all three, then exits 1 because the shim still reports none', async () => {
+  const t = await targets(['gated', 'gated', 'gated'])
+  try {
+    const w = world()
+    const r = await w.run(['--env', w.envFile([...FIXTURE, ...portLines(t.ports)]), '--tailscale', w.shim('tailscale')])
+    assert.equal(r.code, 1, r.stderr)
+    // ensure reads the status, writes each missing mount; check reads it again
+    assert.deepEqual(w.calls(), [STATUS, ...ensureFor(t.ports), STATUS])
+    assert.deepEqual(outLines(r.stdout), [
+      `qa exposure: mounted 8444/qa -> http://127.0.0.1:${t.ports[0]}`,
+      `qa exposure: mounted 8443/ -> http://127.0.0.1:${t.ports[1]}`,
+      `qa exposure: mounted 10000/ -> http://127.0.0.1:${t.ports[2]}`,
+    ])
+    assert.deepEqual(outLines(r.stderr), missingFor(t.ports))
+  } finally { t.close() }
+})
+
+test('with no conductor listening, or anything ungated on one port, a plain run never calls tailscale and exits 2, naming each such target', async () => {
+  for (const kinds of [['closed', 'closed', 'closed'], ['gated', 'open', 'closed'], ['open', 'gated', 'gated']]) {
+    const t = await targets(kinds)
+    try {
+      const w = world()
+      const r = await w.run(['--env', w.envFile([...FIXTURE, ...portLines(t.ports)]), '--tailscale', w.shim('tailscale')])
+      assert.equal(r.code, 2, `${kinds}: ${r.stderr}`)
+      assert.deepEqual(w.calls(), [], `${kinds}: no tailscale call, so no mount`)
+      assert.equal(r.stdout, '')
+      const names = ['harness', 'base', 'pr']
+      const want = kinds.flatMap((kind, i) => kind === 'gated' ? [] : [
+        `qa exposure: 127.0.0.1:${t.ports[i]} (${names[i]}) is not a gated conductor (${kind === 'open' ? 'got 200' : 'nothing listens there'}); refusing to publish it`,
+      ])
+      assert.deepEqual(outLines(r.stderr), [...want, NOT_MOUNTED], String(kinds))
+    } finally { t.close() }
+  }
 })
 
 test('--check never runs serve --bg and exits 1', async () => {

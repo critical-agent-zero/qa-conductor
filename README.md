@@ -171,7 +171,7 @@ It serves the harness on `cfg.ports.harness` and one proxy per pane on `cfg.port
 | `@critical-labs/qa-conductor/github` | `createGithub` | the GitHub [effect wrapper](#effect-wrappers) |
 | `@critical-labs/qa-conductor/docker` | `createDocker` | the Docker [effect wrapper](#effect-wrappers) |
 | `@critical-labs/qa-conductor/exec` | `makeExecFileFn` | the `execFile` [effect wrapper](#effect-wrappers) |
-| `@critical-labs/qa-conductor/identity` | `normalizeLogins`, `refusalReason`, `isAllowed`, `identityGate` | the [Tailscale identity gate](#security) |
+| `@critical-labs/qa-conductor/identity` | `normalizeLogins`, `refusalReason`, `isAllowed`, `identityGate`, `isIdentityRefusal` | the [Tailscale identity gate](#security) |
 | `@critical-labs/qa-conductor/exposure` | `mountsFor`, `reconcileExposure`, `runExpose` | one [exposure](#exposure-optional) pass, outside a conductor |
 | `@critical-labs/qa-conductor/proxy` | `createPaneProxy`, `panePolicy`, `parseSetCookie`, `isAllowedHost`, `requestHostname`, `misdirected` | the pane proxy, and the [Host allowlist](#security) check every server runs |
 | `@critical-labs/qa-conductor/verdict` | `formatVerdict`, `postVerdict` | the verdict comment and label |
@@ -203,7 +203,7 @@ Open the harness at its origin, under `/qa/`, as startup logs it (`[qa] harness 
 **The trust gate is the only real boundary between a PR's code and the reviewer's machine.** Booting a PR runs its code. A BuildConvention that checks out and installs PRs must refuse untrusted ones in `ensureBuilt`, before any git call. **Env scrubbing and loopback binding are defence in depth**, not a boundary.
 
 The conductor's own defences in depth:
-- **Tailscale identity gate.** In tailscale mode (`QA_EXPOSURE=tailscale`), the harness and both pane proxies answer `403` to any request whose `Tailscale-User-Login` isn't in `QA_ALLOWED_LOGINS` (matched ignoring case), before anything else runs. The gate wraps each whole server, so no route, present or future, runs for such a request, upgrades included, and the `403` still carries the harness frame lock or the pane's frame policy. `tailscale serve` sets that header from the device the request came from, strips any copy the client sent, and sets none for tagged devices, which are refused. An empty allowlist refuses everyone, so `loadConfig` refuses one in tailscale mode (`startConductor` only logs an error). The pane proxies drop every `Tailscale-*` header before the pane app sees the request. Other front-door headers pass through, such as `X-Forwarded-For`, which `tailscale serve` sets to the viewer's tailnet address: the pane app, PR code included, still sees which device is viewing.
+- **Tailscale identity gate.** In tailscale mode (`QA_EXPOSURE=tailscale`), the harness and both pane proxies answer `403` to any request whose `Tailscale-User-Login` isn't in `QA_ALLOWED_LOGINS` (matched ignoring case), before anything else runs. The gate wraps each whole server, so no route, present or future, runs for such a request, upgrades included, and the `403` still carries the harness frame lock or the pane's frame policy. `tailscale serve` sets that header from the device the request came from, strips any copy the client sent, and sets none for tagged devices, which are refused. An empty allowlist refuses everyone, so `loadConfig` refuses one in tailscale mode (`startConductor` only logs an error). The gate's `403` carries `X-QA-Refusal: identity`, so a client can tell it from any other `403` without reading the body: the [expose CLI](#expose-cli) publishes a port only once that port answers with it, and `isIdentityRefusal(res)` from `./identity` recognises it. The pane proxies drop every `Tailscale-*` header before the pane app sees the request. Other front-door headers pass through, such as `X-Forwarded-For`, which `tailscale serve` sets to the viewer's tailnet address: the pane app, PR code included, still sees which device is viewing.
 
   `QA_EXPOSURE` defaults to `tailscale` when anything the conductor answers to or listens on is off loopback: the harness origin, either pane origin, `QA_PUBLIC_HOST`, a `QA_ALLOWED_HOSTS` entry or `QA_BIND_HOST` (see [Configuration](#configuration)). Loopback layouts, such as `npm run qa` and the demo, stay ungated with no config.
 
@@ -528,7 +528,7 @@ The contract:
 
 `reconcileExposure(exposure, mounts, { checkOnly })` runs `ensure` then `check`, or only `check` with `checkOnly`. It resolves `{ ok, checkedAt, drift, added, error }` and never rejects, whatever the adapter throws: a failure comes back as `ok: false` with its message in `error`, and `added` still lists what `ensure` wrote.
 
-`runExpose({ cfg, exposure, checkOnly = false, log = console })` is the [expose CLI](#expose-cli)'s pass: `mountsFor(cfg)` then `reconcileExposure`, printed through `log`, resolving the CLI's exit code (`0`, `1` or `2`). A `cfg` without `exposure` or `harnessOrigin` resolves both as `startConductor` does.
+`runExpose({ cfg, exposure, checkOnly = false, log = console, fetchFn = fetch, probeTimeoutMs = 5000 })` is the [expose CLI](#expose-cli)'s pass: `mountsFor(cfg)` then `reconcileExposure`, printed through `log`, resolving the CLI's exit code (`0`, `1` or `2`). A `cfg` without `exposure` or `harnessOrigin` resolves both as `startConductor` does. Without `checkOnly`, it first asks each target through `fetchFn` whether it is a gated conductor, waiting up to `probeTimeoutMs` for each, and writes nothing unless all three are (see the [expose CLI](#expose-cli)). The conductor's own loop doesn't ask: it publishes only itself, and only in tailscale mode.
 
 **Built in: `adapters/exposure-tailscale`.** `createTailscaleExposure({ execFileFn, bin = 'tailscale', socket = null, timeoutMs = 30000 })` drives `tailscale serve` on the host it runs on:
 - `check` runs `tailscale serve status --json`. A mount is in place when its port serves https and its path proxies to its target (one trailing `/` ignored). It reads the status entry for the mount's `host:port`, else the first entry on that port.
@@ -653,7 +653,21 @@ npm run expose -- --check        # in this repo: self-QA's .env.qa, through self
 
 `qa-conductor-expose` runs one [exposure](#exposure-optional) pass from a shell, through the built-in tailscale adapter. **It is a tool for operators and debugging.** The conductor's reconcile loop owns the mounts: it sets them once its servers listen and restores them every `QA_EXPOSURE_INTERVAL_MINUTES`. So a deploy only restarts the conductor, and runs neither this CLI nor `tailscale serve`. Use the CLI to see drift, or to restore a mount now instead of at the next pass.
 
-**Run it without `--check` only while the conductor is running.** Neither the CLI nor the conductor ever removes a mount, so a mount written with no conductor behind it stays. Until someone removes it, it publishes whatever listens on its loopback port next, such as the demo or a conductor in none mode, with no identity gate. With the conductor stopped, use `--check`. The CLI doesn't yet check that what listens there is a gated conductor: [#18](https://github.com/critical-labs/qa-conductor/issues/18) tracks that.
+**A plain run publishes only a gated conductor.** Before it writes anything, it sends each target a request over loopback with no `Tailscale-User-Login`: `GET /qa/api/state` on the harness port and `GET /` on each pane port.
+- **What passes:** a conductor in tailscale mode answers each with its identity gate's `403`, marked `X-QA-Refusal: identity`. The CLI checks that header, not the body text.
+- **What fails:** a target that answers anything else, such as a conductor in none mode, the demo, another server, another `403`, or a redirect (which isn't followed). So does one that doesn't answer within 5 seconds, or a port where nothing listens.
+- **All or nothing:** if any target fails, the CLI writes no mount, runs no `tailscale` command and exits `2`, with a line for each failing target and one saying what to do:
+
+```
+qa exposure: 127.0.0.1:3101 (base) is not a gated conductor (got 200); refusing to publish it
+qa exposure: 127.0.0.1:3102 (pr) is not a gated conductor (nothing listens there); refusing to publish it
+qa exposure: nothing was mounted. Start the conductor in tailscale mode on these ports first, or use --check to only report drift
+```
+
+**What the check doesn't cover:**
+- **Other processes on this host.** It guards against a wrong env file or a stopped conductor, not against another process on this host, which could answer with the same header.
+- **Later takeovers.** It holds only at the moment the CLI writes. Neither the CLI nor the conductor ever removes a mount, so once the conductor stops, its mounts publish whatever listens on those loopback ports next, with no identity gate.
+- **`--check`.** A `--check` run sends no requests to the targets.
 
 ```
 qa-conductor-expose [--check] [--env FILE] [--config MODULE[#export]] [--tailscale BIN] [--socket PATH] [--help|-h]
@@ -671,7 +685,7 @@ It prints a line for each mount it writes (`qa exposure: mounted <port><path> ->
 |---|---|
 | `0` | every mount is in place (after writing any that weren't), or `QA_EXPOSURE=none`, or `--help` |
 | `1` | drift remains, or tailscale failed |
-| `2` | a bad flag or a config that doesn't load, with the usage on stderr; or, as one `qa exposure:` line, a mode, bind host or mount layout the conductor can't publish, such as an unknown `QA_EXPOSURE` from a `--config` loader, tailscale mode on a bind host that isn't loopback, an `http:` origin, two mounts on one port or a listen port `0` |
+| `2` | a bad flag or a config that doesn't load, with the usage on stderr; or, as one `qa exposure:` line, a mode, bind host or mount layout the conductor can't publish, such as an unknown `QA_EXPOSURE` from a `--config` loader, tailscale mode on a bind host that isn't loopback, an `http:` origin, two mounts on one port or a listen port `0`; or, without `--check`, a target that isn't a gated conductor, with a line for each and nothing mounted |
 
 ## Demo
 
@@ -692,7 +706,7 @@ Demo mode runs the real conductor with fixture PRs and fake adapters, so you can
 ## Known limits
 
 - **One page of PRs.** The picker lists at most the 50 most recently opened PRs.
-- **A plain expose run can publish an ungated server.** `qa-conductor-expose` without `--check` mounts whatever listens on the configured ports, conductor or not, and nothing removes those mounts ([Expose CLI](#expose-cli)). [#18](https://github.com/critical-labs/qa-conductor/issues/18) tracks a check that refuses an ungated target.
+- **Mounts outlive the conductor.** Nothing removes a `tailscale serve` mount, so once the conductor stops, its mounts publish whatever listens on those loopback ports next, with no identity gate. The expose CLI refuses to write a mount for a target that isn't a gated conductor, but nothing stops another process taking the port later ([Expose CLI](#expose-cli)).
 - **The panes' pages share the browser's cookies with every app on their hostname**, and can send those apps same-site requests that carry them. Serve the panes on a hostname no other app uses ([Security](#security)).
 - **The identity gate keeps out other devices, not PR code** on the same host: a pane process, or a container pane outside native Linux Docker, can send any login ([Security](#security)).
 - **A harness that shares an origin with another app** shares its trust. Give the harness a port of its own.

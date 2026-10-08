@@ -27,10 +27,12 @@ harness origin's port, each pane at / at its own origin's port), or with
 reconcile loop owns these mounts: this is for operators and debugging, and no
 deploy needs to run it.
 
-Run it without --check only while the conductor is running. This CLI never
-removes a mount, and neither does the conductor, so a mount written with no
-conductor behind it stays, and publishes whatever listens on its loopback
-port next with no identity gate. Otherwise use --check.
+Without --check, it first asks each target over loopback, with no Tailscale
+identity, whether it is a conductor in tailscale mode: one whose identity gate
+refuses the request (403, X-QA-Refusal: identity). Unless all three are, it
+writes no mount and exits 2, naming each target that isn't. A mount outlives
+the conductor (neither this CLI nor the conductor removes one), so with the
+conductor stopped, use --check.
 
   --check                   report drift; change nothing
   --env FILE                the conductor's env file
@@ -48,7 +50,8 @@ port next with no identity gate. Otherwise use --check.
   -h, --help                print this and exit
 
 Exit status: 0 every mount is in place (or QA_EXPOSURE=none), 1 drift remains
-or tailscale failed, 2 a usage, config or mount layout error.
+or tailscale failed, 2 a usage, config or mount layout error, or a target that
+isn't a gated conductor.
 `
 
 const OPTIONS = {

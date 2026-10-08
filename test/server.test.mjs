@@ -923,6 +923,28 @@ test('the harness refuses every route without an allowed identity, leaking nothi
   } finally { c.stop() }
 })
 
+// What the expose CLI probes for before it publishes a port: the gate's 403,
+// marked X-QA-Refusal: identity, on each of the three. A none-mode conductor
+// marks no response, so the CLI refuses to publish it.
+test('in tailscale mode every port\'s refusal carries X-QA-Refusal: identity; in none mode no response does', async () => {
+  const gated = makeWorld({ cfg: GATED })
+  const open = makeWorld()
+  try {
+    const probes = async c => {
+      const ports = await allPorts(c)
+      return Promise.all([[ports.harness, '/qa/api/state'], [ports.base, '/'], [ports.pr, '/']].map(([port, path]) => raw(port, { path })))
+    }
+    for (const res of await probes(gated.c)) {
+      assert.equal(res.status, 403)
+      assert.equal(res.headers['x-qa-refusal'], 'identity')
+    }
+    for (const res of await probes(open.c)) assert.equal(res.headers['x-qa-refusal'], undefined, String(res.status))
+  } finally {
+    gated.c.stop()
+    open.c.stop()
+  }
+})
+
 test('both pane proxies refuse every route, the bridge and upgrades without an allowed identity', async () => {
   const { c } = makeWorld({ cfg: GATED })
   try {
