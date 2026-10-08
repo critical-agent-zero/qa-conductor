@@ -1,6 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { inspect } from 'node:util'
 import { createDocker } from '../lib/docker.mjs'
+import { makeExecFileFn } from '../lib/exec.mjs'
 
 function recordingExec(stdoutByIndex = []) {
   const calls = []
@@ -23,19 +28,89 @@ test('run passes raw argv to docker and returns stdout', async () => {
   assert.equal(out, 'out\n')
 })
 
-test('runPg builds the exact docker run argv', async () => {
-  const exec = recordingExec()
+// The env each call was given, beside its argv.
+function envRecordingExec() {
+  const calls = []
+  const fn = async (file, args, opts = {}) => {
+    calls.push({ argv: [file, ...args], env: opts.env ?? null })
+    return { stdout: '' }
+  }
+  fn.calls = calls
+  return fn
+}
+
+test('runPg builds the exact docker run argv, and passes the password in the CLI\'s env, never argv', async () => {
+  const exec = envRecordingExec()
   const docker = createDocker({ execFileFn: exec })
-  await docker.runPg('qa-pg-base', 'qa-session')
-  assert.deepEqual(exec.calls, [[
+  await docker.runPg('qa-pg-base', 'qa-session-base')
+  assert.deepEqual(exec.calls[0].argv, [
     'docker', 'run', '-d',
     '--name', 'qa-pg-base',
-    '--network', 'qa-session',
+    '--network', 'qa-session-base',
     '--label', 'qa-conductor-session',
     '-e', 'POSTGRES_USER=qa',
-    '-e', 'POSTGRES_PASSWORD=qa',
+    // no value: docker takes it from its own environment
+    '-e', 'POSTGRES_PASSWORD',
     '-e', 'POSTGRES_DB=postgres',
     'postgres:16',
+  ])
+  assert.equal(exec.calls[0].env.POSTGRES_PASSWORD, 'qa')
+  // The rest of the conductor's env (HOME, PATH, DOCKER_HOST) reaches the CLI.
+  assert.equal(exec.calls[0].env.PATH, process.env.PATH)
+  assert.equal(exec.calls[0].env.HOME, process.env.HOME)
+})
+
+test('runPg takes a per-call password, which wins over createDocker\'s postgres.password', async () => {
+  const exec = envRecordingExec()
+  const docker = createDocker({ execFileFn: exec, postgres: { password: 'hunter2' } })
+  await docker.runPg('qa-pg-pr', 'qa-session-pr', { password: 'a1b2c3' })
+  await docker.runPg('qa-pg-base', 'qa-session-base')
+  assert.equal(exec.calls[0].env.POSTGRES_PASSWORD, 'a1b2c3')
+  assert.equal(exec.calls[1].env.POSTGRES_PASSWORD, 'hunter2')
+  for (const { argv } of exec.calls) assert.ok(!argv.some(a => a.includes('a1b2c3') || a.includes('hunter2')), argv.join(' '))
+})
+
+test('runPg refuses a password that is empty or not a string, before running docker', async () => {
+  for (const password of ['', null, 42]) {
+    const exec = envRecordingExec()
+    const docker = createDocker({ execFileFn: exec })
+    await assert.rejects(docker.runPg('qa-pg-base', 'qa-session-base', { password }), /password/, String(password))
+    assert.equal(exec.calls.length, 0)
+  }
+  const exec = envRecordingExec()
+  await assert.rejects(createDocker({ execFileFn: exec, postgres: { password: '' } }).runPg('p', 'n'), /password/)
+  assert.equal(exec.calls.length, 0)
+})
+
+// Through the real execFile: the password reaches the CLI's env, and a failed
+// run's error, which the harness shows every viewer, doesn't carry it.
+test('a failed runPg through makeExecFileFn: the CLI got the password in its env, and the error never holds it', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'qa-runpg-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const stub = path.join(dir, 'docker')
+  writeFileSync(stub, `#!/bin/sh\nprintf %s "$POSTGRES_PASSWORD" > "${dir}/seen"\necho "docker: Error response from daemon: Conflict." >&2\nexit 125\n`, { mode: 0o755 })
+  const real = makeExecFileFn()
+  const docker = createDocker({ execFileFn: (cmd, args, opts) => real(cmd === 'docker' ? stub : cmd, args, opts) })
+  const password = 'f00dfeedcafe0123456789abcdef0123456789abcdef0123'
+  const err = await docker.runPg('qa-pg-base', 'qa-session-base', { password }).then(() => assert.fail('should reject'), e => e)
+  assert.equal(readFileSync(path.join(dir, 'seen'), 'utf8'), password)
+  assert.match(err.message, /Conflict/)
+  for (const text of [err.message, err.stderr, err.stdout, String(err.cause?.cmd), err.cause?.message, JSON.stringify(err), inspect(err, { showHidden: true, depth: 5 })]) {
+    assert.ok(!String(text).includes(password), `no password in: ${text}`)
+  }
+})
+
+test('runMigrate names its container when given a name', async () => {
+  const exec = recordingExec()
+  const docker = createDocker({ execFileFn: exec })
+  await docker.runMigrate('ghcr.io/x/app:migrate-pr-7-abc', 'qa-session-pr', '/compose/.env.qa-pr', { name: 'qa-migrate-pr' })
+  assert.deepEqual(exec.calls, [[
+    'docker', 'run', '--rm',
+    '--name', 'qa-migrate-pr',
+    '--network', 'qa-session-pr',
+    '--label', 'qa-conductor-session',
+    '--env-file', '/compose/.env.qa-pr',
+    'ghcr.io/x/app:migrate-pr-7-abc',
   ]])
 })
 
@@ -53,7 +128,7 @@ test('createDocker threads a custom postgres identity and label through argv', a
     '--network', 'widget-qa',
     '--label', 'widget-qa-session',
     '-e', 'POSTGRES_USER=widget',
-    '-e', 'POSTGRES_PASSWORD=hunter2',
+    '-e', 'POSTGRES_PASSWORD',
     '-e', 'POSTGRES_DB=maindb',
     'postgres:15',
   ])
@@ -64,12 +139,12 @@ test('createDocker threads a custom postgres identity and label through argv', a
 })
 
 test('createDocker partial postgres override fills the rest from defaults', async () => {
-  const exec = recordingExec()
+  const exec = envRecordingExec()
   const docker = createDocker({ execFileFn: exec, postgres: { user: 'widget' } })
   await docker.runPg('p', 'n')
-  const argv = exec.calls[0]
+  const { argv, env } = exec.calls[0]
   assert.ok(argv.includes('POSTGRES_USER=widget'))
-  assert.ok(argv.includes('POSTGRES_PASSWORD=qa')) // default retained
+  assert.equal(env.POSTGRES_PASSWORD, 'qa') // default retained
   assert.ok(argv.includes('POSTGRES_DB=postgres')) // default retained
   assert.ok(argv.includes('postgres:16')) // default image retained
   assert.ok(argv.includes('qa-conductor-session')) // default label retained

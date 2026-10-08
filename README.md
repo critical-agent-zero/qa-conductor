@@ -390,7 +390,11 @@ The other options are `healthTimeoutMs` (60000, per service), `host` (`127.0.0.1
 
 ### Built in: `adapters/provisioner-docker` (Docker Provisioner)
 
-A Provisioner that runs each pane as two containers on the host's Docker daemon, a postgres one and an app one, on a network both panes share. It writes each pane's env to an owner-only file for `docker run --env-file`, logs in to the registry, runs one-shot migrations, and at startup removes whatever an earlier run left behind.
+A Provisioner that runs each pane as two containers on the host's Docker daemon, a postgres one and an app one. It writes each pane's env to an owner-only file for `docker run --env-file`, logs in to the registry, runs one-shot migrations, and at startup removes whatever an earlier run left behind.
+
+It keeps the panes apart:
+- **A network per pane.** Each pane's containers join a network of their own, so the PR pane's containers can neither resolve nor reach the base pane's. The conductor needs no shared network: it reaches the apps through their host ports and the databases through `docker exec`.
+- **A database password per pane, drawn for each boot.** Only that pane's `dsn` carries it, so a PR that reached the other pane's database still couldn't sign in.
 
 ```js
 import fs from 'node:fs'
@@ -411,22 +415,24 @@ const provisioner = createDockerProvisioner({
 | `docker` | *(required)* | a `createDocker(...)` ([Effect wrappers](#effect-wrappers)) |
 | `fsx` | *(required)* | `{ writeFile, unlink }`, such as `fs.promises`: writes the env files, mode `0600`, and removes them at teardown |
 | `workDir` | *(required)* | the directory the env files go in, as `.env.qa-base` and `.env.qa-pr`. The `docker` CLI reads them by path, so it must see the same directory |
-| `network` | `'qa-session'` | the Docker network both panes' containers join |
-| `postgres` | `{ user: 'qa', password: 'qa', db: 'postgres' }` | the credentials and admin database in the `dsn` it returns: match `createDocker`'s `postgres` |
+| `network` | `'qa-session'` | each pane's Docker network: a prefix, so `qa-session-base` and `qa-session-pr`, or `{ base, pr }` to name both. Two panes on one network throw |
+| `postgres` | `{ user: 'qa', db: 'postgres' }` | the superuser and admin database in the `dsn` it returns: match `createDocker`'s `postgres`. Leave `password` out, and each pane's database gets its own, 48 random hex characters drawn for each boot. A `password` you give is used for both panes |
 | `hostPorts` | `{ base: 3111, pr: 3112 }` | the loopback host port each pane's app container is published on |
 | `registry` | `null` | `{ user, token }`: log in to `ghcr.io` before pulling, and again before each retry |
 
 For each pane:
-- `provisionDatabase` starts `qa-pg-<role>` on the network, waits until it answers twice in a row, creates each of the Seed's `databases`, and returns the `dsn` `postgresql://<user>:<password>@qa-pg-<role>:5432` and a `db` of `{ dsn, query(sql, { database }) }`, which runs `psql` in the container.
-- `runMigrate` runs `migrate.image` once on the network, with the pane's `app` env (else its first service's), and removes the container after.
-- `launchServices` pulls each image that's missing (three tries), then runs it as `qa-app-<role>`, with its port `3000` published on `127.0.0.1:<hostPorts[role]>`.
+- `provisionDatabase` creates the pane's network and starts `qa-pg-<role>` on it, with the pane's password. It waits until the database answers twice in a row, creates each of the Seed's `databases`, and returns the `dsn` `postgresql://<user>:<password>@qa-pg-<role>:5432` and a `db` of `{ dsn, query(sql, { database }) }`, which runs `psql` in the container.
+- `runMigrate` runs `migrate.image` once on the pane's network, with the pane's `app` env (else its first service's), and removes the container after.
+- `launchServices` pulls each image that's missing (three tries), then runs it as `qa-app-<role>` on the pane's network, with its port `3000` published on `127.0.0.1:<hostPorts[role]>`.
 - `waitHealthy` polls `http://127.0.0.1:<port>/api/health` until it answers `200`, for up to a minute.
 - `logs` tails the app container at `starting`, else the postgres one.
-- `teardown` removes both containers and their volumes, the network once no pane uses it, and the env file. `sweep` removes every container with `createDocker`'s `label`, and the network.
+- `teardown` removes the pane's containers and their volumes, its network and its env file. `sweep` removes every container with `createDocker`'s `label`, both panes' networks, and, when `network` is a prefix, the network of that very name, which both panes shared in 0.3.1 and earlier.
+- `networks` is `{ base, pr }`, the two network names.
 
 Its limits:
 - **One service per pane.** Every service would run as `qa-app-<role>` with the same env file.
-- **Fixed names and ports.** The containers, the network and the host ports are the same on every run, so run one conductor per Docker host.
+- **Fixed names and ports.** The containers, the networks and the host ports are the same on every run, so run one conductor per Docker host.
+- **The panes' apps are published on the host's loopback.** Where a container can reach the host's loopback (Docker Desktop, through `host.docker.internal`, and some rootless runtimes), the PR pane's app can reach the base pane's app on its host port. It still can't reach the base pane's database, which has no host port.
 - **The app's side:** listen on port `3000` in the container, and answer `GET /api/health` with `200`.
 - **The registry login is to `ghcr.io` only.**
 - **It ignores `signal`**, so a teardown waits for a Docker call in flight.
@@ -469,6 +475,8 @@ Its limits:
 | `execFileFn` | *(required)* | `makeExecFileFn()` from `./exec` |
 | `label` | `'qa-conductor-session'` | put on every container and network it creates; `sweepQaContainers()` removes whatever carries it |
 | `postgres` | `{ image: 'postgres:16', user: 'qa', password: 'qa', db: 'postgres' }` | the pane database containers; keys you leave out keep these values |
+
+`runPg(name, network, { password })` starts a database container, with `password` (default `postgres.password`) as its superuser's. The password reaches `docker run` through the CLI's environment (a bare `-e POSTGRES_PASSWORD`), never its argv, which other local users can read.
 
 Its members are `run(argv)`, `login(user, token)` (to `ghcr.io`, with the token in the environment, never in argv), `imagePresent`, `ensureImage(image, { retries, relogin })`, `runPg`, `waitHealthyPg`, `createDatabase`, `pipeDump(from, to, db)` and `cloneDb(from, to, db)` (a host-side `pg_dump | psql` between two containers), `runMigrate`, `runApp`, `waitHealthyApp`, `psql`, `rmForce`, `createNetwork`, `rmNetwork`, `sweepQaContainers`, `inspectImageOf` and `logsTail`. `login`, `createDatabase`, `pipeDump`, `cloneDb` and `logsTail` throw on a name that isn't letters, digits, `_` and `-`.
 
@@ -717,6 +725,10 @@ Demo mode runs the real conductor with fixture PRs and fake adapters, so you can
 - **An IPv6-literal harness origin** can't be named in `frame-ancestors`: on a `::1` bind, set `QA_HARNESS_ORIGIN=http://localhost:<port>`.
 - **`X-Forwarded-For` reaches the pane apps**, so PR code sees which tailnet address is viewing.
 - **The Docker Provisioner** runs one service per pane, with fixed container names and host ports, and logs in to `ghcr.io` only ([its section](#built-in-adaptersprovisioner-docker-docker-provisioner)). **The GHCR helpers** read packages a user owns, not an organization's.
+- **The PR pane can still reach parts of the base pane.**
+  - **With the Docker Provisioner,** each pane has its own network and its own database password, so PR code can't reach the base pane's database. Where containers can reach the host's loopback (Docker Desktop, some rootless runtimes), it can still reach the base pane's app on its host port. An explicit `postgres.password` is used for both panes ([its section](#built-in-adaptersprovisioner-docker-docker-provisioner)).
+  - **With the process Provisioner,** both panes' processes run as your user on one host, so PR code can reach the base pane's database and app on loopback.
+  - The base pane is what the PR is compared with, so code that changes it, by mistake or on purpose, skews the comparison. The trust gate is still the boundary against PR code ([Security](#security)).
 - **Linux and macOS only, and no TypeScript declarations yet** ([Requirements](#requirements)).
 
 ## Contributing

@@ -4,6 +4,20 @@ What changed in each release, newest first. A 0.x minor version may break the in
 
 ## [Unreleased]
 
+### The Docker Provisioner
+
+- **The PR pane can no longer reach the base pane's database.** Both panes' containers joined one network, and both databases had the same superuser and password, which the PR pane's own `dsn` carried. So PR code, by mistake or on purpose, could change the base pane's data, or call the base app directly, and skew the comparison.
+  - **A network per pane:** `network` is now a prefix, so the panes join `qa-session-base` and `qa-session-pr` by default, or `{ base, pr }` to name both. Two panes on one network throw. Each pane's postgres, migrate and app containers join only that pane's network. `teardown` removes the pane's network, and `sweep` removes both, plus the one shared network that 0.3.1 and earlier made under the prefix's name.
+  - **A database password per pane:** with no `postgres.password`, each pane's database gets 48 random hex characters drawn for each boot, and only that pane's `dsn` carries them. An explicit `postgres.password` is used for both panes, as before.
+  - **Not in argv:** `createDocker`'s `runPg(name, network, { password })` passes the password to `docker run` through the CLI's environment (a bare `-e POSTGRES_PASSWORD`), never its argv, which other local users can read.
+  - **Still reachable:** where containers can reach the host's loopback (Docker Desktop, some rootless runtimes), the PR pane can still reach the base pane's app on its host port, and with the process Provisioner both panes share the host. README's Known limits says so.
+  - **What breaks:**
+    - code that names the network `qa-session`, such as a firewall rule or a Seed that runs a container on it, must use the pane's network;
+    - the provisioner's undocumented `network` property is now `networks`, `{ base, pr }`;
+    - an EnvTransform that builds its own database URL with `qa:qa`, rather than using the pane's `dsn`, must use the `dsn`, or set `postgres.password` to keep one password for both panes;
+    - a test that compares `runPg`'s argv sees `-e POSTGRES_PASSWORD` with no value.
+  - A `postgres` option without `user` or `db` now keeps `qa` and `postgres` for them.
+
 ### Preview builds
 
 - **A failed preview build fails the boot at once.** `awaitPreviewImage` polled GHCR only, so when the preview run it waited for failed, a boot stayed at `ensuring-image` for the whole `timeoutMs` (15 minutes by default) and then reported a timeout.
