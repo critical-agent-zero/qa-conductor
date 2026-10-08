@@ -287,8 +287,10 @@ test('a handler that takes some of a mount\'s requests is named as such, and an 
 // --- the probe: only a gated conductor is published --------------------------------
 
 const NOT_MOUNTED = 'qa exposure: nothing was mounted. Start the conductor in tailscale mode on these ports first, or use --check to only report drift'
+// A probe that hangs must fail its test, not stall the run.
+const PROBE = { timeout: 10_000 }
 
-test('a plain run first asks each target, over loopback and with no Tailscale identity, then mounts once all three are the gate', async () => {
+test('a plain run first asks each target, over loopback and with no Tailscale identity, then mounts once all three are the gate', PROBE, async () => {
   const { calls, fetchFn } = probeFetch()
   const exposure = fakeExposure()
   const { lines, log } = recordLog()
@@ -309,7 +311,7 @@ test('a plain run first asks each target, over loopback and with no Tailscale id
   assert.equal(v6.calls[0].url, 'http://[::1]:3100/qa/api/state')
 })
 
-test('targets that are not the gate: nothing is mounted, and it exits 2 with a line for each, then what to do', async () => {
+test('targets that are not the gate: nothing is mounted, and it exits 2 with a line for each, then what to do', PROBE, async () => {
   const { fetchFn } = probeFetch({
     3100: new Response('{"status":"idle"}', { status: 200 }), // a none-mode conductor, the demo, any server
     3101: new Response('Forbidden', { status: 403 }), // a 403 that isn't the gate's
@@ -327,7 +329,7 @@ test('targets that are not the gate: nothing is mounted, and it exits 2 with a l
   ])
 })
 
-test('one target that is not the gate is enough: nothing is mounted for the others either', async () => {
+test('one target that is not the gate is enough: nothing is mounted for the others either', PROBE, async () => {
   for (const [port, answer, got] of [
     ['3101', new Response(null, { status: 302, headers: { location: 'http://127.0.0.1:3100/' } }), 'got 302'],
     ['3102', new Response('{}', { status: 200 }), 'got 200'],
@@ -348,7 +350,7 @@ test('one target that is not the gate is enough: nothing is mounted for the othe
   }
 })
 
-test('a target that does not answer within probeTimeoutMs is not the gate', async () => {
+test('a target that does not answer within probeTimeoutMs is not the gate', PROBE, async () => {
   const hang = init => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)))
   const exposure = fakeExposure()
   const { lines, log } = recordLog()
@@ -359,15 +361,69 @@ test('a target that does not answer within probeTimeoutMs is not the gate', asyn
   assert.deepEqual(lines[0], ['err', 'qa exposure: 127.0.0.1:3102 (pr) is not a gated conductor (no answer within 50ms); refusing to publish it'])
 })
 
-test('the probe frees each answer\'s body without reading it', async () => {
+test('the probe frees each answer\'s body without reading it', PROBE, async () => {
   const cancelled = []
   const streamed = (status, headers) => new Response(new ReadableStream({ cancel: () => { cancelled.push(status) } }), { status, headers })
-  const { fetchFn } = probeFetch({ 3100: () => streamed(403, { 'x-qa-refusal': 'identity' }), 3101: () => streamed(200) })
+  // a body whose cancel never settles must not hold the run
+  const stuck = { status: 403, headers: new Headers({ 'x-qa-refusal': 'identity' }), body: { cancel: () => { cancelled.push('stuck'); return new Promise(() => {}) } } }
+  const { fetchFn } = probeFetch({ 3100: () => streamed(403, { 'x-qa-refusal': 'identity' }), 3101: () => streamed(200), 3102: () => stuck })
   assert.equal(await runExpose({ cfg: CFG, exposure: fakeExposure(), fetchFn, log: recordLog().log }), 2)
-  assert.deepEqual(cancelled.sort(), [200, 403])
+  assert.deepEqual(cancelled.map(String).sort(), ['200', '403', 'stuck'])
 })
 
-test('--check, none mode and a layout the conductor can\'t publish ask no target', async () => {
+// Three probes at once: each target's answer here waits until all three were
+// asked, so one-at-a-time probing would time out the first.
+test('the targets are asked all at once, not one after another', PROBE, async () => {
+  let release
+  const allAsked = new Promise(resolve => { release = resolve })
+  let asked = 0
+  const fetchFn = async () => {
+    if (++asked === 3) release()
+    await allAsked
+    return refusal()
+  }
+  const exposure = fakeExposure()
+  assert.equal(await runExpose({ cfg: CFG, exposure, fetchFn, probeTimeoutMs: 2000, log: recordLog().log }), 0)
+  assert.deepEqual(exposure.calls.map(([member]) => member), ['ensure', 'check'])
+})
+
+test('by default each target gets 5 seconds', PROBE, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { calls, fetchFn } = probeFetch({ 3100: () => new Promise(() => {}) })
+  const { lines, log } = recordLog()
+  let code = null
+  const run = runExpose({ cfg: CFG, exposure: fakeExposure(), fetchFn, log }).then(c => { code = c })
+  while (calls.length < 3) await new Promise(resolve => setImmediate(resolve))
+  t.mock.timers.tick(4999)
+  for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve))
+  assert.equal(code, null, 'still waiting at 4999ms')
+  t.mock.timers.tick(1)
+  await run
+  assert.equal(code, 2)
+  assert.deepEqual(lines[0], ['err', 'qa exposure: 127.0.0.1:3100 (harness) is not a gated conductor (no answer within 5000ms); refusing to publish it'])
+})
+
+// The timeout's timer keeps the process alive. AbortSignal.timeout's (or an
+// unref'd one) doesn't, so a run whose fetchFn holds nothing open would end,
+// unfinished, before it fired: run one in a process of its own.
+test('the timeout fires even when nothing else keeps the process alive', PROBE, async () => {
+  const script = [
+    `import { runExpose } from ${JSON.stringify(pathToFileURL(path.join(ROOT, 'lib/exposure.mjs')).href)}`,
+    `const cfg = ${JSON.stringify(CFG)}`,
+    `const exposure = { ensure: async () => ({ added: [], ok: [] }), check: async () => ({ ok: true, drift: [] }) }`,
+    `const code = await runExpose({ cfg, exposure, fetchFn: () => new Promise(() => {}), probeTimeoutMs: 100, log: { log() {}, error: line => console.log(line) } })`,
+    `console.log('exit', code)`,
+  ].join('\n')
+  const out = await new Promise(resolve => {
+    execFile(process.execPath, ['--input-type=module', '-e', script], { timeout: 8000 }, (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr }))
+  })
+  assert.equal(out.code, 0, out.stderr)
+  const printed = out.stdout.split('\n').filter(Boolean)
+  assert.equal(printed.at(-1), 'exit 2')
+  assert.match(printed[0], /\(no answer within 100ms\)/)
+})
+
+test('--check, none mode and a layout the conductor can\'t publish ask no target', PROBE, async () => {
   const { calls, fetchFn } = probeFetch({ 3100: new Response('{}', { status: 200 }) })
   assert.equal(await runExpose({ cfg: CFG, exposure: fakeExposure(), checkOnly: true, fetchFn, log: recordLog().log }), 0)
   assert.equal(await runExpose({ cfg: { ...CFG, exposure: 'none' }, exposure: fakeExposure(), fetchFn, log: recordLog().log }), 0)
@@ -376,7 +432,71 @@ test('--check, none mode and a layout the conductor can\'t publish ask no target
   assert.deepEqual(calls, [])
 })
 
-test('over real loopback: gated targets are mounted; an open server, or a closed port, beside them is not', async () => {
+test('a fetchFn that ignores its signal still gives up at probeTimeoutMs', PROBE, async () => {
+  const { lines, log } = recordLog()
+  const fetchFn = probeFetch({ 3101: () => new Promise(() => {}) }).fetchFn
+  assert.equal(await runExpose({ cfg: CFG, exposure: fakeExposure(), fetchFn, probeTimeoutMs: 50, log }), 2)
+  assert.deepEqual(lines[0], ['err', 'qa exposure: 127.0.0.1:3101 (base) is not a gated conductor (no answer within 50ms); refusing to publish it'])
+})
+
+test('whatever a fetchFn throws or returns, runExpose resolves 2 and mounts nothing', PROBE, async () => {
+  const trap = () => { throw new Error('getter') }
+  const cases = [
+    [() => { throw Object.defineProperty(new Error('x'), 'name', { get: trap }) }, /no answer: /],
+    [() => Promise.reject(Object.defineProperty(new TypeError('fetch failed'), 'cause', { get: trap })), /no answer: fetch failed/],
+    [() => Promise.reject(Object.create(null)), /no answer: fetchFn threw a value that is not an Error/],
+    [() => ({ get status() { return trap() }, headers: new Headers() }), /got a response that cannot be read/],
+    [() => ({ status: 403, headers: { get: trap } }), /got a response that cannot be read/],
+    [() => ({ status: 403, headers: { get: () => ({ toString: trap }) } }), /got a response that cannot be read/],
+  ]
+  for (const [answer, why] of cases) {
+    const exposure = fakeExposure()
+    const { lines, log } = recordLog()
+    assert.equal(await runExpose({ cfg: CFG, exposure, fetchFn: probeFetch({ 3100: answer }).fetchFn, log }), 2, String(why))
+    assert.deepEqual(exposure.calls, [])
+    assert.match(lines[0][1], why)
+  }
+})
+
+test('probeTimeoutMs must be a positive whole number of milliseconds a timer can hold', PROBE, async () => {
+  for (const ms of [0, -1, 1.5, NaN, Infinity, 2 ** 31, '5000', null]) {
+    const { calls, fetchFn } = probeFetch()
+    const { lines, log } = recordLog()
+    assert.equal(await runExpose({ cfg: CFG, exposure: fakeExposure(), fetchFn, probeTimeoutMs: ms, log }), 2, String(ms))
+    assert.deepEqual(calls, [], String(ms))
+    assert.match(lines[0][1], /^qa exposure: probeTimeoutMs must be a whole number of milliseconds from 1 to 2147483647, got /, String(ms))
+  }
+})
+
+// fetch refuses some ports outright (the WHATWG "bad ports": 6000, 10080 and
+// more), and a conductor may listen on one: the default probe is plain HTTP.
+test('the default probe reaches a gated conductor on a port fetch refuses', PROBE, async t => {
+  let server = null
+  for (const port of [10080, 6566, 6665, 6669, 4190]) {
+    const candidate = http.createServer(identityGate((req, res) => res.end('in'), ['a@github']))
+    const ok = await new Promise(resolve => {
+      candidate.once('error', () => resolve(false))
+      candidate.listen(port, '127.0.0.1', () => resolve(true))
+    })
+    if (ok) { server = candidate; break }
+  }
+  if (!server) return t.skip('no port fetch refuses is free here')
+  const others = await targets(['gated', 'gated'])
+  try {
+    const port = server.address().port
+    await assert.rejects(fetch(`http://127.0.0.1:${port}/`), /fetch failed/, 'fetch itself refuses this port')
+    const exposure = fakeExposure()
+    const cfg = { ...CFG, ports: { harness: port, base: others.ports[0], pr: others.ports[1] } }
+    assert.equal(await runExpose({ cfg, exposure, log: recordLog().log }), 0)
+    assert.deepEqual(exposure.calls.map(([member]) => member), ['ensure', 'check'])
+  } finally {
+    others.close()
+    server.closeAllConnections()
+    server.close()
+  }
+})
+
+test('over real loopback: gated targets are mounted; an open server, or a closed port, beside them is not', PROBE, async () => {
   const gated = await targets(['gated', 'gated', 'gated'])
   const mixed = await targets(['gated', 'open', 'closed'])
   try {
@@ -460,10 +580,18 @@ function world({ shims = [] } = {}) {
 const outLines = text => text.split('\n').filter(Boolean)
 
 test('with a gated conductor on each port, mounts all three, then exits 1 because the shim still reports none', async () => {
-  const t = await targets(['gated', 'gated', 'gated'])
+  // The fourth port has nothing listening: as an HTTP proxy from the
+  // environment (which Node 24's fetch would use for loopback too), it would
+  // make every target look closed. The probe asks the targets directly.
+  const t = await targets(['gated', 'gated', 'gated', 'closed'])
   try {
     const w = world()
-    const r = await w.run(['--env', w.envFile([...FIXTURE, ...portLines(t.ports)]), '--tailscale', w.shim('tailscale')])
+    const proxy = `http://127.0.0.1:${t.ports[3]}`
+    const env = { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: proxy, http_proxy: proxy }
+    const started = Date.now()
+    const r = await w.run(['--env', w.envFile([...FIXTURE, ...portLines(t.ports)]), '--tailscale', w.shim('tailscale')], { env })
+    // no probe timer outlives its answer to hold the process (5s each)
+    assert.ok(Date.now() - started < 4000, `the CLI exited promptly (${Date.now() - started}ms)`)
     assert.equal(r.code, 1, r.stderr)
     // ensure reads the status, writes each missing mount; check reads it again
     assert.deepEqual(w.calls(), [STATUS, ...ensureFor(t.ports), STATUS])

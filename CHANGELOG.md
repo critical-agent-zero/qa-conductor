@@ -24,9 +24,12 @@ What changed in each release, newest first. A 0.x minor version may break the in
   - **The check:** before it writes, it now sends each target a request over loopback with no `Tailscale-User-Login`: `GET /qa/api/state` on the harness port, `GET /` on each pane port. It expects the identity gate's `403`, by its `X-QA-Refusal: identity` header.
   - **All or nothing:** if any target answers otherwise, doesn't answer within 5 seconds, or has nothing listening, it writes no mount and runs no `tailscale` command. It exits `2` with a line for each such target, such as `qa exposure: 127.0.0.1:3101 (base) is not a gated conductor (got 200); refusing to publish it`, and one saying what to do.
   - **Unchanged:** `--check` and the conductor's own reconcile loop send no such requests.
+  - **Scope:** the check guards against a wrong env file or a stopped conductor, not against another process on this host, which could send the same header.
   - **What breaks:** a script that ran a plain pass with no conductor up now fails. So does a plain pass against a conductor older than this release, whose gate doesn't send the header: upgrade the conductor first.
-- **The identity gate's `403` carries `X-QA-Refusal: identity`**, so a client can tell it from any other `403` without reading the body text. `./identity` exports `isIdentityRefusal(res)`, which recognises it.
-- **`runExpose` takes `fetchFn`** (default `fetch`), which it uses for those requests, and `probeTimeoutMs` (default `5000`).
+- **The identity gate's `403` carries `X-QA-Refusal: identity`**, so a client can tell it from any other `403` without reading the body text. `./identity` exports `isIdentityRefusal(res)`, which recognises it. The pane proxies drop an `X-QA-Refusal` from the pane app's responses, so PR code can't make an ungated pane look gated.
+- **`runExpose` takes `fetchFn` and `probeTimeoutMs`.**
+  - **`fetchFn`** sends those requests. It is fetch-shaped, and the default is plain HTTP over `node:http`, since `fetch` refuses some ports a conductor may listen on (`6000` and `10080`, among others).
+  - **`probeTimeoutMs`** defaults to `5000`. Any value but a whole number of milliseconds from 1 to 2147483647 returns `2`.
 
 ## [0.3.1] — 2026-10-07
 
