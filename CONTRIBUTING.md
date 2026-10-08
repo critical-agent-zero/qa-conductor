@@ -81,7 +81,22 @@ The token reads PRs and comments and labels on this repository; the README's [To
    ```
    It runs the bin from `node_modules/.bin`, never through `npx`. If the tarball lacked the bin, `npx` would look the name up on the registry, where anyone can claim it, and run what it found as you, without asking when stdin isn't a terminal. A fixed path in the shared `/tmp` is no safer: another local user could put a tarball there first. `test/package.test.mjs` runs this block too.
 4. Once the release pull request is merged, tag `main`'s merge commit, as every earlier tag is, with a signed, annotated tag. Run `git fetch origin` and check that `git log -1 origin/main` is that merge, then `git tag -s vX.Y.Z origin/main -m "qa-conductor X.Y.Z: <what it brings>"` and `git push origin vX.Y.Z`. Name `origin/main`: without it the tag goes on whatever is checked out, such as the release branch's own commit, which differs from `main` whenever `main` merged anything else meanwhile, and the workflow stages the tagged tree.
-5. The [publish workflow](.github/workflows/publish.yml) refuses a tag that isn't `v` plus the `package.json` version. Then it runs the tests and `npm pack --dry-run`, and stages the version on npm with provenance (`npm stage publish`).
+5. The [publish workflow](.github/workflows/publish.yml) runs two jobs.
+   - **`test`** has no secrets and no `id-token`. It refuses a tag that isn't `v` plus the `package.json` version, runs the tests, packs the tarball with `npm pack`, and keeps it as the run's artifact.
+   - **`publish`** waits for a maintainer to approve the `npm-release` environment, whose deployment policy admits `v*` tags only. Then it:
+     - checks that the tagged commit is on `main` (`git merge-base --is-ancestor` against `main`'s history). A tag on any other commit stops here, before the token is used;
+     - downloads the tarball and checks that it is the tag's version;
+     - stages it on npm with provenance (`npm stage publish`).
+
+     It checks out nothing and runs no code from the repository.
 6. A maintainer approves the staged version on npmjs.com. Only then does it go live.
 
-Nothing publishes directly: the workflow's npm token can only stage, and only the stage step gets it. `test/package.test.mjs` pins the workflow's trigger and steps. It fails on any npm or npx command other than the four the workflow runs (npm expands abbreviations such as `npm pub`), on a gate that could be skipped or allowed to fail, and on the token anywhere but the stage step. It reads the file as text, so it catches mistakes, not every way a shell can spell a command: the stage-only token is what refuses a plain publish.
+**What stops a direct publish.**
+- The workflow's npm token can only stage, and only the stage step gets it, in the job that runs no repository code. A tag pushed on a branch, or any commit `main` hasn't merged, never reaches it.
+- `test/package.test.mjs` pins the workflow's trigger, jobs, permissions and steps, and the publish job's scripts word for word. It fails:
+  - on any npm or npx command other than the four the workflow runs (npm expands abbreviations such as `npm pub`);
+  - on a gate that could be skipped or allowed to fail;
+  - on the token or an `id-token` anywhere but the stage step and the publish job;
+  - on a publish job without the environment or the on-main check.
+- It also runs the on-main and tarball checks against a test repository.
+- It reads the file as text, so it catches mistakes, not every way a shell can spell a command: the stage-only token is what refuses a plain publish.

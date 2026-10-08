@@ -31,6 +31,13 @@ What changed in each release, newest first. A 0.x minor version may break the in
   - **`fetchFn`** sends those requests. It is fetch-shaped, and the default is plain HTTP over `node:http`, since `fetch` refuses some ports a conductor may listen on (`6000` and `10080`, among others).
   - **`probeTimeoutMs`** defaults to `5000`. Any value but a whole number of milliseconds from 1 to 2147483647 returns `2`.
 
+### Releases
+
+- **The npm token never meets the repository's code, and only `main` is released.** The publish workflow is now two jobs.
+  - **`test`** checks the tag, runs the tests and packs the tarball, with no secrets and no `id-token`.
+  - **`publish`** waits for a maintainer to approve the `npm-release` environment. It then checks that the tagged commit is on `main`, and stages the test job's tarball with provenance. It checks out nothing and runs no repository code.
+  - **What's refused:** a `v*` tag on a commit `main` hasn't merged fails before anything is staged. The staged version still goes live only once a maintainer approves it on npmjs.com.
+
 ## [0.3.1] — 2026-10-07
 
 Cookie isolation for the panes, a stricter `.env.qa` parser, seams that may be async, and the documentation a public package needs: a README to start from, `CONTRIBUTING.md` and `SECURITY.md`. It is a patch release, but its cookie and `.env.qa` fixes break consumers that relied on what 0.3.0 did: read [Migrating from 0.3.0](#migrating-from-030) before upgrading.
