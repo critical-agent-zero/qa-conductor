@@ -7,7 +7,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -157,8 +157,9 @@ const TARBALL_CHECK = 'Check the tarball is the tag\'s version'
 // would not override.
 const STAGE_RUN = `npm stage publish "./release/${TARBALL}-\${GITHUB_REF_NAME#v}.tgz" --access public --registry https://registry.npmjs.org/`
 // One npm, by exact version: the job that runs it holds the token. CI's
-// Node 22 leg installs the same npm before the suite, so the publishConfig
-// check's test reads tarballs with the npm that stages them.
+// Node 22 leg installs the same npm after the suite, then runs this file
+// again, so the publishConfig check's test reads tarballs with the npm that
+// stages them.
 const NPM_UPGRADE = 'npm install -g --ignore-scripts npm@11.21.0'
 // The publish job's scripts, whole: these two run git and ls, the
 // publishConfig check below runs node with npm's own pacote, and the stage
@@ -460,6 +461,60 @@ test('npm pack --dry-run packs lib/, public/ and bin/, and no test/, demo/, qa/,
     assert.doesNotMatch(file, /^(test|demo|qa|docs|\.github)\//, `${file} must not be published`)
     assert.doesNotMatch(file, /(^|\/)(\.env|\.npmrc)/, `${file} must not be published`)
     assert.ok(inFiles(file), `${file} is outside files ${JSON.stringify(pkg.files)}`)
+  }
+})
+
+// CONTRIBUTING.md's approver check (Releasing, step 5), word for word: the
+// one inline command that starts with the SHA's shape check.
+function approverCheck() {
+  const text = readFileSync(path.join(ROOT, 'CONTRIBUTING.md'), 'utf8')
+  const commands = [...text.slice(text.indexOf('\n## Releasing\n')).matchAll(/`(\[\[ \$sha =~ [^`]+)`/g)].map(m => m[1])
+  assert.equal(commands.length, 1, 'the Releasing section has one approver check')
+  return commands[0]
+}
+
+test('CONTRIBUTING\'s approver check finds a commit main itself was, and refuses one that tags or refs named main point at', { timeout: 60_000 }, async t => {
+  const CANONICAL = 'https://github.com/critical-labs/qa-conductor.git'
+  const doc = approverCheck()
+  assert.equal(doc.split(CANONICAL).length, 2, 'it fetches from the canonical repository')
+  const repo = await releaseRepo(t)
+  const bare = path.join(repo.root, 'server', 'acme', 'widget.git')
+  const work = path.join(repo.root, 'work')
+  const git = async (cwd, ...args) => (await execFileP('git', args, { cwd, env: repo.env })).stdout.trim()
+  // A commit main never was, which a tag named main, a tag named
+  // origin/main and a ref named refs/main all point at.
+  await git(work, 'checkout', '--quiet', '-b', 'forged', repo.tip)
+  await git(work, 'commit', '--quiet', '--allow-empty', '-m', 'Merge pull request #999 from acme/release')
+  const forged = await git(work, 'rev-parse', 'HEAD')
+  await git(work, 'push', '--quiet', bare, `${forged}:refs/tags/main`, `${forged}:refs/tags/origin/main`)
+  await git(bare, 'update-ref', 'refs/main', forged)
+  // The command as documented, then a report of any temp repository it left.
+  const script = `${doc.replace(CANONICAL, pathToFileURL(bare).href)}\nqa_status=$?\nif [ -n "$qa_tmp" ] && [ -e "$qa_tmp" ]; then echo "left $qa_tmp"; fi\nexit $qa_status`
+  const shells = [['bash', []], ['bash', ['-o', 'pipefail']]]
+  if ((await execFileP('sh', ['-c', 'command -v zsh || true'])).stdout.trim()) shells.push(['zsh', []], ['zsh', ['-o', 'pipefail']])
+  else t.diagnostic('zsh not found: only the bash runs ran')
+  for (const [shell, opts] of shells) {
+    const run = async sha => {
+      try {
+        return { code: 0, ...(await execFileP(shell, [...opts, '-c', script], { cwd: repo.root, timeout: 20_000, env: { ...repo.env, sha } })) }
+      } catch (err) {
+        return err
+      }
+    }
+    const how = `${shell} ${opts.join(' ')}`
+    // main's first-parent line, the merge commit among them: printed, and exit 0
+    for (const sha of [repo.first, repo.second, repo.tip]) {
+      const { code, stdout } = await run(sha)
+      assert.deepEqual({ code, stdout }, { code: 0, stdout: `on main: ${sha}\n` }, `${how}: ${sha}`)
+    }
+    // the forged commit, a merged-in or never-merged one, and anything that
+    // isn't one whole lowercase SHA: nothing printed, and a failing exit, for
+    // an agent that goes by the status
+    for (const sha of [forged, repo.merged, repo.side, repo.tip.slice(0, 7), repo.tip.toUpperCase(), '-vexyz', `${repo.tip}\n${forged}`, '']) {
+      const { code, stdout } = await run(sha)
+      assert.equal(stdout, '', `${how}: ${JSON.stringify(sha)}`)
+      assert.notEqual(code, 0, `${how}: ${JSON.stringify(sha)} exits non-zero`)
+    }
   }
 })
 
@@ -904,9 +959,15 @@ test('the publish job\'s publishConfig check stages only a tarball whose publish
 // node must be NPM_UPGRADE's.
 test('CI\'s Node 22 leg runs the package tests again with the npm the publish job stages with', () => {
   const ci = contentLines(readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8'))
-  const jobs = ci.slice(ci.indexOf('jobs:')).map(line => {
+  const blocks = topLevel(ci)
+  assert.deepEqual([...blocks.keys()], ['name', 'on', 'permissions', 'jobs'], 'no workflow-level env, defaults or other key')
+  assert.deepEqual(blocks.get('permissions'), ['permissions:', '  contents: read'])
+  // The actions stay pinned by name; only their SHAs are masked.
+  const jobs = blocks.get('jobs').map(line => {
     const uses = /^( +- uses: )(.*)$/.exec(line)
-    return uses && SHA_PINNED.test(uses[2]) ? `${uses[1]}<pinned>` : line
+    if (!uses) return line
+    assert.match(uses[2], SHA_PINNED, line)
+    return `${uses[1]}${uses[2].replace(/@[0-9a-f]{40}/, '@<sha>')}`
   })
   assert.deepEqual(jobs, [
     'jobs:',
@@ -917,10 +978,10 @@ test('CI\'s Node 22 leg runs the package tests again with the npm the publish jo
     '      matrix:',
     '        node: [22, 24]',
     '    steps:',
-    '      - uses: <pinned>',
+    '      - uses: actions/checkout@<sha> # v7.0.1',
     '        with:',
     '          persist-credentials: false',
-    '      - uses: <pinned>',
+    '      - uses: actions/setup-node@<sha> # v7.0.0',
     '        with:',
     '          node-version: ${{ matrix.node }}',
     '      - run: npm test',
