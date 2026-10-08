@@ -29,6 +29,16 @@ function harnessOriginNotice(configured, current) {
   return `${configured}/qa/`
 }
 
+// The text under the first boot step for the latest build event (buildRun's
+// shape): its message, else a summary of the run, which names a completed
+// run's conclusion when it isn't success.
+function buildSummary({ url, status, conclusion, message } = {}) {
+  if (message) return message
+  if (!url && !status) return 'Build started'
+  if (status !== 'completed') return `Build ${status || 'in progress'}`
+  return conclusion && conclusion !== 'success' ? `Build ended: ${String(conclusion).replace(/_/g, ' ')}` : 'Build complete'
+}
+
 ;(() => {
   if (typeof window === 'undefined') return
   const $ = id => document.getElementById(id)
@@ -257,10 +267,10 @@ function harnessOriginNotice(configured, current) {
   }
   // Build progress under the first step: the BuildConvention's own message
   // when it sends one, else a summary of its CI run, plus an https run link.
-  function setBuildSub({ url, status, message } = {}) {
+  function setBuildSub(build = {}) {
+    const { url } = build
     const sub = $('bootSteps').querySelector('[data-step="ensuring-image"] .stepSub')
-    const summary = message || (url || status ? (status === 'completed' ? 'Build complete' : `Build ${status || 'in progress'}`) : 'Build started')
-    sub.textContent = ` — ${summary}`
+    sub.textContent = ` — ${buildSummary(build)}`
     if (isHttpsUrl(url)) sub.append(' ', runLink(url, 'view run ↗'))
   }
   let bootTimer = null
@@ -284,7 +294,7 @@ function harnessOriginNotice(configured, current) {
     es.onmessage = ev => {
       const e = JSON.parse(ev.data)
       if (e.kind === 'step') markStep(e.step, e.at)
-      else if (e.kind === 'build') setBuildSub({ url: e.runUrl, status: e.runStatus, message: e.message })
+      else if (e.kind === 'build') setBuildSub({ url: e.runUrl, status: e.runStatus, conclusion: e.runConclusion, message: e.message })
       else if (e.kind === 'ready') { closeSse(); onReady(e) }
       else if (e.kind === 'error') showBootError(e)
       else if (e.kind === 'torn-down') { closeSse(); go('#/') }
@@ -538,5 +548,5 @@ function harnessOriginNotice(configured, current) {
 // --- test exports (node --test evaluates this file through a CJS wrapper) ---
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { esc, isHttpsUrl, LABELS, harnessOriginNotice }
+  module.exports = { esc, isHttpsUrl, LABELS, harnessOriginNotice, buildSummary }
 }

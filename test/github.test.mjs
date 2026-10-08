@@ -8,10 +8,12 @@ const REPO = 'acme/widget'
 const PACKAGE = 'widget-app'
 const API = 'https://api.github.com'
 
-function response(status, body) {
+// `headers` is optional: most fakes have none, as the client must tolerate.
+function response(status, body, headers) {
   return {
     ok: status >= 200 && status < 300,
     status,
+    ...(headers ? { headers: { get: name => headers[name.toLowerCase()] ?? null } } : {}),
     async json() {
       return body
     },
@@ -510,4 +512,269 @@ test('without a packagesToken, token authorizes the package versions listing too
   await gh.listPrImageTags()
   await gh.listOpenPrs()
   assert.deepEqual(calls.map(c => c.options.headers.Authorization), [`Bearer ${TOKEN}`, `Bearer ${TOKEN}`])
+})
+
+// --- a failed preview run ends the image wait -----------------------------------
+
+// GitHub's clock when it accepted the dispatch: the response's Date header.
+const DISPATCHED_AT = 'Wed, 07 Oct 2026 12:00:00 GMT'
+const PREVIEW_SHA = 'c'.repeat(40)
+const PREVIEW_TAG = `pr-41-${'c'.repeat(12)}`
+const RUN_URL = id => `https://github.com/acme/widget/actions/runs/${id}`
+
+// A workflow run as GitHub lists it. By default, a run the dispatch started two
+// seconds after DISPATCHED_AT, of a workflow with no run-name: its title is the
+// workflow's name, so it doesn't name the PR.
+function previewRun(id, { status = 'in_progress', conclusion = null, createdAt = '2026-10-07T12:00:02Z', title = 'PR Preview Images', event = 'workflow_dispatch' } = {}) {
+  return {
+    id, html_url: RUN_URL(id), status, conclusion, event,
+    created_at: createdAt, run_started_at: createdAt,
+    display_title: title, head_branch: 'main', name: 'PR Preview Images',
+  }
+}
+
+// GitHub for the preview flow. `tags(poll)` and `runs(poll)` say what GHCR and
+// the runs listing hold at the nth package poll (1-based). `date` is the
+// dispatch response's Date header (null: none); setDispatchDate changes it.
+function previewWorld({ tags = () => [], runs = () => [], date = DISPATCHED_AT, runsStatus = 200 } = {}) {
+  let polls = 0
+  let dispatchDate = date
+  const { calls, fetchFn } = makeFetch((url, options) => {
+    if (url.endsWith('/dispatches')) return response(204, '', dispatchDate ? { date: dispatchDate } : undefined)
+    if (url.startsWith(`${API}/user/packages/`)) {
+      polls += 1
+      return response(200, [version(1, tags(polls), '2026-10-07T12:00:00Z')])
+    }
+    if (url.includes('/runs?')) return runsStatus === 200 ? response(200, { workflow_runs: runs(polls) }) : response(runsStatus, { message: 'boom' })
+    throw new Error(`unexpected ${options.method} ${url}`)
+  })
+  const sleeps = []
+  const sleepFn = async ms => { sleeps.push(ms) }
+  const gh = createGithub({ token: TOKEN, repo: REPO, fetchFn, packageName: PACKAGE })
+  return {
+    gh, calls, sleeps, sleepFn,
+    polls: () => polls,
+    runCalls: () => calls.filter(c => c.url.includes('/runs?')),
+    setDispatchDate: d => { dispatchDate = d },
+  }
+}
+
+for (const conclusion of ['failure', 'cancelled', 'timed_out']) {
+  test(`awaitPreviewImage rejects within one poll of the dispatched run concluding ${conclusion}, naming the conclusion and the run`, async () => {
+    const w = previewWorld({ runs: poll => [previewRun(7, poll < 3 ? {} : { status: 'completed', conclusion })] })
+    await w.gh.dispatchPreviewBuild(41)
+    await assert.rejects(
+      w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn }),
+      { message: `preview build failed (conclusion: ${conclusion}): ${RUN_URL(7)}` },
+    )
+    // concluded by the third poll, which ended the wait without another sleep
+    assert.equal(w.polls(), 3)
+    assert.deepEqual(w.sleeps, [15000, 15000])
+    const [lookup] = w.runCalls()
+    assert.equal(lookup.url, `${API}/repos/${REPO}/actions/workflows/pr-preview.yml/runs?event=workflow_dispatch&per_page=10`)
+    assert.equal(lookup.options.method, 'GET')
+    assertGithubHeaders(lookup.options)
+  })
+}
+
+test('a run created in the same second as the dispatch is the dispatch\'s run', async () => {
+  const w = previewWorld({ runs: () => [previewRun(7, { status: 'completed', conclusion: 'failure', createdAt: '2026-10-07T12:00:00Z' })] })
+  await w.gh.dispatchPreviewBuild(41)
+  await assert.rejects(w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn }), /preview build failed \(conclusion: failure\)/)
+  assert.equal(w.polls(), 1)
+})
+
+test('a failed run created before the dispatch does not end the wait, even one that names the PR', async () => {
+  const stale = () => [
+    previewRun(5, { status: 'completed', conclusion: 'failure', createdAt: '2026-10-07T11:59:59Z', title: 'Preview #41' }),
+    previewRun(4, { status: 'completed', conclusion: 'failure', createdAt: '2026-10-07T11:40:00Z' }),
+  ]
+  const w = previewWorld({ runs: stale, tags: poll => (poll >= 3 ? [PREVIEW_TAG] : []) })
+  await w.gh.dispatchPreviewBuild(41)
+  assert.equal(await w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn }), PREVIEW_TAG)
+  assert.deepEqual(w.sleeps, [15000, 15000])
+  assert.equal(w.runCalls().length, 2) // looked on each poll the tag was missing
+
+  const never = previewWorld({ runs: stale })
+  await never.gh.dispatchPreviewBuild(41)
+  await assert.rejects(
+    never.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: never.sleepFn, timeoutMs: 30000 }),
+    { message: `timed out after 30000ms waiting for GHCR tag ${PREVIEW_TAG}` },
+  )
+})
+
+test('dispatching again makes the earlier dispatch\'s failed run stale', async () => {
+  const w = previewWorld({
+    runs: () => [previewRun(7, { status: 'completed', conclusion: 'failure' })],
+    tags: poll => (poll >= 4 ? [PREVIEW_TAG] : []),
+  })
+  await w.gh.dispatchPreviewBuild(41)
+  await assert.rejects(w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn }), /preview build failed \(conclusion: failure\)/)
+  w.setDispatchDate('Wed, 07 Oct 2026 12:05:00 GMT')
+  await w.gh.dispatchPreviewBuild(41)
+  assert.equal(await w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn }), PREVIEW_TAG)
+})
+
+test('a run that concludes success keeps the wait going until the image appears', async () => {
+  const w = previewWorld({
+    runs: poll => [previewRun(7, poll < 2 ? {} : { status: 'completed', conclusion: 'success' })],
+    tags: poll => (poll >= 5 ? [PREVIEW_TAG] : []),
+  })
+  await w.gh.dispatchPreviewBuild(41)
+  assert.equal(await w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn }), PREVIEW_TAG)
+  assert.equal(w.polls(), 5)
+  assert.deepEqual(w.sleeps, [15000, 15000, 15000, 15000])
+})
+
+test('awaitPreviewImage looks up no runs for a PR this client did not dispatch', async () => {
+  const failed = () => [previewRun(7, { status: 'completed', conclusion: 'failure', createdAt: new Date(Date.now() + 60_000).toISOString(), title: 'Preview #41' })]
+  const w = previewWorld({ runs: failed })
+  await w.gh.dispatchPreviewBuild(42)
+  await assert.rejects(
+    w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn, timeoutMs: 30000 }),
+    { message: `timed out after 30000ms waiting for GHCR tag ${PREVIEW_TAG}` },
+  )
+  assert.equal(w.runCalls().length, 0)
+})
+
+test('awaitPreviewImage looks up no runs once the tag is there', async () => {
+  const w = previewWorld({ tags: () => [PREVIEW_TAG], runs: () => [previewRun(7, { status: 'completed', conclusion: 'failure' })] })
+  await w.gh.dispatchPreviewBuild(41)
+  assert.equal(await w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn }), PREVIEW_TAG)
+  assert.equal(w.runCalls().length, 0)
+})
+
+test('migrate: true waits for migrate-<tag> too, and resolves with the app tag', async () => {
+  const both = [PREVIEW_TAG, `migrate-${PREVIEW_TAG}`]
+  const w = previewWorld({ tags: poll => (poll < 2 ? [] : poll < 4 ? [PREVIEW_TAG] : both) })
+  assert.equal(await w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn, migrate: true }), PREVIEW_TAG)
+  assert.equal(w.polls(), 4)
+
+  // without it, the app image alone ends the wait, as before
+  const appOnly = previewWorld({ tags: () => [PREVIEW_TAG] })
+  assert.equal(await appOnly.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: appOnly.sleepFn }), PREVIEW_TAG)
+  assert.equal(appOnly.polls(), 1)
+
+  const lagging = previewWorld({ tags: () => [PREVIEW_TAG] })
+  await assert.rejects(
+    lagging.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: lagging.sleepFn, migrate: true, timeoutMs: 15000 }),
+    { message: `timed out after 15000ms waiting for GHCR tag migrate-${PREVIEW_TAG}` },
+  )
+})
+
+test('migrate: true finds the two tags on different package versions and pages', async () => {
+  const filler = Array.from({ length: 98 }, (_, i) => version(100 + i, [`pr-9-${String(i).padStart(12, '0')}`], '2026-10-01T00:00:00Z'))
+  const page1 = [version(1, [PREVIEW_TAG], '2026-10-07T12:01:00Z'), ...filler, version(2, ['latest'], '2026-10-07T12:00:00Z')]
+  const page2 = [version(3, [`migrate-${PREVIEW_TAG}`], '2026-10-07T12:02:00Z')]
+  const { calls, fetchFn } = makeFetch(url => response(200, url.endsWith('&page=1') ? page1 : page2))
+  const gh = createGithub({ token: TOKEN, repo: REPO, fetchFn, packageName: PACKAGE })
+  assert.equal(await gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: async () => {}, migrate: true }), PREVIEW_TAG)
+  assert.equal(calls.length, 2) // one walk of both pages
+})
+
+test('migrate: true: the run\'s conclusion ends the wait for the migrate image too', async () => {
+  const w = previewWorld({
+    tags: () => [PREVIEW_TAG], // the app image was pushed; the migrate image never is
+    runs: poll => [previewRun(7, poll < 2 ? {} : { status: 'completed', conclusion: 'failure' })],
+  })
+  await w.gh.dispatchPreviewBuild(41)
+  await assert.rejects(
+    w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn, migrate: true }),
+    { message: `preview build failed (conclusion: failure): ${RUN_URL(7)}` },
+  )
+  assert.equal(w.polls(), 2)
+})
+
+test('onRun hears the dispatched run each time its status or conclusion changes, the failing conclusion included', async () => {
+  const states = [null, { status: 'queued' }, { status: 'queued' }, {}, {}, { status: 'completed', conclusion: 'failure' }]
+  const w = previewWorld({ runs: poll => (states[poll - 1] ? [previewRun(7, states[poll - 1])] : []) })
+  const heard = []
+  await w.gh.dispatchPreviewBuild(41)
+  await assert.rejects(
+    w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn, onRun: run => { heard.push(run) } }),
+    /preview build failed \(conclusion: failure\)/,
+  )
+  const seen = (status, conclusion = null) => ({ url: RUN_URL(7), status, conclusion, startedAt: '2026-10-07T12:00:02Z' })
+  assert.deepEqual(heard, [seen('queued'), seen('in_progress'), seen('completed', 'failure')])
+})
+
+test('an onRun that throws or rejects does not change the wait', async () => {
+  for (const onRun of [() => { throw new Error('ui gone') }, async () => { throw new Error('ui gone') }]) {
+    const w = previewWorld({
+      runs: poll => [previewRun(7, poll < 2 ? {} : { status: 'completed', conclusion: 'success' })],
+      tags: poll => (poll >= 3 ? [PREVIEW_TAG] : []),
+    })
+    await w.gh.dispatchPreviewBuild(41)
+    assert.equal(await w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn, onRun }), PREVIEW_TAG)
+  }
+})
+
+test('a runs lookup that fails does not end the wait', async () => {
+  const w = previewWorld({ runsStatus: 500, tags: poll => (poll >= 3 ? [PREVIEW_TAG] : []) })
+  await w.gh.dispatchPreviewBuild(41)
+  assert.equal(await w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn }), PREVIEW_TAG)
+  assert.equal(w.runCalls().length, 2)
+})
+
+test('several runs since the dispatch, none naming the PR: none of them ends the wait', async () => {
+  const w = previewWorld({
+    runs: () => [
+      previewRun(8, { status: 'completed', conclusion: 'failure', createdAt: '2026-10-07T12:00:03Z' }),
+      previewRun(7, { status: 'completed', conclusion: 'failure', createdAt: '2026-10-07T12:00:02Z' }),
+    ],
+  })
+  await w.gh.dispatchPreviewBuild(41)
+  await assert.rejects(w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn, timeoutMs: 30000 }), /^Error: timed out/)
+})
+
+test('a lone run since the dispatch whose title names something else is not the dispatch\'s run', async () => {
+  const w = previewWorld({ runs: () => [previewRun(9, { status: 'completed', conclusion: 'failure', title: 'Preview #99' })] })
+  await w.gh.dispatchPreviewBuild(41)
+  await assert.rejects(w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn, timeoutMs: 30000 }), /^Error: timed out/)
+})
+
+test('the earliest run since the dispatch that names the PR is the dispatch\'s run, whatever else started', async () => {
+  const ours = poll => previewRun(8, { title: 'Preview #41', createdAt: '2026-10-07T12:00:04Z', ...(poll < 2 ? {} : { status: 'completed', conclusion: 'cancelled' }) })
+  const w = previewWorld({
+    runs: poll => [
+      previewRun(10, { title: 'Preview #41', createdAt: '2026-10-07T12:00:09Z' }),
+      ours(poll),
+      previewRun(9, { status: 'completed', conclusion: 'failure', createdAt: '2026-10-07T12:00:01Z', title: 'Preview #99' }),
+    ],
+  })
+  await w.gh.dispatchPreviewBuild(41)
+  await assert.rejects(
+    w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn }),
+    { message: `preview build failed (conclusion: cancelled): ${RUN_URL(8)}` },
+  )
+  assert.equal(w.polls(), 2)
+})
+
+test('a run another event started is never the dispatch\'s run', async () => {
+  const w = previewWorld({ runs: () => [previewRun(7, { status: 'completed', conclusion: 'failure', event: 'pull_request', title: 'Preview #41' })] })
+  await w.gh.dispatchPreviewBuild(41)
+  await assert.rejects(w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn, timeoutMs: 30000 }), /^Error: timed out/)
+})
+
+test('without a Date header on the dispatch response, the local clock marks the dispatch', async () => {
+  const failedAt = offsetMs => () => [previewRun(7, { status: 'completed', conclusion: 'failure', createdAt: new Date(Date.now() + offsetMs).toISOString() })]
+  const stale = previewWorld({ date: null, runs: failedAt(-60_000) })
+  await stale.gh.dispatchPreviewBuild(41)
+  await assert.rejects(stale.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: stale.sleepFn, timeoutMs: 15000 }), /^Error: timed out/)
+
+  const fresh = previewWorld({ date: null, runs: failedAt(60_000) })
+  await fresh.gh.dispatchPreviewBuild(41)
+  await assert.rejects(fresh.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: fresh.sleepFn }), /preview build failed \(conclusion: failure\)/)
+})
+
+test('an abort during the runs lookup ends the wait as an abort, not a build failure', async () => {
+  const ac = new AbortController()
+  const w = previewWorld({ runs: () => { ac.abort(); return [previewRun(7, { status: 'completed', conclusion: 'failure' })] } })
+  await w.gh.dispatchPreviewBuild(41)
+  const heard = []
+  await assert.rejects(
+    w.gh.awaitPreviewImage(41, PREVIEW_SHA, { sleepFn: w.sleepFn, signal: ac.signal, onRun: run => { heard.push(run) } }),
+    err => err.name === 'AbortError',
+  )
+  assert.deepEqual(heard, [])
 })

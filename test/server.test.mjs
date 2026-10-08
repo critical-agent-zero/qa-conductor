@@ -6,6 +6,7 @@ import http from 'node:http'
 import net from 'node:net'
 
 import { startConductor } from '../lib/server.mjs'
+import { createGithub } from '../lib/github.mjs'
 
 function deferred() {
   let resolve, reject
@@ -1188,11 +1189,67 @@ test('a build progress message reaches SSE and /api/state', async () => {
     notify({ message: 'installing dependencies for #7 (abc1234)…' })
     const events = await sseEvents(port, evs => evs.some(e => e.kind === 'build'))
     const ev = events.find(e => e.kind === 'build')
-    assert.deepEqual({ ...ev, at: undefined }, { at: undefined, kind: 'build', runUrl: null, runStatus: null, message: 'installing dependencies for #7 (abc1234)…' })
-    assert.deepEqual((await api(port, 'GET', '/api/state')).buildRun, { url: null, status: null, message: 'installing dependencies for #7 (abc1234)…' })
+    assert.deepEqual({ ...ev, at: undefined }, { at: undefined, kind: 'build', runUrl: null, runStatus: null, runConclusion: null, message: 'installing dependencies for #7 (abc1234)…' })
+    assert.deepEqual((await api(port, 'GET', '/api/state')).buildRun, { url: null, status: null, conclusion: null, message: 'installing dependencies for #7 (abc1234)…' })
 
     notify({ runUrl: 'https://github.com/acme/widget/actions/runs/1', runStatus: 'in_progress' })
-    assert.deepEqual((await api(port, 'GET', '/api/state')).buildRun, { url: 'https://github.com/acme/widget/actions/runs/1', status: 'in_progress', message: null })
+    assert.deepEqual((await api(port, 'GET', '/api/state')).buildRun, { url: 'https://github.com/acme/widget/actions/runs/1', status: 'in_progress', conclusion: null, message: null })
+  } finally { c.stop() }
+})
+
+test('a run\'s conclusion reaches SSE and /api/state beside its status', async () => {
+  const RUN = 'https://github.com/acme/widget/actions/runs/7'
+  const hang = { 7: deferred() }
+  const { c, adapters } = makeWorld({ hang })
+  let notify = null
+  adapters.build.subscribeBuild = cb => { notify = cb }
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(() => notify)
+    notify({ runUrl: RUN, runStatus: 'completed', runConclusion: 'failure' })
+    const events = await sseEvents(port, evs => evs.some(e => e.kind === 'build'))
+    const ev = events.find(e => e.kind === 'build')
+    assert.deepEqual({ ...ev, at: undefined }, { at: undefined, kind: 'build', runUrl: RUN, runStatus: 'completed', runConclusion: 'failure', message: null })
+    assert.deepEqual((await api(port, 'GET', '/api/state')).buildRun, { url: RUN, status: 'completed', conclusion: 'failure', message: null })
+  } finally { c.stop() }
+})
+
+// A BuildConvention built on createGithub's preview helpers, end to end: the
+// dispatched run fails, the boot fails at ensuring-image without waiting out
+// the image timeout, and buildRun ends on the run's conclusion.
+test('a preview run that fails ends the boot at ensuring-image, and buildRun keeps its conclusion', async () => {
+  const RUN = 'https://github.com/acme/widget/actions/runs/7'
+  let run = { status: 'queued', conclusion: null }
+  const reply = (status, body, headers = {}) => ({ ok: true, status, headers: new Headers(headers), json: async () => body, text: async () => '' })
+  const fetchFn = async url => {
+    if (url.endsWith('/dispatches')) return reply(204, null, { date: 'Wed, 07 Oct 2026 12:00:00 GMT' })
+    if (url.includes('/user/packages/')) return reply(200, [])
+    if (url.includes('/runs?')) {
+      return reply(200, { workflow_runs: [{ html_url: RUN, event: 'workflow_dispatch', created_at: '2026-10-07T12:00:03Z', name: 'Preview', display_title: 'Preview', head_branch: 'main', ...run }] })
+    }
+    throw new Error(`unexpected ${url}`)
+  }
+  const gh = createGithub({ token: 't', repo: 'acme/widget', fetchFn, packageName: 'widget' })
+  const { c, adapters } = makeWorld()
+  let onBuild = null
+  let sleeps = 0
+  adapters.build.subscribeBuild = cb => { onBuild = cb }
+  adapters.build.ensureBuilt = async (pr, { signal } = {}) => {
+    await gh.dispatchPreviewBuild(pr)
+    await gh.awaitPreviewImage(pr, 'a'.repeat(40), {
+      signal,
+      sleepFn: async () => { if (++sleeps === 2) run = { status: 'completed', conclusion: 'failure' } },
+      onRun: r => onBuild({ runUrl: r.url, runStatus: r.status, runConclusion: r.conclusion }),
+    })
+  }
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const st = await waitFor(async () => { const s = await api(port, 'GET', '/api/state'); return s.status === 'error' && s })
+    assert.deepEqual(st.error, { step: 'ensuring-image', message: `preview build failed (conclusion: failure): ${RUN}` })
+    assert.deepEqual(st.buildRun, { url: RUN, status: 'completed', conclusion: 'failure', message: null })
+    assert.equal(sleeps, 2) // the poll after the run concluded ended the wait
   } finally { c.stop() }
 })
 
@@ -1487,8 +1544,8 @@ test('the harness shows the sweep wait only while the sweep is pending', async (
     await api(port, 'POST', '/api/session', { pr: 7 })
     const waiting = await sseEvents(port, evs => evs.some(e => e.kind === 'build'))
     const ev = waiting.find(e => e.kind === 'build')
-    assert.deepEqual({ ...ev, at: undefined }, { at: undefined, kind: 'build', runUrl: null, runStatus: null, message: WAITING })
-    assert.deepEqual((await api(port, 'GET', '/api/state')).buildRun, { url: null, status: null, message: WAITING })
+    assert.deepEqual({ ...ev, at: undefined }, { at: undefined, kind: 'build', runUrl: null, runStatus: null, runConclusion: null, message: WAITING })
+    assert.deepEqual((await api(port, 'GET', '/api/state')).buildRun, { url: null, status: null, conclusion: null, message: WAITING })
 
     // once the sweep settles the message is replaced before the boot moves on
     sweepGate.resolve()

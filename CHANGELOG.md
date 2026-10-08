@@ -4,6 +4,12 @@ What changed in each release, newest first. A 0.x minor version may break the in
 
 ## [Unreleased]
 
+### Preview builds
+
+- **A failed preview build fails the boot at once.** `awaitPreviewImage` polled GHCR only, so when the preview run it waited for failed, a boot stayed at `ensuring-image` for the whole `timeoutMs` (15 minutes by default) and then reported a timeout. Now, after this client's `dispatchPreviewBuild(num)`, each poll that misses the image also looks up the run that dispatch started, one more Actions API request per poll. A run that completes with any conclusion but `success` rejects the wait within one `pollMs`: `preview build failed (conclusion: failure): <run url>`. Only a `workflow_dispatch` run created at or after the dispatch counts, so an older failed run for the same PR can't end a fresh build's wait. A `success` keeps the wait polling, since GHCR can lag the run. A BuildConvention that dispatches with `dispatchPreviewBuild` and waits with `awaitPreviewImage` gets this without changes. A wait for a build the same client didn't dispatch polls GHCR only, as before.
+- **`awaitPreviewImage` can wait for the migrate image too.** With `migrate: true` it also waits for `migrate-<tag>`, and the run's conclusion ends that wait the same way.
+- **A build's conclusion reaches the harness.** `awaitPreviewImage` takes `onRun(run)`, which hears the dispatched run each time its status or conclusion changes, so a BuildConvention can pass it on to `subscribeBuild`'s callback. A BuildEvent gains `runConclusion`, the SSE `build` event carries it, and `/api/state`'s `buildRun` gains `conclusion` (`null` until a run reports one). The harness names a completed run's conclusion when it isn't `success`, as in `Build ended: failure`, where it said `Build complete`. A consumer test that compares `buildRun` or the `build` event whole must add the new field.
+
 ## [0.3.1] — 2026-10-07
 
 Cookie isolation for the panes, a stricter `.env.qa` parser, seams that may be async, and the documentation a public package needs: a README to start from, `CONTRIBUTING.md` and `SECURITY.md`. It is a patch release, but its cookie and `.env.qa` fixes break consumers that relied on what 0.3.0 did: read [Migrating from 0.3.0](#migrating-from-030) before upgrading.

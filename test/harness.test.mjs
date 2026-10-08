@@ -11,10 +11,24 @@ import { dirname, join } from 'node:path'
 const harnessPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'harness.js')
 const cjsModule = { exports: {} }
 new Function('module', 'exports', readFileSync(harnessPath, 'utf8'))(cjsModule, cjsModule.exports)
-const { esc, isHttpsUrl, LABELS, harnessOriginNotice } = cjsModule.exports
+const { esc, isHttpsUrl, LABELS, harnessOriginNotice, buildSummary } = cjsModule.exports
 
 test('the CJS guard exports the pure helpers only', () => {
-  assert.deepEqual(Object.keys(cjsModule.exports).sort(), ['LABELS', 'esc', 'harnessOriginNotice', 'isHttpsUrl'])
+  assert.deepEqual(Object.keys(cjsModule.exports).sort(), ['LABELS', 'buildSummary', 'esc', 'harnessOriginNotice', 'isHttpsUrl'])
+})
+
+test('buildSummary: the message, else the run\'s status, naming a conclusion other than success', () => {
+  const url = 'https://github.com/acme/widget/actions/runs/7'
+  assert.equal(buildSummary({ message: 'installing dependencies for #7 (abc1234)…', status: 'in_progress' }), 'installing dependencies for #7 (abc1234)…')
+  assert.equal(buildSummary({}), 'Build started')
+  assert.equal(buildSummary({ url, status: 'queued' }), 'Build queued')
+  assert.equal(buildSummary({ url }), 'Build in progress')
+  assert.equal(buildSummary({ url, status: 'completed' }), 'Build complete')
+  assert.equal(buildSummary({ url, status: 'completed', conclusion: 'success' }), 'Build complete')
+  assert.equal(buildSummary({ url, status: 'completed', conclusion: 'failure' }), 'Build ended: failure')
+  assert.equal(buildSummary({ url, status: 'completed', conclusion: 'timed_out' }), 'Build ended: timed out')
+  // a conclusion before completion (not GitHub's way) says nothing new
+  assert.equal(buildSummary({ url, status: 'in_progress', conclusion: 'failure' }), 'Build in_progress')
 })
 
 test('harnessOriginNotice: null at the configured origin or with none configured, else the configured origin + /qa/', () => {
