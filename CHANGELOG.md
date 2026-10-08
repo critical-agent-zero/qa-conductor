@@ -34,9 +34,10 @@ What changed in each release, newest first. A 0.x minor version may break the in
 ### Releases
 
 - **The npm token never meets the repository's code, and only `main` is released.** The publish workflow is now two jobs.
-  - **`test`** checks the tag, runs the tests and packs the tarball, with no secrets and no `id-token`.
-  - **`publish`** waits for a maintainer to approve the `npm-release` environment. It then checks that the tagged commit is on `main`, and stages the test job's tarball with provenance. It checks out nothing and runs no repository code.
-  - **What's refused:** a `v*` tag on a commit `main` hasn't merged fails before anything is staged. The staged version still goes live only once a maintainer approves it on npmjs.com.
+  - **`test`** first checks that the tagged commit was `main` itself: an ancestor of `main` on its first-parent line, as a release's merge commit is. It then checks the tag, runs the tests and packs the tarball, with no secrets and no `id-token`.
+  - **`publish`** waits for a maintainer to approve the `npm-release` environment, checks the commit again, and stages the test job's tarball with provenance. It checks out nothing and runs no repository code.
+  - **What's refused:** a `v*` tag on any other commit fails before anyone is asked to approve it. That covers a branch, a pull request, or a release branch's own commit, even once merged.
+  - **What holds against an edited workflow:** since a tag runs the workflow file of the commit it names, it is the environment approval, and the token living in that environment alone. The staged version still goes live only once a maintainer approves it on npmjs.com.
 
 ## [0.3.1] — 2026-10-07
 

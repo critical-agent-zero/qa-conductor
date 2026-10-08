@@ -91,6 +91,10 @@ function jobSteps(lines) {
     assert.ok(text !== undefined && (item || steps.length), `"${line.trim()}" belongs to a step`)
     if (item) steps.push({})
     const field = /^([\w-]+):(?: (.*))?$/.exec(text)
+    // At a step key's own indent, only a plain key: YAML also reads
+    // `"if": false` or `if : false` as one, which the check must not take for
+    // more of the previous key's value.
+    assert.ok(field || !(item || /^ {8}\S/.test(line)), `"${line.trim()}" is a plain step key`)
     if (field) {
       key = field[1]
       assert.ok(!(key in steps.at(-1)), `a step sets ${key} once`)
@@ -142,9 +146,13 @@ function jobsOf(block) {
 // npm pack names the tarball <scope>-<name>-<version>.tgz.
 const TARBALL = pkg.name.replace(/^@/, '').replace('/', '-')
 const ON_MAIN = 'Check the tagged commit is on main'
+const ON_MAIN_EARLY = 'Check the tagged commit is on main, before the approval'
 const TARBALL_CHECK = 'Check the tarball is the tag\'s version'
 // `./` makes it a file: npm reads release/x.tgz as the GitHub repo release/x.tgz.
-const STAGE_RUN = `npm stage publish "./release/${TARBALL}-\${GITHUB_REF_NAME#v}.tgz" --access public`
+// --registry: a tarball's publishConfig.registry outranks the user config.
+const STAGE_RUN = `npm stage publish "./release/${TARBALL}-\${GITHUB_REF_NAME#v}.tgz" --access public --registry https://registry.npmjs.org/`
+// One npm, by exact version: the job that runs it holds the token.
+const NPM_UPGRADE = 'npm install -g --ignore-scripts npm@11.21.0'
 // The publish job's two scripts, whole: it runs git, ls and npm stage, and no
 // code from the repository.
 const ON_MAIN_SCRIPT = [
@@ -153,6 +161,11 @@ const ON_MAIN_SCRIPT = [
   'git fetch --quiet --no-tags "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" +refs/heads/main:refs/remotes/origin/main',
   'if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then',
   '  echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main: tag a commit main has merged"',
+  '  exit 1',
+  'fi',
+  'git rev-list --first-parent refs/remotes/origin/main > "$RUNNER_TEMP/main-first-parent"',
+  'if ! grep -qxF "$GITHUB_SHA" "$RUNNER_TEMP/main-first-parent"; then',
+  '  echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) was merged into main but never was main: tag main\'s merge commit"',
   '  exit 1',
   'fi',
 ].join('\n')
@@ -165,6 +178,8 @@ const TARBALL_CHECK_SCRIPT = [
   'fi',
 ].join('\n')
 const SHA_PINNED = /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}( # \S+)?$/
+// A `run: |` step's lines as jobSteps reads them.
+const runLines = script => ['|', ...script.split('\n').map(line => line.trim())]
 
 // Throws unless the workflow runs on v* tags only, in two jobs:
 // - test: no secrets and no id-token; it checks the tag, runs the tests and
@@ -204,8 +219,8 @@ function assertStagesOnly(text) {
   // working-directory).
   assert.deepEqual(
     test.steps.map(step => Object.keys(step).join(' ')),
-    ['uses with', 'uses with', 'name run', 'run', 'run', 'uses with'],
-    'test: checkout, setup-node, the tag check, npm test, npm pack, the upload, and nothing else',
+    ['name run', 'uses with', 'uses with', 'name run', 'run', 'run', 'uses with'],
+    'test: the on-main check, checkout, setup-node, the tag check, npm test, npm pack, the upload, and nothing else',
   )
   assert.deepEqual(
     publish.steps.map(step => Object.keys(step).join(' ')),
@@ -216,7 +231,11 @@ function assertStagesOnly(text) {
     assert.match(step.uses[0], SHA_PINNED, `${step.uses[0]} is pinned to a commit SHA`)
   }
 
-  const [checkout, testNode, tagCheck, tests, pack, upload] = test.steps
+  const [earlyOnMain, checkout, testNode, tagCheck, tests, pack, upload] = test.steps
+  // The same check as publish's, first and before any checkout, so a tag on
+  // a commit main never was fails before anyone is asked to approve it.
+  assert.deepEqual(earlyOnMain.name, [ON_MAIN_EARLY])
+  assert.deepEqual(earlyOnMain.run, runLines(ON_MAIN_SCRIPT), 'the early on-main check is publish\'s, word for word')
   assert.match(checkout.uses[0], /^actions\/checkout@/)
   assert.deepEqual(checkout.with, ['', 'persist-credentials: false'])
   assert.match(testNode.uses[0], /^actions\/setup-node@/)
@@ -230,15 +249,14 @@ function assertStagesOnly(text) {
 
   const [onMain, publishNode, upgrade, download, tarballCheck, stage] = publish.steps
   assert.deepEqual(onMain.name, [ON_MAIN])
-  assert.equal(onMain.run[0], '|')
-  assert.equal(stepScript(text, ON_MAIN), ON_MAIN_SCRIPT, 'the on-main check runs git alone, first')
+  assert.deepEqual(onMain.run, runLines(ON_MAIN_SCRIPT), 'the on-main check runs git alone, first')
   assert.match(publishNode.uses[0], /^actions\/setup-node@/)
   assert.deepEqual(publishNode.with, ['', 'node-version: 22', 'registry-url: https://registry.npmjs.org', 'package-manager-cache: false'], 'no cache a release could restore')
-  assert.deepEqual(upgrade.run, ['npm install -g npm@^11.15.0'], 'staged publishing needs npm 11.15')
+  assert.deepEqual(upgrade.run, [NPM_UPGRADE], 'staged publishing needs npm 11.15 or later; this one, exactly')
   assert.match(download.uses[0], /^actions\/download-artifact@/)
   assert.deepEqual(download.with, ['', 'name: tarball', 'path: release'])
   assert.deepEqual(tarballCheck.name, [TARBALL_CHECK])
-  assert.equal(stepScript(text, TARBALL_CHECK), TARBALL_CHECK_SCRIPT)
+  assert.deepEqual(tarballCheck.run, runLines(TARBALL_CHECK_SCRIPT))
   assert.deepEqual(stage.run, [STAGE_RUN])
   assert.deepEqual(stage.env, ['', 'NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}', 'NPM_CONFIG_PROVENANCE: "true"'], 'the stage step gets the token')
 
@@ -248,7 +266,7 @@ function assertStagesOnly(text) {
   // environment's name, pinned above, is a name, not a command.)
   assert.deepEqual(
     lines.filter(line => /\bnp[mx]\b/.test(line) && line !== '    environment: npm-release').map(line => line.trim()),
-    ['- run: npm test', '- run: npm pack', '- run: npm install -g npm@^11.15.0', `run: ${STAGE_RUN}`],
+    ['- run: npm test', '- run: npm pack', `- run: ${NPM_UPGRADE}`, `run: ${STAGE_RUN}`],
     'every npm or npx command is one of the four the workflow needs',
   )
   // No third-party publish action or other publisher (pnpm, yarn): apart from
@@ -263,7 +281,8 @@ function assertStagesOnly(text) {
     ['NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}'],
     'the token is the only expression, so it reaches the stage step alone',
   )
-  assert.doesNotMatch(lines.join('\n'), /^\s*(-\s+)?(if|continue-on-error):/m, 'no gate can be skipped or allowed to fail')
+  // Quoted or spaced too: YAML reads `"if": false` and `if : false` as keys.
+  assert.doesNotMatch(lines.join('\n'), /^\s*(-\s+)?["']?(if|continue-on-error)["']?\s*:/m, 'no gate can be skipped or allowed to fail')
 }
 
 // The `run: |` block of the step with this name, dedented.
@@ -271,6 +290,9 @@ function stepScript(yaml, name) {
   const lines = yaml.split('\n')
   const at = lines.findIndex(line => line.trim() === `- name: ${name}`)
   assert.ok(at >= 0, `the publish workflow has no step named "${name}"`)
+  // Once: a second match, such as a decoy inside another step's script, could
+  // stand in for the real one.
+  assert.equal(lines.filter(line => line.trim() === `- name: ${name}`).length, 1, `one line names the step "${name}"`)
   const stepIndent = lines[at].indexOf('-')
   for (let i = at + 1; i < lines.length; i++) {
     const indent = lines[i].search(/\S/)
@@ -538,11 +560,20 @@ test('the workflow check refuses a publish, a skippable gate, a token or id-toke
     return text.replace(from, to)
   }
   const after = (anchor, ...lines) => replace(anchor, `${anchor}${lines.map(line => `${line}\n`).join('')}`)
-  // The on-main step, from its name to the end of its script.
+  // The on-main script is in both jobs: this edits its last copy, publish's.
+  const replaceLast = (from, to) => text => {
+    const at = text.lastIndexOf(from)
+    assert.ok(at >= 0, `the workflow has ${JSON.stringify(from)}`)
+    return text.slice(0, at) + to + text.slice(at + from.length)
+  }
+  const EARLY_STEP = `      - name: ${ON_MAIN_EARLY}\n`
+  const TARBALL_STEP = `      - name: ${TARBALL_CHECK}\n`
+  // The on-main step, from its name to the start of the next step.
   const onMainStep = text => {
     const start = text.indexOf(ON_MAIN_STEP)
     assert.ok(start >= 0, 'the workflow has the on-main step')
-    const end = text.indexOf('          fi\n', start) + '          fi\n'.length
+    const end = text.indexOf('\n      - ', start + ON_MAIN_STEP.length) + 1
+    assert.ok(end > start, 'a step follows the on-main step')
     return text.slice(start, end)
   }
   const mutations = {
@@ -581,6 +612,30 @@ test('the workflow check refuses a publish, a skippable gate, a token or id-toke
     'a repository script in the publish job': replace(STAGE_NAME, `      - run: node scripts/release.mjs\n${STAGE_NAME}`),
     'a repository script in the on-main check': after(FETCH, '          node ./scripts/check.mjs'),
     'the on-main check made to pass': replace('if ! git merge-base', 'if false && ! git merge-base'),
+    'publish\'s on-main check made to pass': replaceLast('if ! git merge-base', 'if false && ! git merge-base'),
+    'a repository script in publish\'s on-main check': replaceLast(FETCH, `${FETCH}          node ./scripts/check.mjs\n`),
+    'no first-parent check': replace('if ! grep -qxF "$GITHUB_SHA" "$RUNNER_TEMP/main-first-parent"; then', 'if false; then'),
+    'no first-parent check in publish': replaceLast('if ! grep -qxF "$GITHUB_SHA" "$RUNNER_TEMP/main-first-parent"; then', 'if false; then'),
+    'no early on-main check': text => {
+      const start = text.indexOf(EARLY_STEP)
+      assert.ok(start >= 0, 'the workflow has the early on-main step')
+      return text.slice(0, start) + text.slice(text.indexOf('\n      - ', start + EARLY_STEP.length) + 1)
+    },
+    '"if": false on the on-main step, quoted': after(ON_MAIN_STEP, '        "if": false'),
+    'if : false on the on-main step, spaced': after(ON_MAIN_STEP, '        if : false'),
+    '\'continue-on-error\': true on the tarball check, quoted': after(TARBALL_STEP, '        \'continue-on-error\': true'),
+    '"shell": node {0} on the tarball check': after(TARBALL_STEP, '        "shell": node {0}'),
+    'if: false on the early on-main step': after(EARLY_STEP, '        if: false'),
+    'a decoy on-main step in the tag check\'s script, the real one made to pass': text => {
+      const decoy = ['          cat <<\'DECOY\'', `          - name: ${ON_MAIN}`, '            run: |', ...ON_MAIN_SCRIPT.split('\n').map(line => `              ${line}`), '          DECOY']
+      return replaceLast('if ! git merge-base', 'if false && ! git merge-base')(after('          fi\n', ...decoy)(text))
+    },
+    'npm by version range': replace(NPM_UPGRADE, 'npm install -g npm@^11.15.0'),
+    'no registry on the stage': replace(' --access public --registry https://registry.npmjs.org/', ' --access public'),
+    'the first-parent list piped into grep -q': replace(
+      'git rev-list --first-parent refs/remotes/origin/main > "$RUNNER_TEMP/main-first-parent"\n          if ! grep -qxF "$GITHUB_SHA" "$RUNNER_TEMP/main-first-parent"; then',
+      'if ! git rev-list --first-parent refs/remotes/origin/main | grep -qxF "$GITHUB_SHA"; then',
+    ),
     'the on-main check after the stage': text => {
       const step = onMainStep(text)
       return text.replace(step, '') + step
@@ -662,13 +717,14 @@ async function releaseRepo(t) {
   return { root, env, server: pathToFileURL(path.join(root, 'server')).href, first, second, side, merged, tip }
 }
 
-test('the publish job\'s on-main check passes a commit main has merged, and stops any other with an error naming the tag', { timeout: 60_000 }, async t => {
+test('the publish job\'s on-main check passes a commit that was main itself, and stops any other with an error naming the tag', { timeout: 60_000 }, async t => {
   const script = stepScript(readFileSync(WORKFLOW, 'utf8'), ON_MAIN)
   const repo = await releaseRepo(t)
-  // GitHub runs a step's script as bash -e; the tag, SHA and URLs reach it as
-  // the runner's env, never as ${{ }} expressions spliced into shell source.
+  // GitHub runs a step's script as bash -eo pipefail; the tag, SHA and URLs
+  // reach it as the runner's env, never as ${{ }} expressions spliced into
+  // shell source.
   assert.doesNotMatch(script, /\$\{\{/)
-  const run = sha => execFileP('bash', ['-e', '-c', script], {
+  const run = sha => execFileP('bash', ['-e', '-o', 'pipefail', '-c', script], {
     cwd: repo.root,
     timeout: 20_000,
     env: {
@@ -680,10 +736,15 @@ test('the publish job\'s on-main check passes a commit main has merged, and stop
       RUNNER_TEMP: mkdtempSync(path.join(repo.root, 'runner-')),
     },
   })
-  for (const sha of [repo.first, repo.second, repo.merged, repo.tip]) await run(sha)
+  // Main's own commits, the merge commit among them: what a release tags.
+  for (const sha of [repo.first, repo.second, repo.tip]) await run(sha)
+  // Never merged, or unknown: not on main at all.
   for (const sha of [repo.side, 'f'.repeat(40)]) {
     await assert.rejects(run(sha), err => err.code === 1 && err.stdout.includes(`::error::v1.2.3 (${sha}) is not on main`), sha)
   }
+  // Merged, but never main itself: a release branch's own commit, or one
+  // from inside a pull request. Its tree is not what main was.
+  await assert.rejects(run(repo.merged), err => err.code === 1 && err.stdout.includes(`::error::v1.2.3 (${repo.merged}) was merged into main but never was main`), 'merged')
 })
 
 test('the publish job\'s tarball check passes only a release directory that holds the tag\'s tarball and nothing else', { timeout: 30_000 }, async t => {
