@@ -613,7 +613,9 @@ test('with a gated conductor on each port, mounts all three, then exits 1 becaus
   try {
     const w = world()
     const proxy = `http://127.0.0.1:${t.ports[3]}`
-    const env = { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: proxy, http_proxy: proxy }
+    // NODE_NO_WARNINGS: a Node 22 that knows NODE_USE_ENV_PROXY warns on
+    // stderr that its proxy agent is experimental.
+    const env = { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: proxy, http_proxy: proxy, NODE_NO_WARNINGS: '1' }
     const started = Date.now()
     const r = await w.run(['--env', w.envFile([...FIXTURE, ...portLines(t.ports)]), '--tailscale', w.shim('tailscale')], { env })
     // No probe timer outlives its answer to hold the process: one that did
