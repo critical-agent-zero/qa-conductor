@@ -390,11 +390,11 @@ The other options are `healthTimeoutMs` (60000, per service), `host` (`127.0.0.1
 
 ### Built in: `adapters/provisioner-docker` (Docker Provisioner)
 
-A Provisioner that runs each pane as two containers on the host's Docker daemon, a postgres one and an app one. It writes each pane's env to an owner-only file for `docker run --env-file`, logs in to the registry, runs one-shot migrations, and at startup removes whatever an earlier run left behind.
+A Provisioner that runs each pane as two containers on the host's Docker daemon, a postgres one and an app one. It writes each pane's env to an owner-only file for `docker run --env-file`, logs in to the registry, runs one-shot migrations, and at startup removes the containers, networks and env files an earlier run left behind.
 
 It keeps the panes apart:
 - **A network per pane.** Each pane's containers join a network of their own. On Docker Engine with its default iptables rules, the PR pane's containers can then neither resolve nor reach the base pane's. The conductor needs no shared network: it reaches the apps through their host ports and the databases through `docker exec`.
-- **A database password per pane, drawn for each boot,** unless you set `postgres.password`. Only that pane's `dsn` carries it, so a PR that reached the other pane's database still couldn't sign in.
+- **A database password per pane, drawn for each boot,** unless you set `postgres.password`. Only that pane's `dsn` carries it. So a PR that reached the other pane's database still couldn't sign in, as long as the image sets up its database from `POSTGRES_PASSWORD` and asks for a password over TCP, as the official `postgres` image does. See `createDocker`'s `postgres.image` under [Effect wrappers](#effect-wrappers) for images that don't.
 
 Its limits, below, say what the networks and passwords don't separate, and [Known limits](#known-limits) what no Provisioner separates.
 
@@ -417,8 +417,8 @@ const provisioner = createDockerProvisioner({
 | `docker` | *(required)* | a `createDocker(...)` ([Effect wrappers](#effect-wrappers)) |
 | `fsx` | *(required)* | `{ writeFile, unlink }`, such as `fs.promises`: writes the env files, mode `0600`, and removes them at teardown |
 | `workDir` | *(required)* | the directory the env files go in, as `.env.qa-base` and `.env.qa-pr`. The `docker` CLI reads them by path, so it must see the same directory |
-| `network` | `'qa-session'` | each pane's Docker network: a prefix, so `qa-session-base` and `qa-session-pr`, or `{ base, pr }` to name both. A name, and a prefix, must be letters, digits, `_`, `.` and `-`, and not all hex digits, which Docker would also read as part of a network id. Two panes on one network, or one of Docker's or Podman's own (`host`, `bridge`, `none`, `default`, `podman`, `ingress`, `docker_gwbridge`, `container:<name>`), throw |
-| `postgres` | `{ user: 'qa', db: 'postgres' }` | the superuser in the `dsn` it returns, and the database `db.query` uses by default: match `createDocker`'s `user` and `db`. Keys you leave out keep these values. Leave `password` out, and each pane's database gets its own, 48 random hex characters drawn for each boot. A `password` you give, which must be a non-empty string with no control characters, is used for both panes, so the PR pane's `dsn` also opens the base pane's database, and only the networks keep them apart |
+| `network` | `'qa-session'` | each pane's Docker network: a prefix, so `qa-session-base` and `qa-session-pr`, or `{ base, pr }` to name both. A network name must be letters, digits, `_`, `.` and `-`, and not lowercase hex digits alone, which Docker would also read as the start of a network id. Two panes on one network, or one of Docker's or Podman's own networks or modes (`host`, `bridge`, `none`, `default`, `ingress`, `docker_gwbridge`, `podman`, `private`, `pasta`, `slirp4netns`, `podman-default-kube-network`, `container:<name>`), throw |
+| `postgres` | `{ user: 'qa', db: 'postgres' }` | the superuser in the `dsn` it returns, and the database `db.query` uses by default: match `createDocker`'s `user` and `db`. Keys you leave out, or set to `undefined`, keep these values. Leave `password` out, and each pane's database gets its own, 48 random hex characters drawn for each boot. A `password` you give, which must be a non-empty string with no control characters, is used for both panes, so the PR pane's `dsn` also opens the base pane's database, and only the networks keep them apart. Either password is enforced only by an image that sets its database up from `POSTGRES_PASSWORD` and asks for a password over TCP: see `createDocker`'s `postgres.image` |
 | `hostPorts` | `{ base: 3111, pr: 3112 }` | the loopback host port each pane's app container is published on |
 | `registry` | `null` | `{ user, token }`: log in to `ghcr.io` before pulling, and again before each retry |
 
@@ -428,7 +428,8 @@ For each pane:
 - `launchServices` pulls each image that's missing (three tries), then runs it as `qa-app-<role>` on the pane's network, with its port `3000` published on `127.0.0.1:<hostPorts[role]>`.
 - `waitHealthy` polls `http://127.0.0.1:<port>/api/health` until it answers `200`, for up to a minute.
 - `logs` tails the app container at `starting`, else the postgres one.
-- `teardown` removes the pane's containers (a migrate run still in flight among them) and their volumes, then its network and its env file. `sweep` removes every container with `createDocker`'s `label`, both panes' networks, and, when `network` is a prefix, the network of that very name, which both panes shared in 0.3.1 and earlier.
+- `teardown` removes the pane's containers (a migrate run still in flight among them) and their volumes, then its network and its env file.
+- `sweep` removes every container with `createDocker`'s `label`, both panes' networks, and both env files, which hold that run's passwords. When `network` is a prefix, it also removes the network of that very name, which both panes shared in 0.3.1 and earlier, unless Docker could take that name for one of its own or the start of a network id.
 
 The provisioner also has `networks`, `{ base, pr }` (frozen): the two network names.
 
@@ -442,10 +443,10 @@ Its limits:
 
   It still can't reach the base pane's database directly: that has no host port.
 - **A conductor off loopback.** With a non-loopback `QA_BIND_HOST` (none mode only), a container on any runtime, native Linux Docker Engine included, can reach the harness and the base pane's proxy through its network's gateway or the host's address, unless a host firewall drops that traffic.
-- **Other runtimes.** The networks keep the panes apart because Docker Engine's default iptables rules isolate one network from another. A daemon run with `"iptables": false` doesn't, nor do Podman's networks, which it creates without `isolate=true`. There, PR code can reach the base pane's containers by address, though not by name. The per-pane password still keeps it out of the base pane's database, unless you set `postgres.password`.
+- **Other runtimes.** The networks keep the panes apart because Docker Engine's default iptables rules isolate one network from another. A daemon run with `"iptables": false` doesn't, nor do Podman's networks, which it creates without `isolate=true`. There, PR code can reach the base pane's containers by address, though not by name. The per-pane password still keeps it out of the base pane's database, unless you set `postgres.password`, or the image doesn't enforce it (see `createDocker`'s `postgres.image`).
 - **The app's side:** listen on port `3000` in the container, and answer `GET /api/health` with `200`.
 - **The registry login is to `ghcr.io` only.**
-- **It ignores `signal`**, so a teardown waits for a Docker call in flight.
+- **`signal`.** Each step that creates or changes something (the network, a container, an env file) first checks `signal`, so an aborted boot stops there. A teardown doesn't wait for a Docker call already running, such as a pull. The aborted boot stops once that call returns, before it touches the next session's pane of the same role.
 
 ### Effect wrappers
 
@@ -484,9 +485,9 @@ Its limits:
 |---|---|---|
 | `execFileFn` | *(required)* | `makeExecFileFn()` from `./exec`. Your own must pass `opts.env` on to the child, since `login` and `runPg` put secrets there. It must also reject with docker's stderr in the error's `message` or `stderr`, as `makeExecFileFn` does: that is how the Docker Provisioner tells a pane network that already exists from a real failure |
 | `label` | `'qa-conductor-session'` | put on every container and network it creates; `sweepQaContainers()` removes whatever carries it |
-| `postgres` | `{ image: 'postgres:16', user: 'qa', password: 'qa', db: 'postgres' }` | the pane database containers; keys you leave out keep these values |
+| `postgres` | `{ image: 'postgres:16', user: 'qa', password: 'qa', db: 'postgres' }` | the pane database containers; keys you leave out keep these values. An `image` must set its database up from `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` and ask for a password over TCP, as the official `postgres` image does, or the panes' passwords protect nothing. That fails for an image whose data directory is already initialised, which ignores those variables and keeps its own `pg_hba.conf`. It also fails for one whose entrypoint doesn't write `POSTGRES_HOST_AUTH_METHOD` into `pg_hba.conf`, or that ships its own `pg_hba.conf` allowing `trust` |
 
-`runPg(name, network, { password })` starts a database container, with `password` as its superuser's. `postgres.password` is only the default for a call that passes none: the Docker Provisioner always passes its own. The password reaches `docker run` through the CLI's environment (a bare `-e POSTGRES_PASSWORD`), never its argv, which other local users can read. A password that is empty or not a string throws.
+`runPg(name, network, { password })` starts a database container, with `password` as its superuser's. `postgres.password` is only the default for a call that passes none: the Docker Provisioner always passes its own. The password reaches `docker run` through the CLI's environment (a bare `-e POSTGRES_PASSWORD`), never its argv, which other local users can read. A password that is empty or not a string throws. It also passes `-e POSTGRES_HOST_AUTH_METHOD=md5`, which the official entrypoint writes into `pg_hba.conf` for TCP connections, over an image's own `ENV` that may say `trust`. `md5` uses SCRAM where the stored password is SCRAM, as it is from postgres 14 on.
 
 Its members are `run(argv)`, `login(user, token)` (to `ghcr.io`, with the token in the environment, never in argv), `imagePresent`, `ensureImage(image, { retries, relogin })`, `runPg`, `waitHealthyPg`, `createDatabase`, `pipeDump(from, to, db)` and `cloneDb(from, to, db)` (a host-side `pg_dump | psql` between two containers), `runMigrate`, `runApp`, `waitHealthyApp`, `psql`, `rmForce`, `createNetwork`, `rmNetwork`, `sweepQaContainers`, `inspectImageOf` and `logsTail`. `login`, `createDatabase`, `pipeDump`, `cloneDb` and `logsTail` throw on a name that isn't letters, digits, `_` and `-`.
 

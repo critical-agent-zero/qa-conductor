@@ -190,7 +190,8 @@ test('teardown removes each pane\'s own network, and sweep removes both and the 
   assert.deepEqual(s.fsx.removed, [`${WORK}/.env.qa-base`, `${WORK}/.env.qa-pr`])
 
   const swept = recordingExec()
-  const fresh = createDockerProvisioner({ docker: makeDocker(swept), fsx: recordingFs(), workDir: WORK })
+  const sweptFs = recordingFs()
+  const fresh = createDockerProvisioner({ docker: makeDocker(swept), fsx: sweptFs, workDir: WORK })
   await fresh.sweep()
   assert.deepEqual(docker(swept).map(c => c.args.join(' ')), [
     'ps -aq --filter label=qa-conductor-session',
@@ -198,6 +199,19 @@ test('teardown removes each pane\'s own network, and sweep removes both and the 
     'network rm qa-session-pr',
     'network rm qa-session',
   ])
+  // The env files an earlier run left behind hold its passwords.
+  assert.deepEqual(sweptFs.removed, [`${WORK}/.env.qa-base`, `${WORK}/.env.qa-pr`])
+
+  // A prefix Docker could take for one of its own networks, or for the start
+  // of a network id, is fine for the pane networks, but sweep leaves that
+  // name itself alone.
+  for (const prefix of ['host', 'bridge', 'cafe']) {
+    const exec = recordingExec()
+    const p = createDockerProvisioner({ docker: makeDocker(exec), fsx: recordingFs(), workDir: WORK, network: prefix })
+    assert.deepEqual(p.networks, { base: `${prefix}-base`, pr: `${prefix}-pr` })
+    await p.sweep()
+    assert.deepEqual(docker(exec).map(c => c.args.join(' ')).slice(1), [`network rm ${prefix}-base`, `network rm ${prefix}-pr`], prefix)
+  }
 })
 
 test('network as a prefix or as { base, pr }; two panes on one network are refused', async () => {
@@ -215,15 +229,19 @@ test('network as a prefix or as { base, pr }; two panes on one network are refus
 
   for (const network of [
     { base: 'one', pr: 'one' }, { base: 'one' }, { base: '', pr: 'two' }, '', 7, null,
-    // Docker's and Podman's own networks would put a pane on the host or beside other containers.
+    // Docker's and Podman's own networks and modes would put a pane on the
+    // host or beside other containers.
     { base: 'host', pr: 'two' }, { base: 'one', pr: 'bridge' }, { base: 'none', pr: 'two' }, { base: 'one', pr: 'default' },
     { base: 'podman', pr: 'two' }, { base: 'one', pr: 'ingress' }, { base: 'docker_gwbridge', pr: 'two' }, { base: 'one', pr: 'container:qa-app-base' },
-    // All hex: Docker would read it as the prefix of some other network's id.
-    { base: 'a', pr: 'two' }, { base: 'one', pr: '1' }, 'abc', 'DB',
+    { base: 'private', pr: 'two' }, { base: 'one', pr: 'pasta' }, { base: 'slirp4netns', pr: 'two' }, { base: 'one', pr: 'podman-default-kube-network' },
+    // Lowercase hex: Docker would read it as the start of some other network's id.
+    { base: 'a', pr: 'two' }, { base: 'one', pr: '1' }, { base: 'cafe', pr: 'two' },
     { base: 'one', pr: 'two words' }, '-dash', 'a/b',
   ]) {
     assert.throws(() => createDockerProvisioner({ docker: makeDocker(recordingExec()), fsx: recordingFs(), workDir: WORK, network }), /network/, JSON.stringify(network))
   }
+  // Network ids are lowercase, so an uppercase name can't be taken for one.
+  assert.deepEqual(createDockerProvisioner({ docker: makeDocker(recordingExec()), fsx: recordingFs(), workDir: WORK, network: { base: 'CAFE', pr: 'DB' } }).networks, { base: 'CAFE', pr: 'DB' })
   // a role other than base or pr has no network
   const s = makeSession()
   await assert.rejects(s.provisioner.provisionDatabase({ paneRef: { role: 'other' }, databases: [] }), /role/)
@@ -290,11 +308,20 @@ test('an explicit postgres password is used for both panes, and other postgres k
   assert.notEqual(pgPassword(unset.exec, 'base'), pgPassword(unset.exec, 'pr'))
 
   // The DSN encodes the user and password, so a URL parser reads them back.
-  const odd = makeSession({ provisionerOptions: { postgres: { user: 'qa user', password: 'p@ss:w/rd#1%?' } } })
+  const odd = makeSession({ provisionerOptions: { postgres: { user: 'qa:user', password: 'p@ss:w/rd#1%?$&+,' } } })
   await bootSession(odd.deps, 7)
-  assert.equal(pgPassword(odd.exec, 'base'), 'p@ss:w/rd#1%?')
+  assert.equal(pgPassword(odd.exec, 'base'), 'p@ss:w/rd#1%?$&+,')
+  assert.equal(odd.dsns.base, 'postgresql://qa%3Auser:p%40ss%3Aw%2Frd%231%25%3F%24%26%2B%2C@qa-pg-base:5432')
   const url = new URL(odd.dsns.base)
-  assert.deepEqual([decodeURIComponent(url.username), decodeURIComponent(url.password), url.host], ['qa user', 'p@ss:w/rd#1%?', 'qa-pg-base:5432'])
+  assert.deepEqual([decodeURIComponent(url.username), decodeURIComponent(url.password), url.host], ['qa:user', 'p@ss:w/rd#1%?$&+,', 'qa-pg-base:5432'])
+
+  // Keys present but undefined (an unset env var, say) keep their defaults.
+  const unsetKeys = makeSession({ provisionerOptions: { postgres: { user: undefined, db: undefined, password: undefined } } })
+  await bootSession(unsetKeys.deps, 7)
+  assert.match(unsetKeys.dsns.base, /^postgresql:\/\/qa:[0-9a-f]{48}@qa-pg-base:5432$/)
+  const { db: unsetDb } = await unsetKeys.provisioner.provisionDatabase({ paneRef: { role: 'base' }, databases: [] })
+  await unsetDb.query('SELECT 1')
+  assert.deepEqual(docker(unsetKeys.exec).at(-1).args.slice(5, 7), ['-d', 'postgres'])
 
   const widget = makeSession({ provisionerOptions: { postgres: { user: 'widget', db: 'maindb' } } })
   await bootSession(widget.deps, 7)
@@ -307,3 +334,65 @@ test('an explicit postgres password is used for both panes, and other postgres k
   assert.deepEqual(docker(widget.exec).at(-1).args.slice(0, 6), ['exec', 'qa-pg-pr', 'psql', '-U', 'qa', '-d'])
   assert.equal(docker(widget.exec).at(-1).args[6], 'maindb')
 })
+
+// A torn-down or taken-over session aborts its boot, but a boot may be in the
+// middle of a pull that takes minutes. Once that returns, the stale boot must
+// not write the next session's env file or start a container on its network.
+test('an aborted boot starts no container and writes no env file once it was aborted, even mid-pull', async () => {
+  for (const [stage, image] of [['migrate', migrateImageFor(PR_IMG)], ['app', PR_IMG]]) {
+    const controller = new AbortController()
+    // The pull of that image is where the abort lands.
+    const s = makeSession({
+      answer: args => {
+        if (args[0] === 'image' && args[1] === 'inspect' && args[2] === image) controller.abort()
+        return null
+      },
+    })
+    s.deps.signal = controller.signal
+    await assert.rejects(bootSession(s.deps, 7), err => err.name === 'AbortError', stage)
+    const prRuns = runs(s.exec).filter(c => roleOf(c.args) === 'pr' && !/^qa-pg-/.test(valueOf(c.args, '--name')))
+    const after = stage === 'migrate' ? [] : [migrateImageFor(PR_IMG)]
+    assert.deepEqual(prRuns.map(c => c.args.at(-1)), after, `${stage}: no PR run after the abort`)
+    if (stage === 'migrate') assert.ok(!s.fsx.files.has(`${WORK}/.env.qa-pr`), 'no PR env file written after the abort')
+  }
+  // Already aborted: no docker call at all, not even a pull, and no env file.
+  const controller = new AbortController()
+  controller.abort()
+  const s = makeSession()
+  for (const call of steps(controller.signal)) await assert.rejects(call(s.provisioner), err => err.name === 'AbortError')
+  assert.deepEqual(docker(s.exec), [])
+  assert.equal(s.fsx.files.size, 0)
+
+  // Aborted while the step before runs: nothing after it happens.
+  const PG_RUN = args => args[0] === 'run' && valueOf(args, '--name') === 'qa-pg-base'
+  for (const [when, step, abortOn, after] of [
+    ['the network is created', 0, args => args[0] === 'network' && args[1] === 'create', c => c.args[0] === 'run'],
+    ['postgres starts', 0, PG_RUN, c => c.args[0] === 'exec' && c.args.includes('CREATE DATABASE app')],
+    ['the migrate image is pulled', 1, args => args[0] === 'image', c => c.args[0] === 'run' || c.write],
+    ['the migrate env file is written', 1, args => args[0] === 'write', c => c.args[0] === 'run'],
+    ['the app image is pulled', 2, args => args[0] === 'image', c => c.args[0] === 'run' || c.write],
+    ['the app env file is written', 2, args => args[0] === 'write', c => c.args[0] === 'run'],
+  ]) {
+    const ctl = new AbortController()
+    const log = []
+    const s2 = makeSession({ answer: args => { log.push({ args, after: ctl.signal.aborted }); if (abortOn(args)) ctl.abort(); return null } })
+    const write = s2.fsx.writeFile
+    s2.fsx.writeFile = async (file, text, opts) => {
+      log.push({ args: ['write', file], write: true, after: ctl.signal.aborted })
+      await write(file, text, opts)
+      if (abortOn(['write'])) ctl.abort()
+    }
+    await assert.rejects(steps(ctl.signal)[step](s2.provisioner), err => err.name === 'AbortError', when)
+    assert.ok(ctl.signal.aborted, `${when}: the abort happened`)
+    assert.deepEqual(log.filter(c => c.after && after(c)).map(c => c.args.join(' ')), [], `${when}: nothing after the abort`)
+  }
+})
+
+// The three provisioner steps that create or change something, for the base pane.
+function steps(signal) {
+  return [
+    p => p.provisionDatabase({ paneRef: { role: 'base' }, databases: ['app'], signal }),
+    p => p.runMigrate({ paneRef: { role: 'base' }, migrate: { image: migrateImageFor(BASE_IMG) }, env: { app: {} }, signal }),
+    p => p.launchServices({ paneRef: { role: 'base' }, services: { app: BASE_IMG }, env: { app: {} }, reserved: { app: { port: 3111 } }, signal }),
+  ]
+}

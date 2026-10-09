@@ -52,6 +52,9 @@ test('runPg builds the exact docker run argv, and passes the password in the CLI
     // no value: docker takes it from its own environment
     '-e', 'POSTGRES_PASSWORD',
     '-e', 'POSTGRES_DB=postgres',
+    // A password over TCP, whatever the image's own ENV says (some bake in
+    // trust); md5 falls back to SCRAM where the stored password is SCRAM.
+    '-e', 'POSTGRES_HOST_AUTH_METHOD=md5',
     'postgres:16',
   ])
   assert.equal(exec.calls[0].env.POSTGRES_PASSWORD, 'qa')
@@ -149,6 +152,7 @@ test('createDocker threads a custom postgres identity and label through argv', a
     '-e', 'POSTGRES_USER=widget',
     '-e', 'POSTGRES_PASSWORD',
     '-e', 'POSTGRES_DB=maindb',
+    '-e', 'POSTGRES_HOST_AUTH_METHOD=md5',
     'postgres:15',
   ])
   // readiness probes use the custom superuser + db
