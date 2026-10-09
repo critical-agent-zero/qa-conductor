@@ -53,7 +53,7 @@ test('runPg builds the exact docker run argv, and passes the password in the CLI
     '-e', 'POSTGRES_PASSWORD',
     '-e', 'POSTGRES_DB=postgres',
     // A password over TCP, whatever the image's own ENV says (some bake in
-    // trust); md5 falls back to SCRAM where the stored password is SCRAM.
+    // trust); md5 uses SCRAM where the stored password is SCRAM.
     '-e', 'POSTGRES_HOST_AUTH_METHOD=md5',
     'postgres:16',
   ])
@@ -168,6 +168,11 @@ test('createDocker partial postgres override fills the rest from defaults', asyn
   const { argv, env } = exec.calls[0]
   assert.ok(argv.includes('POSTGRES_USER=widget'))
   assert.equal(env.POSTGRES_PASSWORD, 'qa') // default retained
+  // keys set to undefined (an unset env var, say) keep their defaults too
+  const unset = envRecordingExec()
+  await createDocker({ execFileFn: unset, postgres: { image: undefined, user: undefined, password: undefined, db: undefined } }).runPg('p', 'n')
+  assert.ok(unset.calls[0].argv.includes('postgres:16') && unset.calls[0].argv.includes('POSTGRES_USER=qa') && unset.calls[0].argv.includes('POSTGRES_DB=postgres'), unset.calls[0].argv.join(' '))
+  assert.equal(unset.calls[0].env.POSTGRES_PASSWORD, 'qa')
   assert.ok(argv.includes('POSTGRES_DB=postgres')) // default retained
   assert.ok(argv.includes('postgres:16')) // default image retained
   assert.ok(argv.includes('qa-conductor-session')) // default label retained
@@ -466,6 +471,31 @@ test('createNetwork and rmNetwork build exact argv; rmNetwork tolerates errors',
   const failing = recordingExec([new Error('network not found')])
   const docker2 = createDocker({ execFileFn: failing })
   await docker2.rmNetwork('gone')
+})
+
+test('rmLabelledNetwork removes a network only when it carries the label', async () => {
+  const exec = recordingExec(['qa-session-pr\nqa-session\n', ''])
+  const docker = createDocker({ execFileFn: exec })
+  assert.equal(await docker.rmLabelledNetwork('qa-session'), true)
+  assert.deepEqual(exec.calls, [
+    ['docker', 'network', 'ls', '--filter', 'label=qa-conductor-session', '--format', '{{.Name}}'],
+    ['docker', 'network', 'rm', 'qa-session'],
+  ])
+  // A network of that name without the label, or only names that contain it: left alone.
+  const other = recordingExec(['qa-session-pr\nmy-qa-session\n'])
+  assert.equal(await createDocker({ execFileFn: other }).rmLabelledNetwork('qa-session'), false)
+  assert.equal(other.calls.length, 1)
+  // A daemon that can't list: nothing removed, nothing thrown.
+  assert.equal(await createDocker({ execFileFn: recordingExec([new Error('daemon down')]) }).rmLabelledNetwork('qa-session'), false)
+})
+
+test('ensurePgImage makes the postgres image local, so runPg doesn\'t pull it inside docker run', async () => {
+  const present = recordingExec([''])
+  await createDocker({ execFileFn: present, postgres: { image: 'postgres:15' } }).ensurePgImage()
+  assert.deepEqual(present.calls, [['docker', 'image', 'inspect', 'postgres:15']])
+  const missing = recordingExec([new Error('No such image'), ''])
+  await createDocker({ execFileFn: missing }).ensurePgImage({ sleepFn: async () => {} })
+  assert.deepEqual(missing.calls, [['docker', 'image', 'inspect', 'postgres:16'], ['docker', 'pull', 'postgres:16']])
 })
 
 test('sweepQaContainers lists by label then force-removes', async () => {

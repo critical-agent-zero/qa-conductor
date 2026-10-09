@@ -189,7 +189,10 @@ test('teardown removes each pane\'s own network, and sweep removes both and the 
   ])
   assert.deepEqual(s.fsx.removed, [`${WORK}/.env.qa-base`, `${WORK}/.env.qa-pr`])
 
-  const swept = recordingExec()
+  // The shared network 0.3.1 made carries the conductor's label: sweep
+  // removes a network of the prefix's name only then, never one of yours.
+  const labelled = names => args => args[0] === 'network' && args[1] === 'ls' ? names : null
+  const swept = recordingExec({ answer: labelled('qa-session\nqa-session-base\n') })
   const sweptFs = recordingFs()
   const fresh = createDockerProvisioner({ docker: makeDocker(swept), fsx: sweptFs, workDir: WORK })
   await fresh.sweep()
@@ -197,21 +200,34 @@ test('teardown removes each pane\'s own network, and sweep removes both and the 
     'ps -aq --filter label=qa-conductor-session',
     'network rm qa-session-base',
     'network rm qa-session-pr',
+    'network ls --filter label=qa-conductor-session --format {{.Name}}',
     'network rm qa-session',
   ])
   // The env files an earlier run left behind hold its passwords.
   assert.deepEqual(sweptFs.removed, [`${WORK}/.env.qa-base`, `${WORK}/.env.qa-pr`])
+  const yours = recordingExec({ answer: labelled('qa-session-base\nqa-session-x\n') })
+  await createDockerProvisioner({ docker: makeDocker(yours), fsx: recordingFs(), workDir: WORK }).sweep()
+  assert.ok(!docker(yours).some(c => c.args.join(' ') === 'network rm qa-session'), 'an unlabelled network of that name is left alone')
 
   // A prefix Docker could take for one of its own networks, or for the start
   // of a network id, is fine for the pane networks, but sweep leaves that
   // name itself alone.
   for (const prefix of ['host', 'bridge', 'cafe']) {
-    const exec = recordingExec()
+    const exec = recordingExec({ answer: labelled(`${prefix}\n`) })
     const p = createDockerProvisioner({ docker: makeDocker(exec), fsx: recordingFs(), workDir: WORK, network: prefix })
     assert.deepEqual(p.networks, { base: `${prefix}-base`, pr: `${prefix}-pr` })
     await p.sweep()
     assert.deepEqual(docker(exec).map(c => c.args.join(' ')).slice(1), [`network rm ${prefix}-base`, `network rm ${prefix}-pr`], prefix)
   }
+
+  // The env files go first, and a missing one is fine: a daemon that isn't up
+  // yet fails the sweep, but not before the passwords are gone.
+  const down = recordingExec({ answer: args => args[0] === 'ps' ? Object.assign(new Error('docker ps: Command failed'), { stderr: 'Cannot connect to the Docker daemon' }) : null })
+  const enoent = { ...recordingFs(), removed: [] }
+  enoent.unlink = async file => { enoent.removed.push(file); throw Object.assign(new Error(`ENOENT: ${file}`), { code: 'ENOENT' }) }
+  await assert.rejects(createDockerProvisioner({ docker: makeDocker(down), fsx: enoent, workDir: WORK }).sweep(), /docker ps/)
+  assert.deepEqual(enoent.removed, [`${WORK}/.env.qa-base`, `${WORK}/.env.qa-pr`])
+  await createDockerProvisioner({ docker: makeDocker(recordingExec()), fsx: enoent, workDir: WORK }).sweep()
 })
 
 test('network as a prefix or as { base, pr }; two panes on one network are refused', async () => {
@@ -315,6 +331,11 @@ test('an explicit postgres password is used for both panes, and other postgres k
   const url = new URL(odd.dsns.base)
   assert.deepEqual([decodeURIComponent(url.username), decodeURIComponent(url.password), url.host], ['qa:user', 'p@ss:w/rd#1%?$&+,', 'qa-pg-base:5432'])
 
+  // postgres: null is no postgres at all.
+  const none = makeSession({ provisionerOptions: { postgres: null } })
+  await bootSession(none.deps, 7)
+  assert.match(none.dsns.base, /^postgresql:\/\/qa:[0-9a-f]{48}@qa-pg-base:5432$/)
+
   // Keys present but undefined (an unset env var, say) keep their defaults.
   const unsetKeys = makeSession({ provisionerOptions: { postgres: { user: undefined, db: undefined, password: undefined } } })
   await bootSession(unsetKeys.deps, 7)
@@ -355,19 +376,28 @@ test('an aborted boot starts no container and writes no env file once it was abo
     assert.deepEqual(prRuns.map(c => c.args.at(-1)), after, `${stage}: no PR run after the abort`)
     if (stage === 'migrate') assert.ok(!s.fsx.files.has(`${WORK}/.env.qa-pr`), 'no PR env file written after the abort')
   }
-  // Already aborted: no docker call at all, not even a pull, and no env file.
+  // Already aborted: no call at all, not a registry login, not a pull, and
+  // no env file.
   const controller = new AbortController()
   controller.abort()
-  const s = makeSession()
+  const s = makeSession({ provisionerOptions: { registry: { user: 'acme-bot', token: 't0ken' } } })
   for (const call of steps(controller.signal)) await assert.rejects(call(s.provisioner), err => err.name === 'AbortError')
-  assert.deepEqual(docker(s.exec), [])
+  assert.deepEqual(s.exec.calls, [])
   assert.equal(s.fsx.files.size, 0)
 
   // Aborted while the step before runs: nothing after it happens.
   const PG_RUN = args => args[0] === 'run' && valueOf(args, '--name') === 'qa-pg-base'
-  for (const [when, step, abortOn, after] of [
-    ['the network is created', 0, args => args[0] === 'network' && args[1] === 'create', c => c.args[0] === 'run'],
+  const LOGIN = args => args[0] === '-c' && args[1].includes('docker login')
+  for (const [when, step, abortOn, after, options] of [
+    ['the network is created', 0, args => args[0] === 'network' && args[1] === 'create', c => c.args[0] === 'run' || c.args[0] === 'image'],
+    // The postgres image is pulled before its container is created, so an
+    // abort can land between the two.
+    ['the postgres image is pulled', 0, args => args[0] === 'image' && args[2] === 'postgres:16', c => c.args[0] === 'run'],
     ['postgres starts', 0, PG_RUN, c => c.args[0] === 'exec' && c.args.includes('CREATE DATABASE app')],
+    // The last step: the call still rejects, so the core never seeds it.
+    ['the last database is created', 0, args => args.includes('CREATE DATABASE app'), () => false],
+    ['the registry login for the migrate image', 1, LOGIN, c => c.args[0] === 'image' || c.write, { registry: { user: 'acme-bot', token: 't0ken' } }],
+    ['the registry login for the app image', 2, LOGIN, c => c.args[0] === 'image' || c.write, { registry: { user: 'acme-bot', token: 't0ken' } }],
     ['the migrate image is pulled', 1, args => args[0] === 'image', c => c.args[0] === 'run' || c.write],
     ['the migrate env file is written', 1, args => args[0] === 'write', c => c.args[0] === 'run'],
     ['the app image is pulled', 2, args => args[0] === 'image', c => c.args[0] === 'run' || c.write],
@@ -375,7 +405,7 @@ test('an aborted boot starts no container and writes no env file once it was abo
   ]) {
     const ctl = new AbortController()
     const log = []
-    const s2 = makeSession({ answer: args => { log.push({ args, after: ctl.signal.aborted }); if (abortOn(args)) ctl.abort(); return null } })
+    const s2 = makeSession({ provisionerOptions: options, answer: args => { log.push({ args, after: ctl.signal.aborted }); if (abortOn(args)) ctl.abort(); return null } })
     const write = s2.fsx.writeFile
     s2.fsx.writeFile = async (file, text, opts) => {
       log.push({ args: ['write', file], write: true, after: ctl.signal.aborted })
