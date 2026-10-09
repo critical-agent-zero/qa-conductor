@@ -1,0 +1,309 @@
+// The Docker Provisioner keeps the panes apart: each pane's containers join a
+// network of their own, and each pane's database has a password of its own
+// that only that pane's DSN carries. These tests boot a real session over the
+// real Docker wrapper, with a recording execFileFn in place of the docker CLI
+// (argv and env), and a recording fsx in place of the env files. No Docker
+// daemon runs.
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { createDocker } from '../lib/docker.mjs'
+import { createDockerProvisioner } from '../lib/adapters/provisioner-docker.mjs'
+import { bootSession, migrateImageFor, teardownSession } from '../lib/session.mjs'
+
+const BASE_IMG = 'ghcr.io/x/app:1.0.0-rc.38'
+const PR_IMG = 'ghcr.io/x/app:pr-7-abcdef123456'
+const WORK = '/work'
+const PASSWORD = /^[0-9a-f]{48}$/
+
+// Every docker CLI call, with the env it was given; image inspect answers, so
+// nothing is pulled. `answer(args)` may return an Error for a call to reject
+// with, or a string for its stdout.
+function recordingExec({ answer = () => null } = {}) {
+  const calls = []
+  const fn = async (file, args, opts = {}) => {
+    calls.push({ file, args, env: opts.env ?? null })
+    const out = answer(args)
+    if (out instanceof Error) throw out
+    return { stdout: out ?? '' }
+  }
+  fn.calls = calls
+  return fn
+}
+
+function recordingFs() {
+  const files = new Map()
+  const removed = []
+  return {
+    files,
+    removed,
+    writeFile: async (path, text, opts) => { files.set(path, { text, mode: opts?.mode }) },
+    unlink: async path => { removed.push(path) },
+  }
+}
+
+// The real wrapper, with its health waits answered at once (they poll with
+// sleeps); every other member runs as written.
+function makeDocker(exec) {
+  const docker = createDocker({ execFileFn: exec })
+  return Object.assign(docker, { waitHealthyPg: async () => {}, waitHealthyApp: async () => {} })
+}
+
+function makeSession({ provisionerOptions = {}, answer } = {}) {
+  const exec = recordingExec({ answer })
+  const fsx = recordingFs()
+  const provisioner = createDockerProvisioner({ docker: makeDocker(exec), fsx, workDir: WORK, ...provisionerOptions })
+  const dsns = {}
+  const deps = {
+    adapters: {
+      provisioner,
+      build: {
+        migrationStrategy: 'one-shot-image',
+        ensureBuilt: async () => {},
+        resolveBaseImages: async () => ({ services: { app: BASE_IMG }, migrate: { image: migrateImageFor(BASE_IMG) } }),
+        resolvePrImages: async () => ({ services: { app: PR_IMG }, migrate: { image: migrateImageFor(PR_IMG) } }),
+      },
+      seed: { databases: ['app'], seedPane: async () => {} },
+      envTransform: {
+        derivePaneEnv: ({ pane }) => {
+          dsns[pane.ref.role] = pane.dsn
+          return { app: { DATABASE_URL: pane.dsn } }
+        },
+      },
+      auth: { requiresDb: false, establishSession: async ({ pane }) => ({ landingUrl: `/login-${pane.ref.role}`, cookies: [] }) },
+    },
+    env: { operatorEmail: 'op@example.com', paneOrigins: { base: 'http://127.0.0.1:3101', pr: 'http://127.0.0.1:3102' } },
+    onProgress: () => {},
+  }
+  return { exec, fsx, provisioner, dsns, deps }
+}
+
+const docker = exec => exec.calls.filter(c => c.file === 'docker')
+const runs = exec => docker(exec).filter(c => c.args[0] === 'run')
+const valueOf = (args, flag) => {
+  const at = args.indexOf(flag)
+  return at === -1 ? null : args[at + 1]
+}
+// Which pane a docker run belongs to: its container name, else (a migrate
+// run has none) the pane env file it reads.
+const roleOf = args => {
+  const name = valueOf(args, '--name') ?? valueOf(args, '--env-file')
+  return /-(base|pr)$/.exec(name)?.[1] ?? null
+}
+const pgPassword = (exec, role) => {
+  const call = runs(exec).find(c => valueOf(c.args, '--name') === `qa-pg-${role}`)
+  return call.env?.POSTGRES_PASSWORD
+}
+
+test('each pane\'s containers join only that pane\'s network, and the two networks differ', async () => {
+  const s = makeSession()
+  await bootSession(s.deps, 7)
+  const byRole = { base: new Set(), pr: new Set() }
+  for (const { args } of runs(s.exec)) {
+    const role = roleOf(args)
+    assert.ok(role, `every docker run belongs to a pane: ${args.join(' ')}`)
+    assert.equal(args.filter(a => a === '--network').length, 1, `one --network: ${args.join(' ')}`)
+    byRole[role].add(valueOf(args, '--network'))
+  }
+  assert.deepEqual([...byRole.base], ['qa-session-base'])
+  assert.deepEqual([...byRole.pr], ['qa-session-pr'])
+  // postgres, the migrate run and the app, for each pane
+  assert.equal(runs(s.exec).length, 6)
+  // By image too, since the image is what holds PR code: each pane's images
+  // run on its own network, with its own env file.
+  const byImage = runs(s.exec).filter(c => !/^qa-pg-/.test(valueOf(c.args, '--name'))).map(c => [c.args.at(-1), valueOf(c.args, '--network'), valueOf(c.args, '--env-file')])
+  assert.deepEqual(byImage, [
+    [migrateImageFor(BASE_IMG), 'qa-session-base', `${WORK}/.env.qa-base`],
+    [migrateImageFor(PR_IMG), 'qa-session-pr', `${WORK}/.env.qa-pr`],
+    [BASE_IMG, 'qa-session-base', `${WORK}/.env.qa-base`],
+    [PR_IMG, 'qa-session-pr', `${WORK}/.env.qa-pr`],
+  ])
+  // No container joins a second network afterwards: a boot creates networks, and nothing else.
+  for (const { args } of docker(s.exec)) {
+    if (args[0] === 'network') assert.equal(args[1], 'create', args.join(' '))
+  }
+  const created = docker(s.exec).filter(c => c.args[0] === 'network' && c.args[1] === 'create').map(c => c.args.at(-1))
+  assert.deepEqual(created, ['qa-session-base', 'qa-session-pr'])
+  assert.deepEqual(s.provisioner.networks, { base: 'qa-session-base', pr: 'qa-session-pr' })
+  assert.ok(Object.isFrozen(s.provisioner.networks), 'networks can\'t be pointed at one network afterwards')
+})
+
+test('each pane\'s database gets its own password, never in argv, and only its own pane\'s DSN and env file carry it', async () => {
+  const s = makeSession()
+  await bootSession(s.deps, 7)
+  const base = pgPassword(s.exec, 'base')
+  const pr = pgPassword(s.exec, 'pr')
+  assert.match(base, PASSWORD)
+  assert.match(pr, PASSWORD)
+  assert.notEqual(base, pr)
+  // The value goes in the docker CLI's env, under a bare -e POSTGRES_PASSWORD.
+  for (const role of ['base', 'pr']) {
+    const { args, env } = runs(s.exec).find(c => valueOf(c.args, '--name') === `qa-pg-${role}`)
+    assert.ok(args.includes('POSTGRES_PASSWORD'), 'a bare -e POSTGRES_PASSWORD')
+    assert.ok(env.PATH !== undefined || process.env.PATH === undefined, 'the CLI keeps the conductor\'s env')
+  }
+  for (const { args } of s.exec.calls) {
+    for (const secret of [base, pr]) assert.ok(!args.join(' ').includes(secret), `no password in argv: ${args.join(' ')}`)
+  }
+  // Only the postgres runs get a password in their env.
+  for (const c of s.exec.calls) {
+    if (c.env?.POSTGRES_PASSWORD === undefined) continue
+    assert.ok(c.file === 'docker' && c.args[0] === 'run' && /^qa-pg-/.test(valueOf(c.args, '--name')), 'only runPg passes a password')
+  }
+  assert.equal(s.dsns.base, `postgresql://qa:${base}@qa-pg-base:5432`)
+  assert.equal(s.dsns.pr, `postgresql://qa:${pr}@qa-pg-pr:5432`)
+  const baseEnv = s.fsx.files.get(`${WORK}/.env.qa-base`)
+  const prEnv = s.fsx.files.get(`${WORK}/.env.qa-pr`)
+  assert.equal(baseEnv.mode, 0o600)
+  assert.equal(prEnv.mode, 0o600)
+  assert.ok(baseEnv.text.includes(base) && !baseEnv.text.includes(pr), 'the base env file holds the base password only')
+  assert.ok(prEnv.text.includes(pr) && !prEnv.text.includes(base), 'the PR env file holds the PR password only')
+})
+
+test('every boot draws new passwords, and each boot\'s DSNs carry that boot\'s', async () => {
+  const s = makeSession()
+  const dsns = []
+  for (let boot = 0; boot < 2; boot++) {
+    await bootSession(s.deps, 7)
+    dsns.push(s.dsns.base, s.dsns.pr)
+  }
+  const passwords = runs(s.exec).filter(c => /^qa-pg-/.test(valueOf(c.args, '--name') ?? '')).map(c => c.env.POSTGRES_PASSWORD)
+  assert.equal(passwords.length, 4)
+  assert.equal(new Set(passwords).size, 4)
+  assert.deepEqual(dsns.map(dsn => new URL(dsn).password), passwords)
+})
+
+test('teardown removes each pane\'s own network, and sweep removes both and the shared one earlier versions made', async () => {
+  const s = makeSession()
+  await bootSession(s.deps, 7)
+  const before = docker(s.exec).length
+  await teardownSession({ provisioner: s.provisioner })
+  const teardown = docker(s.exec).slice(before).map(c => c.args.join(' '))
+  // The migrate run is named too, so a teardown during migrating removes it,
+  // and with it the last endpoint that would keep the network alive.
+  assert.deepEqual(runs(s.exec).filter(c => c.args.includes('--rm')).map(c => valueOf(c.args, '--name')), ['qa-migrate-base', 'qa-migrate-pr'])
+  assert.deepEqual(teardown, [
+    'rm -f -v qa-app-base qa-migrate-base qa-pg-base',
+    'network rm qa-session-base',
+    'rm -f -v qa-app-pr qa-migrate-pr qa-pg-pr',
+    'network rm qa-session-pr',
+  ])
+  assert.deepEqual(s.fsx.removed, [`${WORK}/.env.qa-base`, `${WORK}/.env.qa-pr`])
+
+  const swept = recordingExec()
+  const fresh = createDockerProvisioner({ docker: makeDocker(swept), fsx: recordingFs(), workDir: WORK })
+  await fresh.sweep()
+  assert.deepEqual(docker(swept).map(c => c.args.join(' ')), [
+    'ps -aq --filter label=qa-conductor-session',
+    'network rm qa-session-base',
+    'network rm qa-session-pr',
+    'network rm qa-session',
+  ])
+})
+
+test('network as a prefix or as { base, pr }; two panes on one network are refused', async () => {
+  const prefixed = makeSession({ provisionerOptions: { network: 'widget-qa' } })
+  await bootSession(prefixed.deps, 7)
+  assert.deepEqual(prefixed.provisioner.networks, { base: 'widget-qa-base', pr: 'widget-qa-pr' })
+  assert.deepEqual(new Set(runs(prefixed.exec).map(c => `${roleOf(c.args)} ${valueOf(c.args, '--network')}`)), new Set(['base widget-qa-base', 'pr widget-qa-pr']))
+
+  const named = makeSession({ provisionerOptions: { network: { base: 'blue', pr: 'green' } } })
+  await bootSession(named.deps, 7)
+  assert.deepEqual(new Set(runs(named.exec).map(c => `${roleOf(c.args)} ${valueOf(c.args, '--network')}`)), new Set(['base blue', 'pr green']))
+  const swept = recordingExec()
+  await createDockerProvisioner({ docker: makeDocker(swept), fsx: recordingFs(), workDir: WORK, network: { base: 'blue', pr: 'green' } }).sweep()
+  assert.deepEqual(docker(swept).map(c => c.args.join(' ')).slice(1), ['network rm blue', 'network rm green'])
+
+  for (const network of [
+    { base: 'one', pr: 'one' }, { base: 'one' }, { base: '', pr: 'two' }, '', 7, null,
+    // Docker's and Podman's own networks would put a pane on the host or beside other containers.
+    { base: 'host', pr: 'two' }, { base: 'one', pr: 'bridge' }, { base: 'none', pr: 'two' }, { base: 'one', pr: 'default' },
+    { base: 'podman', pr: 'two' }, { base: 'one', pr: 'ingress' }, { base: 'docker_gwbridge', pr: 'two' }, { base: 'one', pr: 'container:qa-app-base' },
+    // All hex: Docker would read it as the prefix of some other network's id.
+    { base: 'a', pr: 'two' }, { base: 'one', pr: '1' }, 'abc', 'DB',
+    { base: 'one', pr: 'two words' }, '-dash', 'a/b',
+  ]) {
+    assert.throws(() => createDockerProvisioner({ docker: makeDocker(recordingExec()), fsx: recordingFs(), workDir: WORK, network }), /network/, JSON.stringify(network))
+  }
+  // a role other than base or pr has no network
+  const s = makeSession()
+  await assert.rejects(s.provisioner.provisionDatabase({ paneRef: { role: 'other' }, databases: [] }), /role/)
+  assert.equal(docker(s.exec).length, 0)
+})
+
+const failure = stderr => Object.assign(new Error('docker network: Command failed'), { stderr })
+const createFails = stderr => args => args[0] === 'network' && args[1] === 'create' ? failure(stderr) : null
+
+test('a pane network that already exists by that very name is reused; any other failure to create one fails the boot', async () => {
+  // Docker says so, and an inspect by name finds that very network.
+  const exists = makeSession({
+    answer: args => createFails('Error response from daemon: network with name qa-session-base already exists')(args)
+      ?? (args[0] === 'network' && args[1] === 'inspect' ? `${args.at(-1)}\n` : null),
+  })
+  await bootSession(exists.deps, 7)
+  assert.equal(runs(exists.exec).length, 6)
+  assert.deepEqual(docker(exists.exec).filter(c => c.args[0] === 'network' && c.args[1] === 'inspect').map(c => c.args.join(' ')), [
+    'network inspect --format {{.Name}} qa-session-base',
+    'network inspect --format {{.Name}} qa-session-pr',
+  ])
+
+  for (const [why, answer] of [
+    ['no address pool left', createFails('Error response from daemon: could not find an available, non-overlapping IPv4 address pool among the defaults to assign to the network')],
+    // Another "already exists", and no network of that name.
+    ['an iptables chain', args => createFails('Error response from daemon: Chain already exists')(args) ?? (args[1] === 'inspect' ? failure('Error: No such network: qa-session-base') : null)],
+    // Only a network whose id starts with the name.
+    ['another network\'s id', args => createFails('Error response from daemon: network with name qa-session-base already exists')(args) ?? (args[1] === 'inspect' ? 'some-other-network\n' : null)],
+    // A failure that isn't about the name, though such a network exists.
+    ['an unrelated failure', args => createFails('permission denied while trying to connect to the Docker daemon socket')(args) ?? (args[1] === 'inspect' ? `${args.at(-1)}\n` : null)],
+  ]) {
+    const s = makeSession({ answer })
+    await assert.rejects(s.provisioner.provisionDatabase({ paneRef: { role: 'base' }, databases: [] }), err => err.message === 'docker network: Command failed', why)
+    assert.equal(runs(s.exec).length, 0, `${why}: no container starts without its network`)
+  }
+})
+
+test('an explicit postgres password is used for both panes, and other postgres keys keep their defaults', async () => {
+  const s = makeSession({ provisionerOptions: { postgres: { password: 'hunter2' } } })
+  await bootSession(s.deps, 7)
+  assert.equal(pgPassword(s.exec, 'base'), 'hunter2')
+  assert.equal(pgPassword(s.exec, 'pr'), 'hunter2')
+  assert.equal(s.dsns.base, 'postgresql://qa:hunter2@qa-pg-base:5432')
+  assert.equal(s.dsns.pr, 'postgresql://qa:hunter2@qa-pg-pr:5432')
+  // the networks still keep them apart
+  assert.deepEqual(s.provisioner.networks, { base: 'qa-session-base', pr: 'qa-session-pr' })
+  // a postgres option without user or db keeps 'qa' and 'postgres'
+  const { db } = await s.provisioner.provisionDatabase({ paneRef: { role: 'base' }, databases: [] })
+  await db.query('SELECT 1')
+  assert.deepEqual(docker(s.exec).at(-1).args, ['exec', 'qa-pg-base', 'psql', '-U', 'qa', '-d', 'postgres', '-t', '-A', '-c', 'SELECT 1'])
+
+  // The old default, given explicitly, is an explicit password like any other.
+  const qa = makeSession({ provisionerOptions: { postgres: { user: 'qa', password: 'qa', db: 'postgres' } } })
+  await bootSession(qa.deps, 7)
+  assert.deepEqual([pgPassword(qa.exec, 'base'), pgPassword(qa.exec, 'pr')], ['qa', 'qa'])
+
+  // An explicit password must be a non-empty string with no control
+  // characters (a line break would reach the env file); undefined means none.
+  for (const password of ['', 42, false, null, 'two\nlines', 'tab\there', 'nul\0']) {
+    assert.throws(() => createDockerProvisioner({ docker: makeDocker(recordingExec()), fsx: recordingFs(), workDir: WORK, postgres: { password } }), /postgres\.password/, JSON.stringify(password))
+  }
+  const unset = makeSession({ provisionerOptions: { postgres: { password: undefined } } })
+  await bootSession(unset.deps, 7)
+  assert.notEqual(pgPassword(unset.exec, 'base'), pgPassword(unset.exec, 'pr'))
+
+  // The DSN encodes the user and password, so a URL parser reads them back.
+  const odd = makeSession({ provisionerOptions: { postgres: { user: 'qa user', password: 'p@ss:w/rd#1%?' } } })
+  await bootSession(odd.deps, 7)
+  assert.equal(pgPassword(odd.exec, 'base'), 'p@ss:w/rd#1%?')
+  const url = new URL(odd.dsns.base)
+  assert.deepEqual([decodeURIComponent(url.username), decodeURIComponent(url.password), url.host], ['qa user', 'p@ss:w/rd#1%?', 'qa-pg-base:5432'])
+
+  const widget = makeSession({ provisionerOptions: { postgres: { user: 'widget', db: 'maindb' } } })
+  await bootSession(widget.deps, 7)
+  assert.match(widget.dsns.base, /^postgresql:\/\/widget:[0-9a-f]{48}@qa-pg-base:5432$/)
+  assert.match(widget.dsns.pr, /^postgresql:\/\/widget:[0-9a-f]{48}@qa-pg-pr:5432$/)
+  assert.notEqual(pgPassword(widget.exec, 'base'), pgPassword(widget.exec, 'pr'))
+  // db.query uses the provisioner's db by default
+  const { db: widgetDb } = await widget.provisioner.provisionDatabase({ paneRef: { role: 'pr' }, databases: [] })
+  await widgetDb.query('SELECT 1')
+  assert.deepEqual(docker(widget.exec).at(-1).args.slice(0, 6), ['exec', 'qa-pg-pr', 'psql', '-U', 'qa', '-d'])
+  assert.equal(docker(widget.exec).at(-1).args[6], 'maindb')
+})

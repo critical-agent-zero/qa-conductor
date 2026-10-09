@@ -4,6 +4,26 @@ What changed in each release, newest first. A 0.x minor version may break the in
 
 ## [Unreleased]
 
+### The Docker Provisioner
+
+- **The PR pane can no longer reach the base pane's database.** Both panes' containers joined one network, and both databases had the same superuser and password, which the PR pane's own `dsn` carried. So PR code, by mistake or on purpose, could change the base pane's data, or call the base app directly, and skew the comparison.
+  - **A network per pane:** `network` is now a prefix, so the panes join `qa-session-base` and `qa-session-pr` by default, or `{ base, pr }` to name both. Each pane's postgres, migrate and app containers join only that pane's network. `teardown` removes the pane's network, and `sweep` removes both, plus the one shared network that 0.3.1 and earlier made under the prefix's name.
+  - **A database password per pane:** with no `postgres.password` on the provisioner, each pane's database gets a password of 48 random hex characters, drawn for each boot, and only that pane's `dsn` carries it.
+  - **To get a password per pane, drop `password` from the provisioner's `postgres`.** The README said to copy `createDocker`'s `postgres`, whose default holds `password: 'qa'`, and any `password` keeps one for both panes. Only `user` and `db` need to match now. An EnvTransform can read the pane's password with `decodeURIComponent(new URL(pane.dsn).password)`: the `dsn` now percent-encodes the user and password.
+  - **Not in argv:** `createDocker`'s `runPg(name, network, { password })` passes the password to `docker run` through the CLI's environment (a bare `-e POSTGRES_PASSWORD`), never its argv, which other local users can read. A password that is empty or not a string throws.
+  - **The migrate run is named** `qa-migrate-<role>` (`createDocker`'s `runMigrate` takes it as a fourth argument, `{ name }`), so a teardown during `migrating` removes it and then the network. A pane network that already exists under that very name is reused, but any other failure to create one now fails the boot.
+  - **Still reachable:** where containers reach the host's loopback, or the conductor binds off loopback, the base pane's app, the base pane's proxy and the harness; without Docker Engine's default iptables rules, the base pane's containers by address. README's [Known limits](README.md#known-limits) lists these, and what the process Provisioner and a shared env leave open.
+  - **What breaks:**
+    - code that names the network `qa-session`, such as a firewall rule or a Seed that runs a container on it, must use the pane's network. So must a `network` that named a network of your own, so the panes could reach other containers on it, such as a mail catcher or a cache. The panes now join `<network>-base` and `<network>-pr`, created at each boot and removed at teardown. Run such a service once per pane, attached to that pane's network, created beforehand: a network still in use outlives a teardown, and the next boot reuses it. One service on both pane networks would reopen a path from the PR pane into the base pane;
+    - the provisioner's undocumented `network` property is now `networks`, `{ base, pr }`;
+    - anything that signs in with `qa:qa`, or with `createDocker`'s `postgres.password`, rather than the pane's `dsn` must use the `dsn`. That includes an EnvTransform, a Seed's own container, or a URL baked into a migrate image. Or set the provisioner's `postgres.password` to keep one password for both panes;
+    - a `postgres.image` whose data directory is already initialised ignores `POSTGRES_PASSWORD`, so its password no longer matches the `dsn`: set the provisioner's `postgres.password` to that image's password;
+    - an `execFileFn` of your own must pass `opts.env` on to the child, as `login` already needed, and reject with docker's stderr in the error's `message` or `stderr`, as `makeExecFileFn` does. A test that compares `runPg`'s argv sees a bare `-e POSTGRES_PASSWORD`;
+    - `createDockerProvisioner` throws on a `network` that puts both panes on one network, names one of Docker's or Podman's own (`host`, `bridge`, `none`, `default`, `podman`, `ingress`, `docker_gwbridge`) or another container's (`container:<name>`), isn't letters, digits, `_`, `.` and `-`, or is all hex digits, which Docker would also read as part of a network id. It also throws on a `postgres.password` that is set but isn't a non-empty string without control characters;
+    - the `dsn` percent-encodes the user and password, so code that parses it must decode them. Generated passwords are hex, so this only changes an explicit password with characters such as `@`, `:`, `/` or `%`, whose `dsn` didn't parse before.
+  - **Upgrading:** `sweep` removes the old shared network only when `network` is a prefix. If you switch to `{ base, pr }` as you upgrade, run `docker network rm <your old network>` (`qa-session` by default) once.
+  - **Fixed:** a `postgres` without `user` or `db` keeps `qa` and `postgres` for them, where it put `undefined` in the `dsn`.
+
 ### Preview builds
 
 - **A failed preview build fails the boot at once.** `awaitPreviewImage` polled GHCR only, so when the preview run it waited for failed, a boot stayed at `ensuring-image` for the whole `timeoutMs` (15 minutes by default) and then reported a timeout.
