@@ -440,15 +440,32 @@ test('psql builds the exact docker exec argv and returns stdout', async () => {
   assert.equal(out, '42\n')
 })
 
-test('rmForce removes all names in one call and tolerates errors', async () => {
+// What makeExecFileFn rejects with: the CLI's stderr in `stderr`, and after
+// a "Command failed" line in the message.
+const dockerFailure = stderr => Object.assign(new Error(`docker rm: Command failed: docker …\n${stderr}`), { stderr })
+
+test('rmForce removes all names in one call, and tolerates only names already gone', async () => {
   const exec = recordingExec()
   const docker = createDocker({ execFileFn: exec })
   await docker.rmForce(['qa-app-base', 'qa-pg-base'])
   assert.deepEqual(exec.calls, [['docker', 'rm', '-f', '-v', 'qa-app-base', 'qa-pg-base']])
 
-  const failing = recordingExec([new Error('No such container')])
-  const docker2 = createDocker({ execFileFn: failing })
-  await docker2.rmForce(['gone'])
+  // docker rm exits 1 when any name is missing, having removed the others
+  for (const err of [
+    new Error('No such container'),
+    dockerFailure('Error response from daemon: No such container: qa-migrate-base\n'),
+    dockerFailure('Error: No such container: a\nError: No such container: b\n'),
+  ]) {
+    await createDocker({ execFileFn: recordingExec([err]) }).rmForce(['a', 'b'])
+  }
+  // anything else means a container may still be up: the conductor must know
+  for (const err of [
+    dockerFailure('Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n'),
+    dockerFailure('Error response from daemon: No such container: a\nError response from daemon: cannot remove container "/b": could not kill: permission denied\n'),
+    new Error('spawn docker ENOENT'),
+  ]) {
+    await assert.rejects(createDocker({ execFileFn: recordingExec([err]) }).rmForce(['a', 'b']), e => e === err, err.message)
+  }
 })
 
 test('rmForce with no names makes no call', async () => {
@@ -458,7 +475,7 @@ test('rmForce with no names makes no call', async () => {
   assert.equal(exec.calls.length, 0)
 })
 
-test('createNetwork and rmNetwork build exact argv; rmNetwork tolerates errors', async () => {
+test('createNetwork and rmNetwork build exact argv; rmNetwork tolerates only a network already gone', async () => {
   const exec = recordingExec()
   const docker = createDocker({ execFileFn: exec })
   await docker.createNetwork('qa-session')
@@ -468,9 +485,20 @@ test('createNetwork and rmNetwork build exact argv; rmNetwork tolerates errors',
     ['docker', 'network', 'rm', 'qa-session'],
   ])
 
-  const failing = recordingExec([new Error('network not found')])
-  const docker2 = createDocker({ execFileFn: failing })
-  await docker2.rmNetwork('gone')
+  for (const err of [
+    new Error('network not found'),
+    dockerFailure('Error response from daemon: network qa-session-base not found\n'),
+    dockerFailure('Error: No such network: qa-session-base\n'),
+  ]) {
+    await createDocker({ execFileFn: recordingExec([err]) }).rmNetwork('gone')
+  }
+  // still in use (a container that didn't come down), or no daemon
+  for (const err of [
+    dockerFailure('Error response from daemon: error while removing network: network qa-session-pr id 3f2 has active endpoints\n'),
+    dockerFailure('Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n'),
+  ]) {
+    await assert.rejects(createDocker({ execFileFn: recordingExec([err]) }).rmNetwork('qa-session-pr'), e => e === err, err.message)
+  }
 })
 
 test('rmLabelledNetwork removes a network only when it carries the label', async () => {

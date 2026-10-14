@@ -236,6 +236,40 @@ test('teardown removes each pane\'s own network, and sweep removes both and the 
   await createDockerProvisioner({ docker: makeDocker(recordingExec()), fsx: enoent, workDir: WORK }).sweep()
 })
 
+// The conductor lets a browser enrol only once a teardown has left no pane
+// running, so a container or network docker couldn't remove must fail the
+// teardown, or the sweep, rather than pass for gone.
+test('teardown and sweep reject when docker can\'t remove a container or network, after trying every step', async () => {
+  const fail = stderr => Object.assign(new Error(`docker: Command failed\n${stderr}`), { stderr })
+  const stuck = args => {
+    if (args[0] === 'rm') return fail('Error response from daemon: cannot remove container "/qa-app-pr": could not kill: permission denied\n')
+    if (args[0] === 'network' && args[1] === 'rm') return fail('Error response from daemon: error while removing network: network qa-session-pr id 3f2 has active endpoints\n')
+    if (args[0] === 'ps') return 'c0ffee\n'
+    return null
+  }
+  const s = makeSession({ answer: stuck })
+  const out = await teardownSession({ provisioner: s.provisioner })
+  assert.equal(out.ok, false)
+  assert.deepEqual(out.failed.map(f => f.role), ['base', 'pr'])
+  assert.match(out.failed[1].message, /could not kill/)
+  // every step was still tried: the network, and the env file with its password
+  assert.deepEqual(docker(s.exec).map(c => c.args.join(' ')), [
+    'rm -f -v qa-app-base qa-migrate-base qa-pg-base', 'network rm qa-session-base',
+    'rm -f -v qa-app-pr qa-migrate-pr qa-pg-pr', 'network rm qa-session-pr',
+  ])
+  assert.deepEqual(s.fsx.removed, [`${WORK}/.env.qa-base`, `${WORK}/.env.qa-pr`])
+
+  const sweptExec = recordingExec({ answer: stuck })
+  await assert.rejects(createDockerProvisioner({ docker: makeDocker(sweptExec), fsx: recordingFs(), workDir: WORK }).sweep(), /could not kill/)
+  assert.deepEqual(docker(sweptExec).map(c => c.args.join(' ')).slice(0, 4), [
+    'ps -aq --filter label=qa-conductor-session', 'rm -f -v c0ffee', 'network rm qa-session-base', 'network rm qa-session-pr',
+  ])
+
+  // a pane that never came up is fine: docker reports each name missing
+  const gone = makeSession({ answer: args => (args[0] === 'rm' ? fail('Error response from daemon: No such container: qa-app-base\n') : args[1] === 'rm' ? fail('Error: No such network: qa-session-base\n') : null) })
+  assert.deepEqual(await teardownSession({ provisioner: gone.provisioner }), { ok: true, failed: [] })
+})
+
 test('network as a prefix or as { base, pr }; two panes on one network are refused', async () => {
   const prefixed = makeSession({ provisionerOptions: { network: 'widget-qa' } })
   await bootSession(prefixed.deps, 7)

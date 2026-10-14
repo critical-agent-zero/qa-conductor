@@ -682,12 +682,14 @@ test('teardown keeps probing the group after its leader exits on TERM, then SIGK
   assert.deepEqual(readPids(s.fsx), [])
 })
 
-test('a group that survives SIGKILL keeps its pidfile entry, is logged, and goes once it reports ESRCH', async () => {
+// A teardown that leaves a group running rejects, naming it: the conductor
+// opens enrolment only once a teardown has left no PR code running.
+test('a group that survives SIGKILL keeps its pidfile entry, is logged, fails the teardown, and goes once it reports ESRCH', async () => {
   const s = setup({ deps: { graceMs: 300 } })
   await launch(s.p, BASE)
   s.groups.survivesTerm.add(1001)
   s.groups.survivesKill.add(1001)
-  await s.p.teardown({ paneRef: BASE })
+  await assert.rejects(s.p.teardown({ paneRef: BASE }), /^Error: base pane: process group 1001 \(app\) survived SIGKILL$/)
   assert.ok(s.groups.calls.some(([, sig]) => sig === 'SIGKILL'))
   assert.deepEqual(readPids(s.fsx).map(e => e.pid), [1001])
   assert.match(s.warnings.join('\n'), /1001/)
@@ -816,7 +818,7 @@ test('a group that ends between teardown\'s probes is not signalled again, thoug
   assert.deepEqual(readPids(s.fsx), [])
 })
 
-test('when ps fails for an exited leader, teardown leaves it unsignalled and kept, and stops the rest', async () => {
+test('when ps fails for an exited leader, teardown leaves it unsignalled and kept, stops the rest, and fails', async () => {
   const ps = { fn: pid => ({ startedAt: `t${pid}` }) }
   const s = setup({ deps: { psFn: async pid => ps.fn(pid) } })
   await launch(s.p, BASE, { app: '/w', worker: '/w' }) // 1001, 1002
@@ -826,7 +828,7 @@ test('when ps fails for an exited leader, teardown leaves it unsignalled and kep
     if (pid === 1001) throw new Error('ps: fork failed')
     return { startedAt: `t${pid}` }
   }
-  await s.p.teardown({ paneRef: BASE })
+  await assert.rejects(s.p.teardown({ paneRef: BASE }), /^Error: base pane: could not check whether pid 1001 \(app\) is still ours$/)
   assert.deepEqual(signalsTo(s, 1001), [])
   assert.deepEqual(signalsTo(s, 1002), [[-1002, 'SIGTERM']])
   assert.deepEqual(readPids(s.fsx).map(e => e.pid), [1001])
@@ -937,7 +939,7 @@ test('with no boot id, sweep still acts on start times and leaderless groups', a
   assert.equal(readPids(s.fsx)[0].bootId, null)
 })
 
-test('sweep removes only the entries it processed, keeping new ones and survivors', async () => {
+test('sweep removes only the entries it processed, keeping new ones and survivors, and fails on a survivor', async () => {
   let release
   const gate = new Promise(resolve => { release = resolve })
   const s = setup({
@@ -957,7 +959,7 @@ test('sweep removes only the entries it processed, keeping new ones and survivor
   const sweeping = s.p.sweep()
   await launch(s.p, BASE) // pid 1001, persisted while the sweep waits on ps
   release()
-  await sweeping
+  await assert.rejects(sweeping, /^Error: sweep: process group 502 \(app\) survived SIGKILL$/)
   assert.deepEqual(readPids(s.fsx).map(e => e.pid).sort(), [1001, 502])
   assert.match(s.warnings.join('\n'), /502/)
 })
