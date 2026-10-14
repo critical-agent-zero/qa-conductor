@@ -240,6 +240,35 @@ test('teardownSession tears down every pane whether teardown returns, throws or 
   assert.deepEqual(calls.filter(c => c[0] === 'teardown').map(c => c[1].paneRef.role), ['base', 'pr'])
 })
 
+// The conductor opens enrolment only once a teardown has left no PR code
+// running, so it must know whether one did.
+test('teardownSession resolves to whether every pane came down, naming each that did not', async () => {
+  assert.deepEqual(await teardownSession({ provisioner: { teardown: async () => {} } }), { ok: true, failed: [] })
+  const out = await teardownSession({
+    provisioner: {
+      teardown: ({ paneRef }) => {
+        if (paneRef.role === 'base') throw new Error('docker is down')
+        return Promise.reject('gone')
+      },
+    },
+  })
+  assert.deepEqual(out, { ok: false, failed: [{ role: 'base', message: 'docker is down' }, { role: 'pr', message: 'gone' }] })
+})
+
+test('a failed boot says on its error whether its own teardown brought both panes down', async () => {
+  const clean = makeDeps({ failAt: 'launchServices' })
+  await assert.rejects(() => bootSession(clean.deps, 7), err => err.tornDown === true)
+  const dirty = makeDeps({ failAt: 'launchServices' })
+  dirty.deps.adapters.provisioner.teardown = async ({ paneRef }) => { if (paneRef.role === 'pr') throw new Error('busy') }
+  await assert.rejects(() => bootSession(dirty.deps, 7), err => err.tornDown === false)
+  // an aborted boot tears nothing down, and says nothing
+  const ac = new AbortController()
+  const aborted = makeDeps({ failAt: 'launchServices' })
+  aborted.deps.signal = ac.signal
+  aborted.deps.adapters.provisioner.launchServices = async () => { ac.abort(); throw new Error('stopped') }
+  await assert.rejects(() => bootSession(aborted.deps, 7), err => !('tornDown' in err))
+})
+
 // Spread unawaited, a promise is {}: the panes would get none of its env, no
 // DSN or origin, and none of the EnvTransform's side-effect neutralisation.
 test('bootSession awaits derivePaneEnv and envContributions, so either may be async', async () => {
