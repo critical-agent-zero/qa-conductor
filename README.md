@@ -241,9 +241,9 @@ A boot runs these five seams in order: `ensureBuilt` → per pane (`provisionDat
 |---|---|---|
 | **Provisioner** | `provisionDatabase({paneRef, databases, signal}) → {dsn, db}`, `reserveServices({paneRef, services, signal}) → {name: {url, port}}`, `launchServices({paneRef, services, env, reserved, signal})`, `waitHealthy({services, signal})`, `teardown({paneRef})`; optional `runMigrate({paneRef, migrate, env, signal})`, `sweep()`, `logs({paneRef, stage, lines}) → string` (or a promise of one) | Where panes run: databases, processes or containers, ports, env at rest, cleanup |
 | **BuildConvention** | `migrationStrategy` (`'one-shot-image' \| 'on-boot' \| 'none'`), `ensureBuilt(pr, {signal})`, `resolvePrImages(pr)`, `resolveBaseImages()` → `{services: {name: ref}, migrate?, label?}`; optional `subscribeBuild(cb)` with `cb({runUrl?, runStatus?, runConclusion?, message?})`, `describePrs(prs) → [{number, status: 'built'\|'building'\|'none'\|'blocked', runUrl, reason?}]` | What gets run for base and PR, whether it's ready, and whether it may run at all |
-| **Seed** | `databases`, `seedPane({paneRef, db, databases})` | Where each pane's data comes from and how it moves |
+| **Seed** | `databases`, `seedPane({paneRef, db, databases, signal})` | Where each pane's data comes from and how it moves |
 | **EnvTransform** | `derivePaneEnv({prodEnv, pane}) → {service: env}` (pure) | Pointing a pane at its own DB and origin, and neutralizing side effects (email, payments, storage) |
-| **AuthBootstrap** | `requiresDb`, `establishSession({pane, operator, db?}) → {landingUrl}`; optional `envContributions() → {service: env}` | Getting the reviewer logged in to each pane |
+| **AuthBootstrap** | `requiresDb`, `establishSession({pane, operator, db?, signal}) → {landingUrl}`; optional `envContributions() → {service: env}` | Getting the reviewer logged in to each pane |
 
 The optional members degrade gracefully when absent:
 - With no `sweep`, nothing is cleaned up at startup.
@@ -268,7 +268,18 @@ What the seams pass each other. Any method above may return its result or a prom
 ### Contracts between the seams
 
 - **`db` is opaque to the core.** Whatever `provisionDatabase` returns as `db` is passed unchanged to `seedPane` and (when `requiresDb`) to `establishSession`. Its shape is a contract among a consumer's own adapters.
-- **Cancellation (`signal`).** Teardown and takeover abort the in-flight boot. The core checks the signal between stages, at the top of each pane's provisioning, between `provisionDatabase` and the Seed, before each `launchServices` and before the `waitHealthy` loop. It also passes the signal to `ensureBuilt` and to every Provisioner call above, so a long wait can stop early. Provisioners may ignore it. The Docker one checks it before each step that creates or changes something, but still finishes a wait or a Docker call already running. An aborted boot never tears anything down, even when the abort lands while its failure log tail is being read: whoever aborted it already did.
+- **Cancellation (`signal`).** Teardown and takeover abort the in-flight boot. An aborted boot never tears anything down, even when the abort lands while its failure log tail is being read: whoever aborted it already did.
+  - **Where the core checks it:**
+    - between stages;
+    - at the top of each pane's provisioning;
+    - between `provisionDatabase` and the Seed;
+    - before each `launchServices`;
+    - before the `waitHealthy` loop;
+    - before each pane's `establishSession`.
+  - **Who gets it:** `ensureBuilt`, the Provisioner calls that list `signal` (`provisionDatabase`, `reserveServices`, `runMigrate`, `launchServices`, `waitHealthy`), `seedPane` and `establishSession`. So a long wait can stop early, and a Seed or sign-in can stop between its steps.
+  - **Adapters may ignore it.** A Seed or sign-in that writes the pane's database should check it before each write. Once the boot is aborted, the next session may own that pane's name.
+  - **The Docker Provisioner** checks it before each step that creates or changes something, and its `db.query` refuses once the boot is aborted. It still finishes a wait or a Docker call already running.
+  - **The process Provisioner** passes it on to `database.handle`, so a handle whose calls write can refuse too.
 - **Startup sweep.** The conductor calls `sweep()` once, at startup. A boot started before it settles waits for it before `ensureBuilt`, so the sweep can't remove the new session's panes. While it waits, the harness shows `waiting for startup cleanup…` under the first boot step, then `startup cleanup done`, and counts the wait in that step's time and the boot's. There is no timeout. A failed sweep is logged and doesn't block boots, even one that throws synchronously or rejects with something other than an `Error`. A teardown or takeover during the wait cancels the waiting boot, as it would at any other point.
 - **Build progress.** `subscribeBuild(cb)` payloads are `{runUrl?, runStatus?, runConclusion?, message?}`. The harness shows `message` (plain text, e.g. `installing dependencies for #12 (abc1234)…`) under the first boot step, else a summary of the run's status that names a `completed` run's conclusion when it isn't `success` (`Build ended: failure`), and links the run when `runUrl` is `https://`. `/api/state` returns the latest as `buildRun: {url, status, conclusion, message}`. A boot that fails at `ensuring-image` with an error that carries `run: {url, status, conclusion}`, as `awaitPreviewImage`'s does, gets that run as its last build event before the error, so `buildRun` and the error's run link show the run that failed. Only string fields are kept, and only when there is a `url` or a `status`.
 - **`blocked`.** `describePrs` may report a PR as `blocked`, with a plain-text `reason` (for example, an untrusted author or a head branch in someone else's fork). The picker shows it as `can't boot: <reason>`. Opening the PR is still allowed, because `ensureBuilt` is the real gate. `describePrs` receives `listOpenPrs()` items, or for `/api/build-status` an item built from `github.prInfo(pr)` (`{number, headSha, author, authorAssociation, headRepo, headOwner}`), falling back to `{number, headSha}` from `prHead` when `github` has no `prInfo`.
@@ -367,7 +378,7 @@ const provisioner = createProcessProvisioner({
   database: {                                  // optional: one per pane
     command: ({ paneRef, port }) => ({ cmd: '/usr/bin/java', args: ['-jar', 'DynamoDBLocal.jar', '-inMemory', '-port', String(port)], cwd: ddbDir }),
     ready: ({ port, signal }) => waitForPort(port, { signal }),
-    handle: ({ paneRef, port }) => ({ dsn: `http://127.0.0.1:${port}`, db: { endpoint: `http://127.0.0.1:${port}` } }),
+    handle: ({ paneRef, port }) => ({ dsn: `http://127.0.0.1:${port}`, db: { endpoint: `http://127.0.0.1:${port}` } }), // also gets the boot's signal
   },
   healthPath: '/ui/',                          // or (serviceName) => path; default '/'
   healthy: status => status === 200,           // default: status < 500
@@ -446,7 +457,11 @@ Its limits:
 - **Other runtimes.** The networks keep the panes apart because Docker Engine's default iptables rules isolate one network from another. A daemon run with `"iptables": false` doesn't, nor do Podman's networks, which it creates without `isolate=true`. There, PR code can reach the base pane's containers by address, though not by name. The per-pane password still keeps it out of the base pane's database, unless you set `postgres.password`, or the image doesn't enforce it (see `createDocker`'s `postgres.image`).
 - **The app's side:** listen on port `3000` in the container, and answer `GET /api/health` with `200`.
 - **The registry login is to `ghcr.io` only.**
-- **`signal`.** Each step that creates or changes something (the network, a container, an env file) first checks `signal`, so an aborted boot stops there. A teardown doesn't wait for a Docker call already running, such as a pull: the aborted boot stops at its next step once that call returns. A `docker run` that had already started can, rarely, still land in the next session's pane of the same role.
+- **`signal`.**
+  - Each step that creates or changes something (the network, a container, an env file) first checks `signal`, so an aborted boot stops there.
+  - `db.query` refuses once the boot is aborted, so a Seed or sign-in still running can't write through it. A Seed that copies with `createDocker`'s `cloneDb` or `pipeDump`, or runs a container of its own, isn't gated by it: it should check `signal` before each step.
+  - A teardown doesn't wait for a Docker call already running, such as a pull: the aborted boot stops at its next step once that call returns.
+  - A `docker run`, or a `docker exec` query, that had already started can, rarely, still land in the next session's pane of the same role.
 
 ### Effect wrappers
 

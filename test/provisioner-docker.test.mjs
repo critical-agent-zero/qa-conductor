@@ -45,7 +45,13 @@ function recordingFs() {
 // sleeps); every other member runs as written.
 function makeDocker(exec) {
   const docker = createDocker({ execFileFn: exec })
-  return Object.assign(docker, { waitHealthyPg: async () => {}, waitHealthyApp: async () => {} })
+  const ensureImage = docker.ensureImage
+  return Object.assign(docker, {
+    waitHealthyPg: async () => {},
+    waitHealthyApp: async () => {},
+    // the real pull and retry, without the 3 s sleep between tries
+    ensureImage(image, opts = {}) { return ensureImage.call(this, image, { ...opts, sleepFn: async () => {} }) },
+  })
 }
 
 function makeSession({ provisionerOptions = {}, answer } = {}) {
@@ -416,6 +422,58 @@ test('an aborted boot starts no container and writes no env file once it was abo
     assert.ok(ctl.signal.aborted, `${when}: the abort happened`)
     assert.deepEqual(log.filter(c => c.after && after(c)).map(c => c.args.join(' ')), [], `${when}: nothing after the abort`)
   }
+})
+
+// A Seed (or a sign-in with requiresDb) already running when the boot is
+// aborted writes through db.query: once aborted, the handle refuses, so it
+// can't write into whatever database now answers to the pane's name.
+test('an aborted boot\'s db handle refuses queries, so a Seed still running writes nothing more', async () => {
+  const controller = new AbortController()
+  const s = makeSession()
+  s.deps.signal = controller.signal
+  let afterAbort = null
+  s.deps.adapters.seed.seedPane = async ({ db, signal }) => {
+    assert.equal(signal, controller.signal, 'the Seed gets the boot\'s signal')
+    await db.query('SELECT 1')
+    controller.abort()
+    afterAbort = docker(s.exec).length
+    // It rejects rather than throwing, for a Seed that chains .then/.catch.
+    let write
+    assert.doesNotThrow(() => { write = db.query('INSERT INTO t VALUES (1)') })
+    await assert.rejects(write, err => err.name === 'AbortError')
+    await assert.rejects(db.query('SELECT 2', { database: 'app' }), err => err.name === 'AbortError')
+  }
+  await assert.rejects(bootSession(s.deps, 7), err => err.name === 'AbortError')
+  assert.equal(docker(s.exec).length, afterAbort, 'no docker call after the abort')
+  assert.ok(!docker(s.exec).some(c => c.args.join(' ').includes('INSERT')), 'the write never ran')
+})
+
+// The postgres image is pulled before its container is created, with the
+// registry's relogin on a failed pull, as the app images are.
+test('provisionDatabase pulls the postgres image before running it, relogging in before a retry', async () => {
+  const s = makeSession()
+  await bootSession(s.deps, 7)
+  const calls = docker(s.exec).map(c => c.args.join(' '))
+  const inspect = calls.indexOf('image inspect postgres:16')
+  const run = calls.findIndex(c => c.startsWith('run ') && c.includes('--name qa-pg-base'))
+  assert.ok(inspect !== -1 && run !== -1 && inspect < run, `image inspect postgres:16 (${inspect}) before run qa-pg-base (${run})`)
+
+  // Missing image, a failed first pull: docker login comes before the retry.
+  let pulls = 0
+  const r = makeSession({
+    provisionerOptions: { registry: { user: 'acme-bot', token: 't0ken' } },
+    answer: args => {
+      if (args[0] === 'image' && args[2] === 'postgres:16') return new Error('No such image')
+      if (args[0] === 'pull' && args[1] === 'postgres:16' && pulls++ === 0) return new Error('denied')
+      return null
+    },
+  })
+  await r.provisioner.provisionDatabase({ paneRef: { role: 'base' }, databases: [] })
+  const seq = r.exec.calls.map(c => c.file === 'sh' ? 'login' : c.args.slice(0, 2).join(' '))
+  const firstPull = seq.indexOf('pull postgres:16')
+  const secondPull = seq.indexOf('pull postgres:16', firstPull + 1)
+  assert.ok(firstPull !== -1 && secondPull > firstPull, seq.join(' | '))
+  assert.ok(seq.slice(firstPull + 1, secondPull).includes('login'), `a login between the pulls: ${seq.join(' | ')}`)
 })
 
 // The three provisioner steps that create or change something, for the base pane.

@@ -291,6 +291,29 @@ test('bootSession: an abort while a pane database is provisioned stops the boot 
   assert.equal(calls.some(c => c[0] === 'teardown'), false)
 })
 
+test('bootSession passes the signal to seedPane and establishSession, so a Seed or sign-in can stop between steps', async () => {
+  const ac = new AbortController()
+  const { deps, calls } = makeDeps()
+  deps.signal = ac.signal
+  await bootSession(deps, 7)
+  for (const name of ['seedPane', 'establishSession']) {
+    const seen = calls.filter(c => c[0] === name).map(c => c[1].signal)
+    // the boot's own signal, by identity: any live signal would deep-equal it
+    assert.ok(seen.length === 2 && seen.every(s => s === ac.signal), name)
+  }
+})
+
+test('bootSession: an abort during the base pane\'s sign-in stops the boot before the PR pane\'s', async () => {
+  const ac = new AbortController()
+  const { deps, calls } = makeDeps()
+  deps.signal = ac.signal
+  const sign = deps.adapters.auth.establishSession
+  deps.adapters.auth.establishSession = async args => { const out = await sign(args); ac.abort(); return out }
+  await assert.rejects(() => bootSession(deps, 7), err => err.name === 'AbortError')
+  assert.deepEqual(calls.filter(c => c[0] === 'establishSession').map(c => c[1].pane.ref.role), ['base'])
+  assert.equal(calls.some(c => c[0] === 'teardown'), false)
+})
+
 test('bootSession: a failure after abort skips teardown; a non-aborted failure tears down', async () => {
   const ac = new AbortController()
   const aborted = makeDeps()

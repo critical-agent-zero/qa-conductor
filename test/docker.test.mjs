@@ -481,10 +481,13 @@ test('rmLabelledNetwork removes a network only when it carries the label', async
     ['docker', 'network', 'ls', '--filter', 'label=qa-conductor-session', '--format', '{{.Name}}'],
     ['docker', 'network', 'rm', 'qa-session'],
   ])
-  // A network of that name without the label, or only names that contain it: left alone.
-  const other = recordingExec(['qa-session-pr\nmy-qa-session\n'])
-  assert.equal(await createDocker({ execFileFn: other }).rmLabelledNetwork('qa-session'), false)
-  assert.equal(other.calls.length, 1)
+  // A network of that name without the label, or only names that contain it,
+  // are part of it, or differ only in case: left alone.
+  for (const listed of ['qa-session-pr\nmy-qa-session\n', 'qa\nQA-SESSION\nsession\n']) {
+    const other = recordingExec([listed])
+    assert.equal(await createDocker({ execFileFn: other }).rmLabelledNetwork('qa-session'), false, JSON.stringify(listed))
+    assert.equal(other.calls.length, 1)
+  }
   // A daemon that can't list: nothing removed, nothing thrown.
   assert.equal(await createDocker({ execFileFn: recordingExec([new Error('daemon down')]) }).rmLabelledNetwork('qa-session'), false)
 })

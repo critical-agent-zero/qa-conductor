@@ -543,6 +543,15 @@ test('provisionDatabase without a database starts nothing', async () => {
   assert.equal(s.spawned.length, 0)
 })
 
+test('provisionDatabase hands the boot\'s signal to database.handle, so a handle that writes can stop once the boot is aborted', async () => {
+  const handled = []
+  const s = setup({ deps: { database: fakeDb({ handle: args => { handled.push(args); return { dsn: 'x', db: {} } } }) } })
+  const ac = new AbortController()
+  await s.p.provisionDatabase({ paneRef: BASE, databases: [], signal: ac.signal })
+  assert.equal(handled[0].signal, ac.signal)
+  assert.equal(handled[0].port, 4000)
+})
+
 test('provisionDatabase spawns the database with exactly PATH and its env, waits for ready, returns handle', async () => {
   const readyCalls = []
   const s = setup({ deps: { database: fakeDb({ ready: async args => { readyCalls.push(args) } }) } })
