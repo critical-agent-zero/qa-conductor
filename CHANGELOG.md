@@ -4,6 +4,39 @@ What changed in each release, newest first. A 0.x minor version may break the in
 
 ## [Unreleased]
 
+### The per-browser capability
+
+- **The conductor answers only browsers it has enrolled.** Code that reached the conductor on loopback could send whatever a browser would: any `Tailscale-User-Login`, `Origin` and Fetch Metadata. That includes a process pane, or a container pane on a runtime that forwards to the host's loopback, such as Docker Desktop. So PR code could read both panes' sign-in URLs from `/api/state`, take over or end the session and post a verdict. It could also use the base pane through its proxy, signed in as the reviewer. Now every `/api/*` route but `POST /api/enrol`, and every pane request, needs an enrolled browser's capability, else it gets `403` with `X-QA-Refusal: capability`. README's [Security](README.md#security) has the details.
+  - **Enrolment:** a browser enrols only while no PR code can be running. That means the session is idle, or failed and torn down, every boot has settled, a teardown has succeeded since, and the startup sweep succeeded. When a cancelled boot settles, the conductor runs that teardown itself, so **Cancel boot** now tears the panes down twice. A failed sweep or teardown runs again each time a browser tries to enrol with no session running. An enrolled browser can hand out an invite link, which enrols one more browser, once, within ten minutes, whatever is running.
+  - **The harness** keeps its token in `localStorage` and sends it as `X-QA-Cap`, or `?cap=` on the event stream. It loads each pane through a one-time link that sets the pane cookie, `HttpOnly` and `SameSite=Strict`. A restart revokes every token and cookie.
+  - **New:**
+    - routes: `POST /api/enrol`, `POST /api/invite`, `POST /api/pane-entry`, and `GET /__qa/enter` on each pane;
+    - in the harness: an enrolment view and an **Invite** button;
+    - `teardownSession` resolves to `{ ok, failed }`, and a failed boot's error carries `tornDown`;
+    - `createPaneProxy` takes `capability`;
+    - a capability refusal's JSON body says `refusal: "capability"` and names `harnessOrigin`, since a front door may drop the header.
+  - **What breaks:**
+    - **A first visit must enrol.** A browser does so by itself when it opens the harness while no session runs. One that opens it while a session runs, such as a second reviewer's, gets the enrolment view: send it an invite from an enrolled browser, or end the session. After a restart, each browser enrols again, by itself while no session runs.
+    - **A failed startup sweep or teardown keeps enrolment shut** until one succeeds. Both are logged. A Docker daemon that isn't up when the conductor starts fails the sweep: once it is, a browser's next try runs the sweep again.
+    - **The built-in Provisioners now report what they can't remove.** The Docker one's `teardown` and `sweep` reject when docker fails for any reason but a name already gone, such as no daemon, a container it can't kill, or a network still in use. `createDocker`'s `rmForce` and `rmNetwork` do too, once they have tried. The process one's `teardown` rejects when a process group survives SIGKILL, or a pid can't be checked, and its `sweep` when a group survives. Each still tries every step first. `teardownSession` catches these, but code that calls them directly now sees the error. A custom Provisioner must likewise reject when it leaves anything running, or enrolment opens while PR code may run.
+    - **A pane app's `Clear-Site-Data` loses its `"cookies"` type**, which would wipe the pane cookie and every other cookie on the hostname, and `"*"` becomes `"cache", "storage", "executionContexts"`. With or without a capability, `createPaneProxy` does this.
+    - **POST bodies are limited to 64 KiB** (`413`), and a body that is JSON but not an object reads as `{}`.
+    - **A pane request without credentials is refused**, such as `fetch(url, { credentials: 'omit' })` or a `<link rel="manifest">` without `crossorigin="use-credentials"`: it carries no pane cookie.
+    - **The harness and both panes must share one hostname.** A `SameSite=Strict` cookie never reaches a pane framed from another site, and with no public suffix list the conductor can tell only that one hostname is one site. `startConductor` refuses pane origins on another hostname than the harness origin, a same-site layout such as `qa.example.com` with `base.example.com` included. Pane origins assigned after start are checked when the harness loads a pane: `/api/pane-entry` answers `409`. With a `::1` bind, set both pane origins on `localhost` too, beside `QA_HARNESS_ORIGIN`.
+    - **`QA_FORWARD_CLIENT_COOKIES` and `forwardClientCookies` refuse a name starting with `qa-`**, in any case, after `__Host-` or `__Secure-` too. `loadConfig`, `startConductor` and `createPaneProxy` throw: those are the conductor's own.
+    - **A `landingUrl` must be on its pane's origin**, or relative to it. One elsewhere isn't loaded, and the pane's bar says why.
+    - **Scripts that call the API must enrol** with `POST /api/enrol` while no session runs, then send `X-QA-Cap`. A script that fetches a pane needs its cookie, from `/api/pane-entry` and then the pane's `/__qa/enter`.
+    - **Self-QA over a tailnet** no longer shows the inner demos' own panes, which are on another hostname, this machine's loopback.
+    - A test that counts teardowns after a cancelled boot sees the cleanup's too.
+  - **The demo and `npm run qa` need nothing new.** They start idle, so the browser that opens them enrols by itself, and so does each inner demo's harness, inside its pane.
+  - **What it doesn't close:**
+    - the base app's own published port;
+    - on plain-http loopback, a PR page and the PR app lifting the pane cookie through the browser;
+    - a process pane reading the token from the browser's profile;
+    - PR code that outlives its teardown.
+
+    README's Security section and Known limits list these.
+
 ### The Docker Provisioner
 
 - **The PR pane can no longer reach the base pane's database.** Both panes' containers joined one network, and both databases had the same superuser and password, which the PR pane's own `dsn` carried. So PR code, by mistake or on purpose, could change the base pane's data, or call the base app directly, and skew the comparison.

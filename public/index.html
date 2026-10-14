@@ -66,7 +66,9 @@
 
   main { flex: 1; display: flex; flex-direction: column; min-height: 0 }
   .view[hidden] { display: none }
-  #picker, #boot, #verdictDone { max-width: 780px; width: 100%; margin: 28px auto; padding: 0 16px }
+  #picker, #boot, #verdictDone, #enrol { max-width: 780px; width: 100%; margin: 28px auto; padding: 0 16px }
+  #enrol p { color: var(--text-dim) }
+  #inviteLink { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: var(--mono) }
   h1 { font-size: 18px; display: flex; align-items: center; gap: 10px }
   h1:focus { outline: none }
 
@@ -145,7 +147,7 @@
   body.compact #paneRow .pane { display: none; border-right: 0 }
   body.compact #paneRow .pane.activeTab { display: flex }
   body.compact .widths { display: none }
-  body.compact #picker, body.compact #boot, body.compact #verdictDone { margin: 16px auto }
+  body.compact #picker, body.compact #boot, body.compact #verdictDone, body.compact #enrol { margin: 16px auto }
   body.compact #verdictBar { position: sticky; bottom: 0 }
   body.compact #notes { min-height: 70px }
 </style>
@@ -174,6 +176,7 @@
     <span id="idleChip" class="chip" title="Auto-end when idle">auto-end —</span>
     <button id="teardownBtn" class="danger-ghost" title="End session (e)">End session</button>
   </div>
+  <button id="inviteBtn" class="ghost" title="A link that enrols another browser" hidden>Invite</button>
 </header>
 <p id="originNotice" role="alert" hidden></p>
 
@@ -181,6 +184,14 @@
 <div id="announcerAssertive" class="sr" role="alert" aria-live="assertive"></div>
 
 <main>
+  <section id="enrol" class="view" hidden>
+    <h1 tabindex="-1">This browser isn't enrolled</h1>
+    <div id="enrolReason" class="note"></div>
+    <p>The conductor answers only browsers it has enrolled. A browser enrols by itself when it opens the harness while no pull request's code can be running: no session booting, running or ending.</p>
+    <p>To get in now, open an invite link from a browser that is enrolled (<b>Invite</b>, at the top right of its harness), or end the session there and try again. With no enrolled browser at hand, try again once the session has ended by itself, after the idle time, or once the conductor has restarted.</p>
+    <div class="acts"><button id="enrolRetry" class="primary">Try again</button></div>
+  </section>
+
   <section id="picker" class="view" hidden>
     <h1 tabindex="-1">Open pull requests <button id="refreshBtn" class="ghost" title="Refresh">↻</button></h1>
     <div id="conflictSlot"></div>
@@ -262,6 +273,16 @@
     </div>
   </div>
 </footer>
+
+<dialog id="inviteDialog" aria-labelledby="inviteHeading">
+  <h2 id="inviteHeading">Invite a browser</h2>
+  <p class="stepSub">Open this link in the browser to enrol. <span id="inviteExpiry"></span> Anyone who opens it gets in, so send it only to a reviewer.</p>
+  <input id="inviteLink" readonly aria-label="Invite link">
+  <div class="acts" style="display:flex;gap:8px;margin-top:10px">
+    <button id="inviteCopy" class="primary">Copy</button>
+    <button id="inviteClose" class="secondary">Close</button>
+  </div>
+</dialog>
 
 <dialog id="shortcuts">
   <h2>Keyboard shortcuts</h2>

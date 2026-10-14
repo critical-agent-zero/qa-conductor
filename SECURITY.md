@@ -30,6 +30,7 @@ In scope is any way around one of the defences the README's [Security](README.md
 - **the identity gate**: in tailscale mode, a request to the harness or a pane that is served without an allowed `Tailscale-User-Login`;
 - **the trust gate** in `adapters/build-worktree`: a PR's code checked out, installed or run although its author, or where its head lives, fails the gate, or a SHA other than the one the gate passed;
 - **the request guards**: the `Host` allowlist, the harness API's same-origin and harness-origin checks, its JSON-only writes, and the pane request guard;
+- **the per-browser capability**: a harness API route or a pane served without an enrolled browser's token or pane cookie, a browser enrolled while a session's PR code can be running, without an invite, or a token, pane cookie or ticket that reaches a pane app or a page other than the harness;
 - **the framing rules**: another page framing the harness, or a pane outside the harness origin and `QA_FRAME_ANCESTORS`, or driving a pane's mirror bridge;
 - **cookie isolation**: a pane app that gets a cookie other than its own jar's and the ones `QA_FORWARD_CLIENT_COOKIES` names, or a cookie an earlier session's app set;
 - **token handling**: `GITHUB_QA_TOKEN`, `QA_GHCR_TOKEN` or the conductor's own environment reaching a pane's process, a page, a log line or the verdict comment;

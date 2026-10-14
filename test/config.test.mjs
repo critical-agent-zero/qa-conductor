@@ -207,6 +207,19 @@ test('QA_FORWARD_CLIENT_COOKIES: a single quote is part of a name, so quoting ea
   assert.throws(() => names(`"a","b"`), /^Error: QA_FORWARD_CLIENT_COOKIES must be comma-separated cookie names .*, got "a\\""/)
 })
 
+// The pane cookie the capability sets is the conductor's own: passed through,
+// a pane app (PR code) would get the reviewer's pane capability.
+test('QA_FORWARD_CLIENT_COOKIES refuses a name starting with qa-, in any case and behind a cookie prefix', () => {
+  for (const name of ['qa-1f2e3d4c', 'QA-x', '__Host-qa-1', '__Secure-qa-1']) {
+    const file = envFile([...REQUIRED, `QA_FORWARD_CLIENT_COOKIES=locale, ${name}`])
+    assert.throws(() => loadConfig(file), err => {
+      assert.equal(err.message, `QA_FORWARD_CLIENT_COOKIES can't name ${JSON.stringify(name)}: cookie names starting with qa- are the conductor's own, in ${file}`)
+      return true
+    }, name)
+  }
+  assert.deepEqual(loadConfig(envFile([...REQUIRED, 'QA_FORWARD_CLIENT_COOKIES=qa, qa_1, x-qa-1'])).forwardClientCookies, ['qa', 'qa_1', 'x-qa-1'])
+})
+
 // --- 0.3.0: the harness origin --------------------------------------------------
 
 const NO_HOST = REQUIRED.filter(l => !l.startsWith('QA_PUBLIC_HOST='))

@@ -44,14 +44,52 @@ function buildFromEvent(e) {
   return { url: e.runUrl, status: e.runStatus, conclusion: e.runConclusion, message: e.message }
 }
 
+// Whether an API answer refused the call for want of the capability: a 403
+// marked X-QA-Refusal: capability, or, where a pane proxy in front dropped
+// that header (self-QA's nested harnesses), so marked in its body.
+function isCapabilityRefusal(status, refusalHeader, body) {
+  return status === 403 && (refusalHeader === 'capability' || (body !== null && typeof body === 'object' && body.refusal === 'capability'))
+}
+
+// The ticket an invite link carries in its fragment (#enrol=<ticket>), else
+// null. The fragment never reaches a server or a Referer.
+function inviteFromHash(hash) {
+  const m = /^#enrol=([A-Za-z0-9_-]+)$/.exec(String(hash ?? ''))
+  return m ? m[1] : null
+}
+
 ;(() => {
   if (typeof window === 'undefined') return
   const $ = id => document.getElementById(id)
-  const api = (path, opts) => fetch(`/qa/api${path}`, opts).then(async r => {
-    const body = await r.json().catch(() => ({}))
-    if (!r.ok) { const e = new Error(body.error || `HTTP ${r.status}`); e.status = r.status; e.body = body; throw e }
-    return body
-  })
+
+  // This browser's capability: the token the conductor gave it at enrolment,
+  // kept at the harness origin (localStorage is per origin, port included, so
+  // no pane can read it) and sent as X-QA-Cap on every API call. Where
+  // storage throws (a private window, say), it lasts until a reload.
+  const CAP_KEY = 'qa-cap'
+  let capMemory = null
+  const cap = {
+    get() { try { return localStorage.getItem(CAP_KEY) ?? capMemory } catch { return capMemory } },
+    set(token) { capMemory = token; try { localStorage.setItem(CAP_KEY, token) } catch { /* memory only */ } },
+    clear() { capMemory = null; try { localStorage.removeItem(CAP_KEY) } catch { /* nothing kept */ } },
+  }
+
+  const api = (path, opts = {}) => {
+    const token = cap.get()
+    const headers = { ...(opts.headers || {}), ...(token ? { 'x-qa-cap': token } : {}) }
+    return fetch(`/qa/api${path}`, { ...opts, headers }).then(async r => {
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        const e = new Error(body.error || `HTTP ${r.status}`); e.status = r.status; e.body = body
+        // a restart revoked the token, or it was never given one
+        e.capability = isCapabilityRefusal(r.status, r.headers.get('x-qa-refusal'), body)
+        // not when the token refused is one already replaced
+        if (e.capability && path !== '/enrol' && cap.get() === token) lostCapability()
+        throw e
+      }
+      return body
+    })
+  }
   // The harness refuses non-JSON POSTs (415), so every write goes through here.
   const postJson = (path, body = {}) => api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const announce = (msg, assertive) => { const el = $(assertive ? 'announcerAssertive' : 'announcer'); el.textContent = ''; el.textContent = msg }
@@ -80,13 +118,68 @@ function buildFromEvent(e) {
   const setHashSilent = hash => history.replaceState(null, '', hash)
 
   function showView(id) {
-    for (const v of ['picker', 'boot', 'session', 'verdictDone']) $(v).hidden = v !== id
+    for (const v of ['enrol', 'picker', 'boot', 'session', 'verdictDone']) $(v).hidden = v !== id
     $('sessionControls').hidden = id !== 'session'
     $('verdictBar').hidden = id !== 'session'
-    const heading = { picker: '#picker h1', boot: 'bootHeading', session: 'sessionHeading', verdictDone: '#verdictDone h1' }[id]
-    const h = id === 'picker' ? document.querySelector('#picker h1') : id === 'verdictDone' ? document.querySelector('#verdictDone h1') : $(heading)
+    $('inviteBtn').hidden = id === 'enrol'
+    const heading = { boot: 'bootHeading', session: 'sessionHeading' }[id]
+    const h = heading ? $(heading) : document.querySelector(`#${id} h1`)
     if (h) setTimeout(() => h.focus(), 0)
   }
+
+  // --- enrolment -------------------------------------------------------------
+  // The conductor enrols a browser while no PR code can be running, or with an
+  // invite link (#enrol=<ticket>) from a browser it has enrolled.
+  let enrolling = null
+  let enrolledAt = 0
+
+  async function enrol(invite = null) {
+    try {
+      const { token } = await postJson('/enrol', invite ? { invite } : {})
+      cap.set(token); enrolledAt = Date.now()
+      render()
+    } catch (err) {
+      // a browser already enrolled that opens a spent invite stays as it was
+      if (invite && cap.get()) { announce(`Invite link not used: ${err.message}`, true); return render() }
+      showEnrol(err)
+    }
+  }
+
+  // An API call was refused for want of the capability: drop the token and
+  // enrol again, once at a time. A token refused just after it was given
+  // shows the enrolment view instead of trying again.
+  function lostCapability() {
+    cap.clear()
+    if (enrolling) return
+    if (Date.now() - enrolledAt < 5000) return showEnrol(null)
+    enrolling = enrol().finally(() => { enrolling = null })
+  }
+
+  function showEnrol(err) {
+    teardownSessionUi()
+    showView('enrol'); setPill('not enrolled')
+    // the harness origin, for the banner when this isn't it
+    const origin = err && err.body ? err.body.harnessOrigin : null
+    if (origin) showOriginNotice(origin)
+    $('enrolReason').textContent = err && err.body && err.body.reason ? `Enrolment is closed: ${err.body.reason}.`
+      : err && !err.capability && origin ? `Open the harness at ${origin}/qa/ to enrol this browser.`
+        : err ? err.message : 'This browser lost its enrolment.'
+  }
+  $('enrolRetry').onclick = () => { if (!enrolling) enrolling = enrol().finally(() => { enrolling = null }) }
+
+  // An enrolled browser hands out a link that enrols one more, once, within
+  // ten minutes, whatever is running.
+  $('inviteBtn').onclick = async () => {
+    try {
+      const { url, expiresAt } = await postJson('/invite')
+      $('inviteLink').value = url
+      $('inviteExpiry').textContent = `It works once, until ${new Date(expiresAt).toLocaleTimeString()}.`
+      $('inviteCopy').textContent = 'Copy'
+      $('inviteDialog').showModal(); $('inviteLink').select()
+    } catch (err) { if (!err.capability) announce(`Invite failed: ${err.message}`, true) }
+  }
+  $('inviteCopy').onclick = () => { if (navigator.clipboard) navigator.clipboard.writeText($('inviteLink').value).then(() => { $('inviteCopy').textContent = 'Copied' }, () => {}) }
+  $('inviteClose').onclick = () => $('inviteDialog').close()
   function setPill(text) { $('statusPill').textContent = text }
 
   // The banner for a harness opened at another origin. Its text is set as
@@ -111,6 +204,7 @@ function buildFromEvent(e) {
     const route = parseHash()
     let s
     try { s = await api('/state'); showOriginNotice(s.harnessOrigin) } catch (e) {
+      if (e && e.capability) return // enrolment takes over
       // At another host or port than the harness origin's, the API refuses a
       // browser (403 not the harness origin) and names the origin instead.
       showOriginNotice(e && e.body ? e.body.harnessOrigin : null)
@@ -294,8 +388,11 @@ function buildFromEvent(e) {
 
   function attachSse() {
     if (S.es) return
-    const es = new EventSource('/qa/api/progress'); S.es = es
+    // EventSource can't send a header, so the token goes in the URL
+    const es = new EventSource(`/qa/api/progress?cap=${encodeURIComponent(cap.get() || '')}`); S.es = es
     if (!bootTimer) bootTimer = setInterval(tickBoot, 1000)
+    // It reconnects by itself, but not after a refusal: state says why.
+    es.onerror = () => { if (S.es === es && es.readyState === EventSource.CLOSED) { closeSse(); setTimeout(render, 1000) } }
     es.onmessage = ev => {
       const e = JSON.parse(ev.data)
       if (e.kind === 'step') markStep(e.step, e.at)
@@ -341,7 +438,7 @@ function buildFromEvent(e) {
       S.path = { base: '', pr: '' }; S.hasNav = { base: false, pr: false }; S.lastMsg = { base: Date.now(), pr: Date.now() }
       S.unmatched = { base: 0, pr: 0 }; renderUnmatched('base'); renderUnmatched('pr')
       // as given: the pane proxy tells each pane's bridge whom to talk to
-      $('baseFrame').src = panes.base; $('prFrame').src = panes.pr
+      enterPane('base', panes.base); enterPane('pr', panes.pr)
       $('baseOpen').href = panes.baseOrigin; $('prOpen').href = panes.prOrigin
       setDot('base', 'amber', 'signing in…'); setDot('pr', 'amber', 'signing in…')
       $('baseUrl').textContent = 'signing in…'; $('prUrl').textContent = 'signing in…'
@@ -363,6 +460,23 @@ function buildFromEvent(e) {
 
   const paneOf = origin => origin === S.paneOrigins[0] ? 'base' : origin === S.paneOrigins[1] ? 'pr' : null
   const frameOf = pane => pane === 'base' ? $('baseFrame') : $('prFrame')
+  // A path a pane's bridge reported, on that pane's origin: as a bare path,
+  // one that starts with // would name another host, which the conductor
+  // refuses. The conductor checks what this gives stays on the pane.
+  const onPane = (pane, path) => `${S.paneOrigins[pane === 'base' ? 0 : 1]}${path}`
+
+  // Loads a pane's frame at `to` (a URL or path on that pane) through a
+  // one-time link, which sets the pane cookie first: the panes answer only a
+  // browser that holds it. A failure shows on the pane's bar.
+  async function enterPane(pane, to) {
+    try {
+      const { url } = await postJson('/pane-entry', { role: pane, to: to || '/' })
+      frameOf(pane).src = url
+    } catch (err) {
+      if (err.capability) return
+      setDot(pane, 'red', err.message); $(pane + 'Url').textContent = err.message
+    }
+  }
   function setDot(pane, cls, title) { const d = $(pane + 'Dot'); d.className = 'dot ' + cls; d.title = title }
   function renderUnmatched(pane) {
     const el = $(pane + 'Unmatched'); const n = S.unmatched[pane]
@@ -414,7 +528,8 @@ function buildFromEvent(e) {
   document.querySelector('#paneRow').addEventListener('click', e => {
     const btn = e.target.closest('button[data-act]'); if (!btn) return
     const pane = btn.dataset.pane
-    if (btn.dataset.act === 'reload') { const f = frameOf(pane); f.src = f.src }
+    // where the pane's bridge last said it was, else its landing page
+    if (btn.dataset.act === 'reload') enterPane(pane, S.path[pane] ? onPane(pane, S.path[pane]) : S.panes[pane])
     else if (btn.dataset.act === 'copy') navigator.clipboard && navigator.clipboard.writeText(S.path[pane] || '/')
   })
   for (const p of ['base', 'pr']) $(p + 'Unmatched').onclick = () => { S.unmatched[p] = 0; renderUnmatched(p) }
@@ -425,8 +540,8 @@ function buildFromEvent(e) {
   menuToggle('mirrorMenuBtn', 'mirrorMenu')
   menuToggle('resyncMenuBtn', 'resyncMenu')
   $('scrollMirror').onchange = e => { S.scrollMirror = e.target.checked }
-  $('resyncBtn').onclick = () => { $('prFrame').src = S.paneOrigins[1] + (S.path.base || '/'); S.path.pr = S.path.base; updateDivergence() }
-  $('resyncLeft').onclick = () => { $('baseFrame').src = S.paneOrigins[0] + (S.path.pr || '/'); S.path.base = S.path.pr; updateDivergence(); $('resyncMenu').hidden = true }
+  $('resyncBtn').onclick = () => { enterPane('pr', onPane('pr', S.path.base || '/')); S.path.pr = S.path.base; updateDivergence() }
+  $('resyncLeft').onclick = () => { enterPane('base', onPane('base', S.path.pr || '/')); S.path.base = S.path.pr; updateDivergence(); $('resyncMenu').hidden = true }
   for (const btn of document.querySelectorAll('button[data-width]')) btn.onclick = () => setWidth(+btn.dataset.width, btn)
   function setWidth(w, btn) {
     for (const f of [$('baseFrame'), $('prFrame')]) f.style.width = w ? `${w}px` : '100%'
@@ -512,6 +627,7 @@ function buildFromEvent(e) {
 
   // --- keyboard ------------------------------------------------------------
   document.addEventListener('keydown', e => {
+    if ($('inviteDialog').open) return // its own keys; Escape closes it
     if ($('shortcuts').open && e.key === 'Escape') return $('shortcuts').close()
     if (e.key === '?') { e.preventDefault(); return $('shortcuts').showModal() }
     const t = e.target
@@ -546,12 +662,29 @@ function buildFromEvent(e) {
   mq.addEventListener('change', applyCompact); applyCompact()
 
   // --- boot ----------------------------------------------------------------
-  window.addEventListener('hashchange', () => { if (!maybeVerdictDone()) render() })
-  render()
+  window.addEventListener('hashchange', () => {
+    if (inviteFromHash(location.hash)) start() // an invite link opened in this tab
+    else if (!maybeVerdictDone()) render()
+  })
+
+  // An invite link's ticket leaves the URL before it is used, so neither a
+  // reload nor the history holds it. Without a token, enrol now.
+  function start() {
+    const invite = inviteFromHash(location.hash)
+    if (invite) {
+      history.replaceState(null, '', `${location.pathname}${location.search}#/`)
+      enrolling = enrol(invite).finally(() => { enrolling = null })
+    } else if (!cap.get()) {
+      enrolling = enrol().finally(() => { enrolling = null })
+    } else {
+      render()
+    }
+  }
+  start()
 })()
 
 // --- test exports (node --test evaluates this file through a CJS wrapper) ---
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { esc, isHttpsUrl, LABELS, harnessOriginNotice, buildSummary, buildFromEvent }
+  module.exports = { esc, isHttpsUrl, LABELS, harnessOriginNotice, buildSummary, buildFromEvent, inviteFromHash, isCapabilityRefusal }
 }

@@ -7,11 +7,31 @@ import net from 'node:net'
 
 import { startConductor } from '../lib/server.mjs'
 import { createGithub } from '../lib/github.mjs'
+import { createCapability, paneCookieName } from '../lib/capability.mjs'
+import { createPaneProxy } from '../lib/proxy.mjs'
+import { defaultHarnessOrigin } from '../lib/config.mjs'
+import { webOrigin } from '../lib/net.mjs'
 
 function deferred() {
   let resolve, reject
   const promise = new Promise((res, rej) => { resolve = res; reject = rej })
   return { promise, resolve, reject }
+}
+
+// Every world enrols one browser up front, through startConductor's
+// `capability` seam, so a test that isn't about the capability talks to the
+// conductor as the harness page does: api(), raw(), sseEvents() and paneFetch()
+// add that browser's token on the harness port and its pane cookie on the pane
+// ports. raw(port, { cap: false }) sends neither, as PR code would.
+const CAPS = new Map() // listening port -> () => headers to add
+const capFor = port => CAPS.get(port)?.() ?? {}
+
+function withCap(port, headers) {
+  const add = capFor(port)
+  const out = { ...headers }
+  if (add['x-qa-cap'] !== undefined && !Object.hasOwn(out, 'x-qa-cap')) out['x-qa-cap'] = add['x-qa-cap']
+  if (add.cookie !== undefined) out.cookie = out.cookie ? `${out.cookie}; ${add.cookie}` : add.cookie
+  return out
 }
 
 // Fake adapter set. `ensureBuilt` for a PR listed in `hang` blocks until the
@@ -22,15 +42,20 @@ function deferred() {
 // records every line, then throws on one that matches `logThrowsOn`.
 // Each pane "app" is a real loopback server, so the pane proxies can be
 // exercised.
+// `enrolled: false` passes no capability store, so the conductor makes its
+// own, and enrols no browser up front. `appHits` records every request a pane
+// app gets.
 function makeWorld({
   hang = {}, failAt = null, sweepGate = null, sweepFails = false, provisioner: provisionerOverrides = {},
-  cfg: cfgOverrides = {}, readBaseEnv: readBaseEnvOverride = null, exposure = null, logThrowsOn = null,
+  cfg: cfgOverrides = {}, readBaseEnv: readBaseEnvOverride = null, exposure = null, logThrowsOn = null, enrolled = true,
 } = {}) {
   const calls = []
+  const appHits = []
   // '/page' answers HTML, so the proxy injects the bridge; '/cookie' echoes
   // the Cookie header the app got; '/set?<pair>' sets that cookie; anything
   // else is text.
   const app = name => http.createServer((req, res) => {
+    appHits.push([name, req.method, req.url])
     if (req.url === '/cookie') return res.end(req.headers.cookie ?? '(none)')
     if (req.url.startsWith('/set?')) res.setHeader('set-cookie', `${req.url.slice('/set?'.length)}; Path=/; HttpOnly`)
     if (req.url === '/page') res.setHeader('content-type', 'text/html')
@@ -84,7 +109,7 @@ function makeWorld({
   const cfg = {
     publicHost: 'h.ts.net', operatorEmail: 'op@example.com', idleMinutes: 30,
     ports: { harness: 0, base: 0, pr: 0 },
-    paneOrigins: { base: 'https://h:8443', pr: 'https://h:10000' },
+    paneOrigins: { base: 'https://h.ts.net:8443', pr: 'https://h.ts.net:10000' },
     verdictLabels: { accept: 'ok', reject: 'nope' },
     exposure: 'none',
     ...cfgOverrides,
@@ -107,8 +132,30 @@ function makeWorld({
     if (logThrowsOn?.test(line)) throw new Error('the logger failed')
   }
   const quiet = { log: record(logLines), error: record(errorLines) }
-  const conductor = startConductor({ cfg, github, fsx, adapters, readBaseEnv, log: quiet })
+  const capability = enrolled ? createCapability() : undefined
+  const conductor = startConductor({ cfg, github, fsx, adapters, readBaseEnv, log: quiet, ...(enrolled ? { capability } : {}) })
   if (exposure) exposure.servers = conductor.servers
+  // The enrolled browser's token, and its pane cookie under the name the
+  // conductor reads: the harness origin as the conductor resolves it, in its
+  // plain and __Host- forms (the scheme of a pane origin assigned later).
+  const token = enrolled ? capability.enrol() : null
+  const harnessOrigin = () => (cfg.harnessOrigin != null
+    ? webOrigin(cfg.harnessOrigin)
+    : defaultHarnessOrigin({ publicHost: cfg.publicHost, host: cfg.host ?? '127.0.0.1', port: conductor.servers.harness.address()?.port ?? 0 }))
+  const paneCookie = () => {
+    const name = paneCookieName(harnessOrigin(), 'http://x')
+    const value = capability.paneToken(token)
+    return `${name}=${value}; __Host-${name}=${value}`
+  }
+  if (enrolled) {
+    for (const [name, server] of Object.entries(conductor.servers)) {
+      server.once('listening', () => {
+        const port = server.address().port
+        CAPS.set(port, name === 'harness' ? () => ({ 'x-qa-cap': token }) : () => ({ cookie: paneCookie() }))
+        server.once('close', () => CAPS.delete(port))
+      })
+    }
+  }
   const closeApps = () => { for (const s of Object.values(apps)) s.close() }
   // stop() leaves open connections alone; an idle keep-alive socket fetch()
   // opened would hold the test process up to its 4s idle timeout.
@@ -120,7 +167,7 @@ function makeWorld({
       closeApps()
     },
   }
-  return { c, conductor, closeApps, calls, adapters, github, cfg, logLines, errorLines, lines }
+  return { c, conductor, closeApps, calls, appHits, adapters, github, cfg, logLines, errorLines, lines, capability, token, harnessOrigin, paneCookie }
 }
 
 async function proxyPort(server) {
@@ -145,15 +192,20 @@ async function allPorts(c) {
 async function api(port, method, path, body, headers = {}) {
   const post = method === 'POST'
   const res = await fetch(`http://127.0.0.1:${port}${path}`, {
-    method, headers: { ...(post ? { 'content-type': 'application/json' } : {}), ...headers }, body: post ? JSON.stringify(body ?? {}) : undefined,
+    method, headers: withCap(port, { ...(post ? { 'content-type': 'application/json' } : {}), ...headers }), body: post ? JSON.stringify(body ?? {}) : undefined,
   })
   return res.json()
 }
 
-// A request with full control over the headers (fetch cannot set Host).
-function raw(port, { method = 'GET', path = '/', headers = {}, body = null } = {}) {
+// A GET of a pane, as the enrolled browser.
+const paneFetch = (port, path) => fetch(`http://127.0.0.1:${port}${path}`, { headers: capFor(port) })
+
+// A request with full control over the headers (fetch cannot set Host). The
+// enrolled browser's capability is added unless `cap` is false.
+function raw(port, { method = 'GET', path = '/', headers = {}, body = null, cap = true } = {}) {
+  const sent = cap ? withCap(port, headers) : headers
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port, method, path, headers, agent: false }, res => {
+    const req = http.request({ host: '127.0.0.1', port, method, path, headers: sent, agent: false }, res => {
       const chunks = []
       res.on('data', c => chunks.push(c))
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() }))
@@ -170,7 +222,7 @@ async function sseEvents(port, until, ms = 3000) {
   const timer = setTimeout(() => ac.abort(), ms)
   const events = []
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/progress`, { signal: ac.signal })
+    const res = await fetch(`http://127.0.0.1:${port}/api/progress`, { headers: capFor(port), signal: ac.signal })
     const reader = res.body.getReader()
     const dec = new TextDecoder()
     let buf = ''
@@ -238,9 +290,12 @@ test('teardown cancels an in-flight boot; the stale boot never touches a newer s
     assert.equal(st.status, 'ready', 'newer session must still be ready')
     assert.equal(st.pr, 235)
     assert.equal(st.error, null)
-    // Only the explicit /api/teardown tore panes down (once per role); the
-    // stale boot's failure must not add another teardown.
-    assert.deepEqual(calls.filter(x => x[0] === 'teardown').map(x => x[1]), ['base', 'pr'])
+    // The explicit /api/teardown, then the cleanup once the cancelled boot
+    // had settled, tore the panes down, both before the newer session
+    // provisioned; the stale boot's failure must not add another teardown.
+    const newer = calls.findIndex(x => x[0] === 'provisionDatabase')
+    assert.deepEqual(calls.slice(0, newer).filter(x => x[0] === 'teardown').map(x => x[1]), ['base', 'pr', 'base', 'pr'])
+    assert.deepEqual(calls.slice(newer).filter(x => x[0] === 'teardown'), [])
   } finally { c.stop() }
 })
 
@@ -317,13 +372,13 @@ test('pane proxies 503 without a session, route to the reserved ports once ready
     const port = await harnessPort(c)
     const base = await proxyPort(c.servers.baseProxy)
     const pr = await proxyPort(c.servers.prProxy)
-    assert.equal((await fetch(`http://127.0.0.1:${base}/x`)).status, 503)
+    assert.equal((await paneFetch(base, '/x')).status, 503)
     await api(port, 'POST', '/api/session', { pr: 7 })
     await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
-    assert.equal(await (await fetch(`http://127.0.0.1:${base}/x`)).text(), 'pane-base')
-    assert.equal(await (await fetch(`http://127.0.0.1:${pr}/x`)).text(), 'pane-pr')
+    assert.equal(await (await paneFetch(base, '/x')).text(), 'pane-base')
+    assert.equal(await (await paneFetch(pr, '/x')).text(), 'pane-pr')
     await api(port, 'POST', '/api/teardown')
-    assert.equal((await fetch(`http://127.0.0.1:${pr}/x`)).status, 503)
+    assert.equal((await paneFetch(pr, '/x')).status, 503)
   } finally { c.stop() }
 })
 
@@ -333,8 +388,8 @@ test('pane origins come from config; verdict uses the configured labels', async 
     const port = await harnessPort(c)
     await api(port, 'POST', '/api/session', { pr: 7 })
     const st = await waitFor(async () => { const s = await api(port, 'GET', '/api/state'); return s.status === 'ready' && s })
-    assert.equal(st.panes.baseOrigin, 'https://h:8443')
-    assert.equal(st.panes.prOrigin, 'https://h:10000')
+    assert.equal(st.panes.baseOrigin, 'https://h.ts.net:8443')
+    assert.equal(st.panes.prOrigin, 'https://h.ts.net:10000')
     const prev = await api(port, 'GET', '/api/verdict/preview?verdict=reject')
     assert.deepEqual([prev.applies, prev.removes], ['nope', 'ok'])
     assert.match(prev.body, /qa-conductor-verdict/)
@@ -402,10 +457,15 @@ test('an unparseable request target gets 421/400 and the harness stays up', asyn
 })
 
 test('allowed Hosts: loopback, the public host, the pane origin hosts, the harness origin host, QA_ALLOWED_HOSTS', async () => {
-  const { c, cfg } = makeWorld({ cfg: { allowedHosts: ['qa.corp.example'], harnessOrigin: 'https://harness.example:8445' } })
+  const { c, cfg } = makeWorld({
+    cfg: {
+      allowedHosts: ['qa.corp.example'], harnessOrigin: 'https://harness.example:8445',
+      paneOrigins: { base: 'https://harness.example:8443', pr: 'https://harness.example:10000' },
+    },
+  })
   try {
     const port = await harnessPort(c)
-    for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`, 'h.ts.net', 'H.TS.NET:443', 'h:8443', 'qa.corp.example', 'harness.example', 'HARNESS.example:8445']) {
+    for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`, 'h.ts.net', 'H.TS.NET:443', 'qa.corp.example', 'harness.example', 'HARNESS.example:8445']) {
       assert.equal((await raw(port, { path: '/api/state', headers: { host } })).status, 200, host)
     }
     // pane origins are read per request (a platform may assign them after start)
@@ -439,7 +499,7 @@ test('every /api/* request from another page gets 403, reads and the event strea
       // sec-fetch-site wins over a matching origin
       { 'sec-fetch-site': 'cross-site', origin: `http://${host}` },
       // a pane's page: another port of the same host
-      { 'sec-fetch-site': 'same-site', origin: 'https://h:10000' },
+      { 'sec-fetch-site': 'same-site', origin: 'https://h.ts.net:10000' },
       { origin: 'http://attacker.example' },
       { origin: `http://127.0.0.1:${port + 1}` },
       { origin: 'null' },
@@ -462,7 +522,7 @@ test('every /api/* request from another page gets 403, reads and the event strea
       // fetch(url, { mode: 'no-cors' }) from a pane
       { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'empty' },
       // new EventSource(url) from a pane
-      { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty', origin: 'https://h:10000' },
+      { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty', origin: 'https://h.ts.net:10000' },
       // a link or window.open to the API
       { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' },
       // an older browser's CORS read: Origin alone
@@ -493,7 +553,7 @@ test('every /api/* request from another page gets 403, reads and the event strea
     assert.equal((await raw(port, { method: 'POST', path: '/qa/api/session', body: '{"pr":7}', headers: { ...json, ...own } })).status, 202)
     // (the stream sends its headers with its first event, so a session runs)
     const stream = await new Promise((resolve, reject) => {
-      http.get({ host: '127.0.0.1', port, path: '/qa/api/progress', headers: { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors' } }, res => { res.destroy(); resolve(res) }).on('error', reject)
+      http.get({ host: '127.0.0.1', port, path: '/qa/api/progress', headers: withCap(port, { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors' }) }, res => { res.destroy(); resolve(res) }).on('error', reject)
     })
     assert.equal(stream.statusCode, 200)
     // the page itself still opens from a link on any site
@@ -511,7 +571,7 @@ test('a browser /api/* request whose Host is another port of the harness hostnam
   const { c, calls } = makeWorld()
   try {
     const port = await harnessPort(c)
-    for (const host of ['h.ts.net:8446', 'h.ts.net', 'h:8443']) {
+    for (const host of ['h.ts.net:8446', 'h.ts.net', 'h.ts.net:8443']) {
       for (const headers of [{ 'sec-fetch-site': 'same-origin' }, { origin: `https://${host}` }]) {
         // the refusal names the harness origin, for the harness page's banner
         const read = await raw(port, { path: '/qa/api/state', headers: { host, ...headers } })
@@ -539,7 +599,7 @@ test('a browser /api/* request whose Host is another port of the harness hostnam
 test('/api/state reports the harness origin', async () => {
   for (const [cfg, want] of [
     [{}, () => 'https://h.ts.net:8444'],
-    [{ harnessOrigin: 'https://Q.example:8445/qa/' }, () => 'https://q.example:8445'],
+    [{ harnessOrigin: 'https://Q.example:8445/qa/', paneOrigins: { base: 'https://q.example:8443', pr: 'https://q.example:10000' } }, () => 'https://q.example:8445'],
     [{ publicHost: null }, port => `http://127.0.0.1:${port}`],
   ]) {
     const { c } = makeWorld({ cfg })
@@ -553,12 +613,12 @@ test('/api/state reports the harness origin', async () => {
 // A `::1` bind derives http://[::1]:<port>, and a CSP source can't name an
 // IPv6 literal: no harness could frame the panes.
 test('an IPv6-literal harness origin is logged as an error naming a localhost origin to use', async () => {
-  const { c, logLines, errorLines } = makeWorld({ cfg: { harnessOrigin: 'http://[::1]:3100' } })
+  const { c, logLines, errorLines } = makeWorld({ cfg: { harnessOrigin: 'http://[::1]:3100', paneOrigins: { base: 'http://[::1]:3101', pr: 'http://[::1]:3102' } } })
   try {
     const { base } = await allPorts(c)
     assert.ok(logLines.includes('[qa] harness at http://[::1]:3100/qa/'), logLines.join('\n'))
     assert.ok(
-      errorLines.includes('[qa] the harness origin http://[::1]:3100 is an IPv6 literal, which frame-ancestors cannot name: the panes will stay blank; set QA_HARNESS_ORIGIN=http://localhost:3100'),
+      errorLines.includes('[qa] the harness origin http://[::1]:3100 is an IPv6 literal, which frame-ancestors cannot name: the panes will stay blank; set QA_HARNESS_ORIGIN=http://localhost:3100, and both pane origins on localhost too'),
       errorLines.join('\n'),
     )
     assert.equal((await raw(base, { path: '/x' })).headers['content-security-policy'], "frame-ancestors 'self'")
@@ -602,7 +662,7 @@ test('every harness response forbids framing by other pages and sets the Referre
     // event): start a session, then check the stream's headers and hang up
     await api(port, 'POST', '/api/session', { pr: 7 })
     const stream = await new Promise((resolve, reject) => {
-      http.get({ host: '127.0.0.1', port, path: '/qa/api/progress' }, res => { res.destroy(); resolve(res) }).on('error', reject)
+      http.get({ host: '127.0.0.1', port, path: '/qa/api/progress', headers: capFor(port) }, res => { res.destroy(); resolve(res) }).on('error', reject)
     })
     assert.equal(stream.headers['content-type'], 'text/event-stream')
     assert.deepEqual(frameHeaders(stream), HARNESS_FRAME)
@@ -734,7 +794,7 @@ function startOnly(cfgOverrides, adapterOverrides = {}) {
   const c = startConductor({
     cfg: {
       publicHost: 'h.ts.net', ports: { harness: 0, base: 0, pr: 0 }, idleMinutes: 30,
-      paneOrigins: { base: 'https://h:8443', pr: 'https://h:10000' }, verdictLabels: { accept: 'ok', reject: 'nope' },
+      paneOrigins: { base: 'https://h.ts.net:8443', pr: 'https://h.ts.net:10000' }, verdictLabels: { accept: 'ok', reject: 'nope' },
       ...cfgOverrides,
     },
     github: {},
@@ -759,12 +819,14 @@ test('startConductor refuses a cfg.harnessOrigin or cfg.frameAncestors entry tha
 // Origin, and the guards take it for curl.
 test('startConductor refuses a plain-http harness or pane origin off loopback', async () => {
   assert.throws(() => startOnly({ harnessOrigin: 'http://box.lan:3100' }), /^Error: cfg\.harnessOrigin http:\/\/box\.lan:3100: browsers send no Sec-Fetch-\* headers .*the harness API guard/)
-  assert.throws(() => startOnly({ paneOrigins: { base: 'http://box.lan:3101', pr: 'https://h:10000' } }), /^Error: cfg\.paneOrigins\.base http:\/\/box\.lan:3101: .*the pane request guard/)
-  assert.throws(() => startOnly({ paneOrigins: { base: 'https://h:8443', pr: 'http://192.168.1.5:3102/' } }), /^Error: cfg\.paneOrigins\.pr http:\/\/192\.168\.1\.5:3102: /)
+  assert.throws(() => startOnly({ paneOrigins: { base: 'http://box.lan:3101', pr: 'https://h.ts.net:10000' } }), /^Error: cfg\.paneOrigins\.base http:\/\/box\.lan:3101: .*the pane request guard/)
+  assert.throws(() => startOnly({ paneOrigins: { base: 'https://h.ts.net:8443', pr: 'http://192.168.1.5:3102/' } }), /^Error: cfg\.paneOrigins\.pr http:\/\/192\.168\.1\.5:3102: /)
   // https anywhere, and http on loopback, start
   for (const cfg of [
     { harnessOrigin: 'https://box.lan:3100', paneOrigins: { base: 'https://box.lan:3101', pr: 'https://box.lan:3102' } },
-    { publicHost: null, harnessOrigin: 'http://localhost:3100', paneOrigins: { base: 'http://127.0.0.1:3101', pr: 'http://[::1]:3102' } },
+    { publicHost: null, harnessOrigin: 'http://localhost:3100', paneOrigins: { base: 'http://localhost:3101', pr: 'http://localhost:3102' } },
+    { publicHost: null, harnessOrigin: 'http://127.0.0.1:3100', paneOrigins: { base: 'http://127.0.0.1:3101', pr: 'http://127.0.0.1:3102' } },
+    { publicHost: null, harnessOrigin: 'http://[::1]:3100', paneOrigins: { base: 'http://[::1]:3101', pr: 'http://[::1]:3102' } },
   ]) {
     const { c } = makeWorld({ cfg })
     try {
@@ -774,8 +836,8 @@ test('startConductor refuses a plain-http harness or pane origin off loopback', 
 })
 
 test('startConductor refuses a harness origin, explicit or derived from publicHost, equal to a pane origin; equal pane placeholders start', async () => {
-  assert.throws(() => startOnly({ harnessOrigin: 'https://H:8443/qa/' }), /harness origin https:\/\/h:8443 is also the base pane's origin/)
-  assert.throws(() => startOnly({ paneOrigins: { base: 'https://h:8443', pr: 'https://h.ts.net:8444/' } }), /harness origin https:\/\/h\.ts\.net:8444 is also the pr pane's origin/)
+  assert.throws(() => startOnly({ harnessOrigin: 'https://H.TS.NET:8443/qa/' }), /harness origin https:\/\/h\.ts\.net:8443 is also the base pane's origin/)
+  assert.throws(() => startOnly({ paneOrigins: { base: 'https://h.ts.net:8443', pr: 'https://h.ts.net:8444/' } }), /harness origin https:\/\/h\.ts\.net:8444 is also the pr pane's origin/)
   // derived from a fixed loopback port
   assert.throws(() => startOnly({ publicHost: null, ports: { harness: 3100, base: 0, pr: 0 }, paneOrigins: { base: 'http://127.0.0.1:3100', pr: 'x' } }), /base pane/)
 
@@ -892,6 +954,8 @@ const GATED = { exposure: 'tailscale', allowedLogins: ['alice@github'] }
 const ALLOWED = { 'tailscale-user-login': 'alice@github' }
 const UPGRADE = { connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-version': '13', 'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==' }
 const LOOPBACK_PANES = { base: 'http://127.0.0.1:3101', pr: 'http://127.0.0.1:3102' }
+// Pane origins not assigned yet, as the demo starts with them.
+const PLACEHOLDERS = { base: 'http://127.0.0.1', pr: 'http://127.0.0.1' }
 
 test('the harness refuses every route without an allowed identity, leaking nothing', async () => {
   const { c, calls } = makeWorld({ cfg: GATED })
@@ -990,7 +1054,7 @@ test('with an allowed identity, another page\'s writes, a foreign Host, another 
     })
     // a pane's page, another site, and a page whose Origin isn't a URL
     for (const headers of [
-      { 'sec-fetch-site': 'same-site', origin: 'https://h:10000' },
+      { 'sec-fetch-site': 'same-site', origin: 'https://h.ts.net:10000' },
       { 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' },
       { origin: 'not a url' },
     ]) {
@@ -1066,8 +1130,9 @@ test('a cfg without exposure is gated when an origin is not loopback and not whe
   const loopback = { exposure: undefined, publicHost: null, paneOrigins: LOOPBACK_PANES, allowedLogins: ['alice@github'] }
   for (const [cfg, want] of [
     [loopback, false],
-    [{ ...loopback, harnessOrigin: 'http://localhost:3100', allowedHosts: ['localhost'] }, false],
-    [{ ...loopback, harnessOrigin: 'https://h.ts.net:8444' }, true],
+    [{ ...loopback, harnessOrigin: 'http://localhost:3100', paneOrigins: { base: 'http://localhost:3101', pr: 'http://localhost:3102' }, allowedHosts: ['localhost'] }, false],
+    // pane origins still placeholders, so the harness origin decides
+    [{ ...loopback, harnessOrigin: 'https://h.ts.net:8444', paneOrigins: PLACEHOLDERS }, true],
     [{ ...loopback, paneOrigins: { ...LOOPBACK_PANES, pr: 'https://h.ts.net:10000' } }, true],
     [{ ...loopback, paneOrigins: { pr: LOOPBACK_PANES.pr } }, true],
     [{ ...loopback, paneOrigins: { ...LOOPBACK_PANES, base: 'not yet' } }, true],
@@ -1083,7 +1148,9 @@ test('a cfg without exposure is gated when an origin is not loopback and not whe
 })
 
 test('a cfg without exposure, with publicHost and loopback pane origins, is gated (the derived harness origin counts)', async () => {
-  const { c } = makeWorld({ cfg: { exposure: undefined, publicHost: 'h.ts.net', paneOrigins: LOOPBACK_PANES, allowedLogins: ['alice@github'] } })
+  // loopback placeholders: pane origins on another host than the harness's
+  // can't start once set (the pane cookie wouldn't reach them)
+  const { c } = makeWorld({ cfg: { exposure: undefined, publicHost: 'h.ts.net', paneOrigins: PLACEHOLDERS, allowedLogins: ['alice@github'] } })
   try {
     assert.equal(await gated(c), true)
     const { harness } = await allPorts(c)
@@ -1608,6 +1675,8 @@ test('a teardown while a boot waits for the sweep leaves the session idle; the b
     const st = await api(port, 'GET', '/api/state')
     assert.deepEqual([st.status, st.pr, st.error, st.buildRun], ['idle', null, null, null])
     assert.equal(calls.some(x => x[0] === 'ensureBuilt' || x[0] === 'provisionDatabase'), false)
+    // it ran no PR code, so no cleanup follows it
+    assert.equal(calls.filter(x => x[0] === 'teardown').length, 2)
     const events = await sseEvents(port, evs => evs.some(e => e.kind === 'torn-down'))
     assert.deepEqual(buildMessages(events), [WAITING], 'no cleanup-done message for a torn-down boot')
   } finally { c.stop() }
@@ -1699,8 +1768,8 @@ function mountsAt(ports) {
   const target = port => `http://127.0.0.1:${port}`
   return [
     { name: 'harness', host: 'h.ts.net', port: 8444, path: '/qa', target: target(ports.harness) },
-    { name: 'base', host: 'h', port: 8443, path: '/', target: target(ports.base) },
-    { name: 'pr', host: 'h', port: 10000, path: '/', target: target(ports.pr) },
+    { name: 'base', host: 'h.ts.net', port: 8443, path: '/', target: target(ports.base) },
+    { name: 'pr', host: 'h.ts.net', port: 10000, path: '/', target: target(ports.pr) },
   ]
 }
 
@@ -1763,7 +1832,7 @@ test('GET /api/exposure reports mode, managed, ok, checkedAt, drift, added and e
     // behind the identity gate, the Host check and the API guard
     assert.equal((await raw(ports.harness, { path: '/qa/api/exposure' })).status, 403)
     assert.equal((await raw(ports.harness, { path: '/qa/api/exposure', headers: { ...ALLOWED, host: 'attacker.example' } })).status, 421)
-    const crossSite = await raw(ports.harness, { path: '/qa/api/exposure', headers: { ...ALLOWED, 'sec-fetch-site': 'same-site', origin: 'https://h:10000' } })
+    const crossSite = await raw(ports.harness, { path: '/qa/api/exposure', headers: { ...ALLOWED, 'sec-fetch-site': 'same-site', origin: 'https://h.ts.net:10000' } })
     assert.deepEqual([crossSite.status, JSON.parse(crossSite.body).error], [403, 'cross-site request refused'])
     const elsewhere = await raw(ports.harness, { path: '/qa/api/exposure', headers: { ...ALLOWED, host: 'h.ts.net:9999', 'sec-fetch-site': 'same-origin' } })
     assert.deepEqual([elsewhere.status, JSON.parse(elsewhere.body).error], [403, 'not the harness origin'])
@@ -1806,7 +1875,10 @@ test('an exposure failure is recorded and logged once, and a session still boots
   // a layout no front door can publish is recorded the same way, and no
   // adapter call is made
   const unused = fakeExposure()
-  const { c: w, errorLines } = makeWorld({ cfg: { ...GATED, paneOrigins: LOOPBACK_PANES }, exposure: unused })
+  // assigned once started, as a platform may: set at start, pane origins on
+  // another host than the harness's would refuse to start
+  const { c: w, errorLines, cfg: late } = makeWorld({ cfg: { ...GATED, paneOrigins: PLACEHOLDERS }, exposure: unused })
+  late.paneOrigins = LOOPBACK_PANES
   try {
     const state = await w.exposure.ready
     assert.equal(state.ok, false)
@@ -2101,4 +2173,735 @@ test('startConductor refuses exposureIntervalMinutes 0, -1, NaN and 35792', asyn
       assert.equal((await c.exposure.ready).ok, true, String(minutes))
     } finally { c.stop() }
   }
+})
+
+// --- #29: the per-browser capability ---------------------------------------------
+
+// raw(), but it resolves at the response's headers and hangs up: an event
+// stream it admitted would otherwise never end.
+function rawHead(port, { method = 'GET', path = '/', headers = {}, body = null } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method, path, headers, agent: false }, res => {
+      const chunks = []
+      const done = () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() })
+      if (res.headers['content-type'] === 'text/event-stream') { res.destroy(); return done() }
+      res.on('data', c => chunks.push(c))
+      res.on('end', done)
+    })
+    req.on('error', reject)
+    if (body != null) req.write(body)
+    req.end()
+  })
+}
+
+const JSON_TYPE = { 'content-type': 'application/json' }
+
+// PR code that reaches the conductor's listeners on loopback (through Docker
+// Desktop's host.docker.internal, Podman machine's gateway, or as a process
+// pane) can send whatever the harness page would: a loopback Host, an allowed
+// login, Fetch Metadata and the harness Origin. Only the capability, which it
+// can't get, keeps it out.
+function prCode(port, origin, gated) {
+  const as = { host: `127.0.0.1:${port}`, 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors', origin, ...(gated ? ALLOWED : {}) }
+  return (r = {}) => rawHead(port, { ...r, headers: { ...as, ...(r.headers ?? {}) } })
+}
+
+const API_ROUTES = [
+  { path: '/api/state' }, { path: '/api/prs' }, { path: '/api/exposure' }, { path: '/api/build-status?pr=7' },
+  { path: '/api/progress' }, { path: '/api/verdict/preview?verdict=accept' }, { path: '/api/nope' },
+  { method: 'POST', path: '/api/session', body: '{"pr":8,"takeover":true}' },
+  { method: 'POST', path: '/api/verdict', body: '{"verdict":"accept","notes":"x"}' },
+  { method: 'POST', path: '/api/teardown', body: '{}' },
+  { method: 'POST', path: '/api/invite', body: '{}' },
+  { method: 'POST', path: '/api/pane-entry', body: '{"role":"base","to":"/"}' },
+  // the window is shut while a session runs
+  { method: 'POST', path: '/api/enrol', body: '{}' },
+  // a CORS preflight, and a HEAD
+  { method: 'OPTIONS', path: '/api/session', headers: { 'access-control-request-method': 'POST', 'access-control-request-headers': 'x-qa-cap' } },
+  { method: 'HEAD', path: '/api/state' },
+]
+
+test('PR code on loopback gets 403 X-QA-Refusal: capability from every API route, the event stream, both panes, the bridge and the pane entry, in none and tailscale modes', async () => {
+  for (const mode of ['none', 'tailscale']) {
+    const gated = mode === 'tailscale'
+    const w = makeWorld({ cfg: gated ? GATED : {} })
+    const login = gated ? ALLOWED : {}
+    try {
+      const { harness, base, pr } = await allPorts(w.c)
+      await api(harness, 'POST', '/api/session', { pr: 7 }, login)
+      const before = await waitFor(async () => { const s = await api(harness, 'GET', '/api/state', undefined, login); return s.status === 'ready' && s })
+      const hits = w.appHits.length
+      const calls = w.calls.length
+      await new Promise(r => setTimeout(r, 5))
+      const origin = w.harnessOrigin()
+      const paneToken = w.capability.paneToken(w.token)
+      const check = (res, label) => {
+        assert.equal(res.status, 403, label)
+        assert.equal(res.headers['x-qa-refusal'], 'capability', label)
+        assert.equal(res.headers['cache-control'], 'no-store', label)
+        assert.equal(res.headers['set-cookie'], undefined, label)
+        assert.equal(res.headers['access-control-allow-origin'], undefined, label)
+        assert.doesNotMatch(res.body, /login-|pane-|"token"|enrol=/, label)
+      }
+      const toHarness = prCode(harness, origin, gated)
+      // no key, a guessed one, and a pane token in the harness's place
+      for (const key of [{}, { 'x-qa-cap': 'guess' }, { 'x-qa-cap': paneToken }, { cookie: `${paneCookieName(origin, w.cfg.paneOrigins.base)}=${paneToken}` }]) {
+        for (const r of API_ROUTES) {
+          for (const prefix of ['', '/qa']) {
+            const headers = { ...key, ...(r.method === 'POST' ? JSON_TYPE : {}), ...r.headers }
+            check(await toHarness({ ...r, path: prefix + r.path, headers }), `${mode} ${r.method ?? 'GET'} ${prefix}${r.path} ${JSON.stringify(key)}`)
+          }
+        }
+      }
+      // the event stream's own key, which EventSource sends in the URL
+      for (const q of ['?cap=', '?cap=guess', `?cap=${paneToken}`]) check(await toHarness({ path: `/qa/api/progress${q}` }), `${mode} progress${q}`)
+
+      // both panes: no cookie, a guessed one, and the harness token as the cookie
+      const name = paneCookieName(origin, w.cfg.paneOrigins.base)
+      for (const port of [base, pr]) {
+        const toPane = prCode(port, origin, gated)
+        for (const cookie of [undefined, `${name}=guess`, `${name}=${w.token}`, `qa-x=${paneToken}`]) {
+          for (const r of [
+            { path: '/page' }, { path: '/cookie' }, { method: 'POST', path: '/x', body: '{}' }, { method: 'OPTIONS', path: '/x' }, { method: 'HEAD', path: '/page' },
+            { path: '/__qa/bridge.js' }, { path: '/__qa/enter' }, { path: '/__qa/enter?t=guess' }, { path: `/__qa/enter?t=${w.token}` }, { path: `/__qa/enter?t=${paneToken}` },
+          ]) {
+            check(await toPane({ ...r, headers: cookie ? { cookie } : {} }), `${mode} ${port} ${r.method ?? 'GET'} ${r.path} ${cookie}`)
+          }
+        }
+      }
+
+      // nothing ran: no app request, no adapter or GitHub call, no activity
+      assert.deepEqual(w.appHits.slice(hits), [], mode)
+      assert.deepEqual(w.calls.slice(calls), [], mode)
+      const after = await api(harness, 'GET', '/api/state', undefined, login)
+      assert.deepEqual([after.status, after.pr, after.lastActivity], ['ready', 7, before.lastActivity], mode)
+    } finally { w.c.stop() }
+  }
+})
+
+// What a browser gets from POST /api/enrol (no capability): 'open' with a
+// token that works, or the reason enrolment is shut.
+async function enrolment(port, body = {}) {
+  const res = await raw(port, { method: 'POST', path: '/qa/api/enrol', cap: false, headers: JSON_TYPE, body: JSON.stringify(body) })
+  const parsed = JSON.parse(res.body)
+  if (res.status === 200) {
+    assert.match(parsed.token, /^[A-Za-z0-9_-]{43}$/)
+    const state = await raw(port, { path: '/qa/api/state', cap: false, headers: { 'x-qa-cap': parsed.token } })
+    assert.equal(state.status, 200, 'the new token opens the API')
+    return 'open'
+  }
+  assert.deepEqual([res.status, res.headers['x-qa-refusal'], parsed.error], [403, 'capability', `enrolment is closed: ${parsed.reason}`])
+  return parsed.reason
+}
+
+const BOOTING = 'a session is booting'
+const RUNNING = 'a session is running'
+const ENDING = 'a session is ending'
+const STOPPING = 'a cancelled boot is still stopping'
+const CLEANING = 'cleaning up after the last boot'
+
+test('a browser enrols while no PR code can run: idle, and once a session has ended cleanly', async () => {
+  const hang = { 7: deferred() }
+  const slow = deferred()
+  const { c, calls, adapters } = makeWorld({ hang })
+  try {
+    const port = await harnessPort(c)
+    await waitFor(() => calls.some(x => x[0] === 'sweep-done'))
+    assert.equal(await enrolment(port), 'open')
+    assert.equal(await enrolment(port), 'open', 'and again')
+    // a body that names an invite is about that invite, whatever the window
+    for (const invite of ['', null, 0, false]) {
+      const res = await raw(port, { method: 'POST', path: '/qa/api/enrol', cap: false, headers: JSON_TYPE, body: JSON.stringify({ invite }) })
+      assert.deepEqual([res.status, JSON.parse(res.body).error], [403, 'this invite link has expired or was already used'], JSON.stringify(invite))
+    }
+
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    assert.equal(await enrolment(port), BOOTING)
+    hang[7].resolve()
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    assert.equal(await enrolment(port), RUNNING)
+
+    adapters.provisioner.teardown = async ({ paneRef }) => { calls.push(['teardown', paneRef.role]); await slow.promise }
+    const ending = api(port, 'POST', '/api/teardown')
+    await waitFor(() => calls.some(x => x[0] === 'teardown'))
+    assert.equal(await enrolment(port), ENDING)
+    slow.resolve()
+    await ending
+    assert.equal(await enrolment(port), 'open')
+    assert.equal(calls.filter(x => x[0] === 'teardown').length, 2, 'one teardown: the session had settled')
+  } finally { c.stop() }
+})
+
+const SWEEPING = 'the startup cleanup is still running'
+
+test('enrolment stays shut until the startup sweep succeeds; a failed one runs again when a browser tries to enrol with no session running', async () => {
+  const sweepGate = deferred()
+  const ok = makeWorld({ sweepGate })
+  try {
+    const port = await harnessPort(ok.c)
+    assert.equal(await enrolment(port), SWEEPING)
+    sweepGate.resolve()
+    await waitFor(() => ok.calls.some(x => x[0] === 'sweep-done'))
+    assert.equal(await enrolment(port), 'open')
+  } finally { ok.c.stop() }
+
+  // A daemon not up yet when the conductor starts (Docker Desktop still
+  // starting): the next try, once it is, succeeds.
+  let sweeps = 0
+  const late = makeWorld({ provisioner: { sweep: async () => { if (++sweeps === 1) throw new Error('docker unavailable') } } })
+  try {
+    const port = await harnessPort(late.c)
+    await waitFor(() => late.errorLines.some(l => l.includes('startup sweep failed')))
+    assert.ok(late.errorLines.includes("[qa] new browsers can't enrol until the startup sweep succeeds; it runs again when one tries with no session running"), late.errorLines.join('\n'))
+    assert.equal(await enrolment(port), SWEEPING, 'the try started it again')
+    await waitFor(async () => (await enrolment(port)) === 'open')
+    assert.equal(sweeps, 2)
+    assert.ok(late.logLines.includes('[qa] running the startup sweep again'), late.logLines.join('\n'))
+  } finally { late.c.stop() }
+
+  // One that keeps failing keeps enrolment shut, and isn't run again while a
+  // session runs: boots still do, and a clean teardown alone doesn't reopen it.
+  const failed = makeWorld({ sweepFails: true })
+  try {
+    const port = await harnessPort(failed.c)
+    await waitFor(() => failed.errorLines.some(l => l.includes('startup sweep failed')))
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    assert.equal(await enrolment(port), RUNNING)
+    assert.equal(failed.calls.filter(x => x[0] === 'sweep').length, 1, 'not while a session runs')
+    await api(port, 'POST', '/api/teardown')
+    assert.equal(await enrolment(port), SWEEPING)
+    await waitFor(() => failed.calls.filter(x => x[0] === 'sweep').length === 2)
+    await waitFor(() => failed.errorLines.filter(l => l.includes('startup sweep failed')).length === 2)
+    assert.equal(await enrolment(port), SWEEPING, 'and again')
+  } finally { failed.c.stop() }
+})
+
+// What a front door in between, a pane proxy (self-QA puts each inner
+// harness in an outer pane), leaves of a refusal: the body, not the header.
+test('a capability refusal says so in its JSON body too, beside the header, with the harness origin', async () => {
+  const { c } = makeWorld({ hang: { 7: deferred() } })
+  const proxy = http.createServer(createPaneProxy({ upstreamPort: () => c.servers.harness.address().port, bridgePath: '/nonexistent', httpMod: http }))
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    proxy.listen(0, '127.0.0.1')
+    await new Promise(r => proxy.once('listening', r))
+    const marked = { refusal: 'capability', harnessOrigin: 'https://h.ts.net:8444' }
+    const cases = [
+      [{ path: '/qa/api/state' }, { error: 'this browser is not enrolled: open the harness to enrol it', ...marked }],
+      [{ method: 'POST', path: '/qa/api/enrol', headers: JSON_TYPE, body: '{}' }, { error: `enrolment is closed: ${BOOTING}`, reason: BOOTING, ...marked }],
+      [{ method: 'POST', path: '/qa/api/enrol', headers: JSON_TYPE, body: '{"invite":"guess"}' }, { error: 'this invite link has expired or was already used', ...marked }],
+    ]
+    for (const [r, body] of cases) {
+      const direct = await raw(port, { ...r, cap: false })
+      assert.deepEqual([direct.status, direct.headers['x-qa-refusal'], JSON.parse(direct.body)], [403, 'capability', body], r.path)
+      const through = await raw(proxy.address().port, { ...r, cap: false })
+      assert.deepEqual([through.status, through.headers['x-qa-refusal'], JSON.parse(through.body)], [403, undefined, body], `${r.path} through a pane proxy`)
+    }
+  } finally {
+    proxy.close()
+    c.stop()
+  }
+})
+
+// A boot a teardown aborted may still be inside a Provisioner call that starts
+// PR code once the teardown is done: enrolment waits for it to settle, and for
+// a teardown after that.
+test('after a teardown, enrolment waits for the cancelled boot to settle and a cleanup teardown to succeed', async () => {
+  const launched = deferred()
+  const gate = deferred()
+  const { c, calls } = makeWorld({ provisioner: { launchServices: async () => { launched.resolve(); await gate.promise } } })
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await launched.promise
+    await api(port, 'POST', '/api/teardown')
+    assert.equal((await api(port, 'GET', '/api/state')).status, 'idle')
+    assert.equal(await enrolment(port), STOPPING)
+    assert.deepEqual(calls.filter(x => x[0] === 'teardown').map(x => x[1]), ['base', 'pr'])
+
+    gate.resolve() // the boot goes on, starts the app, then sees the abort
+    await waitFor(() => calls.filter(x => x[0] === 'teardown').length === 4)
+    await waitFor(async () => (await enrolment(port)) === 'open')
+    const seq = calls.map(x => x[0])
+    assert.deepEqual(seq.slice(seq.lastIndexOf('teardown') - 1), ['teardown', 'teardown'], 'the cleanup ran after the boot settled')
+  } finally { c.stop() }
+})
+
+test('a teardown that fails shuts enrolment until one succeeds: the cleanup tries it again, and so does each try to enrol', async () => {
+  let failing = 3
+  const { c, calls, errorLines } = makeWorld({
+    provisioner: {
+      teardown: async ({ paneRef }) => {
+        calls.push(['teardown', paneRef.role])
+        if (paneRef.role === 'pr' && failing > 0) { failing--; throw new Error('docker is down') }
+      },
+    },
+  })
+  const teardowns = () => calls.filter(x => x[0] === 'teardown').length
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    await api(port, 'POST', '/api/teardown')
+    // the teardown failed, and so did the cleanup after it
+    await waitFor(() => teardowns() === 4)
+    await waitFor(() => errorLines.filter(l => l.includes('failed (pr: docker is down)')).length === 2)
+    for (const what of ['teardown', 'cleanup after the last boot']) {
+      assert.ok(errorLines.includes(`[qa] ${what} failed (pr: docker is down); new browsers can't enrol until a teardown succeeds`), errorLines.join('\n'))
+    }
+    // a try to enrol runs it again: it fails once more, then works
+    assert.equal(await enrolment(port), CLEANING)
+    await waitFor(() => teardowns() === 6)
+    await waitFor(async () => (await enrolment(port)) === 'open')
+    assert.equal(teardowns(), 8)
+  } finally { c.stop() }
+})
+
+test('a failed boot that tore its panes down leaves enrolment open; one whose teardown failed gets a cleanup first', async () => {
+  const clean = makeWorld({ failAt: 'launchServices' })
+  try {
+    const port = await harnessPort(clean.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'error')
+    assert.equal(await enrolment(port), 'open')
+    assert.deepEqual(clean.calls.filter(x => x[0] === 'teardown').map(x => x[1]), ['base', 'pr'], 'no second teardown')
+  } finally { clean.c.stop() }
+
+  let failing = 1
+  const dirty = makeWorld({
+    failAt: 'launchServices',
+    provisioner: {
+      teardown: async ({ paneRef }) => {
+        dirty.calls.push(['teardown', paneRef.role])
+        if (failing > 0) { failing--; throw new Error('busy') }
+      },
+    },
+  })
+  try {
+    const port = await harnessPort(dirty.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'error')
+    await waitFor(async () => (await enrolment(port)) === 'open')
+    assert.deepEqual(dirty.calls.filter(x => x[0] === 'teardown').map(x => x[1]), ['base', 'pr', 'base', 'pr'])
+  } finally { dirty.c.stop() }
+})
+
+// The harness page: enrol, then enter each pane through a one-time ticket that
+// sets the pane cookie, which the proxy never passes on to the app.
+test('the browser flow: enrol, a pane-entry ticket, 303 with the pane cookie, and the request reaches the app without it', async () => {
+  for (const [layout, cfg, secure] of [
+    ['tailnet https', {}, true],
+    ['loopback http', { publicHost: null, harnessOrigin: 'http://127.0.0.1:3100', paneOrigins: LOOPBACK_PANES }, false],
+  ]) {
+    const w = makeWorld({ cfg, enrolled: false })
+    try {
+      const { harness, base, pr } = await allPorts(w.c)
+      const origin = w.harnessOrigin()
+      const enrolled = await raw(harness, { method: 'POST', path: '/qa/api/enrol', headers: JSON_TYPE, body: '{}' })
+      const { token } = JSON.parse(enrolled.body)
+      const cap = { 'x-qa-cap': token }
+      assert.equal((await api(harness, 'POST', '/api/session', { pr: 7 }, cap)).ok, true)
+      const st = await waitFor(async () => { const s = await api(harness, 'GET', '/api/state', undefined, cap); return s.status === 'ready' && s })
+
+      const entry = async (role, to) => {
+        const res = await raw(harness, { method: 'POST', path: '/qa/api/pane-entry', headers: { ...JSON_TYPE, ...cap }, body: JSON.stringify({ role, to }) })
+        assert.equal(res.status, 200, `${layout} ${res.body}`)
+        const url = new URL(JSON.parse(res.body).url)
+        assert.equal(url.origin, w.cfg.paneOrigins[role], layout)
+        assert.equal(url.pathname, '/__qa/enter')
+        assert.match(url.searchParams.get('t'), /^[A-Za-z0-9_-]{43}$/)
+        return url.pathname + url.search
+      }
+      // the harness loading a pane in its iframe
+      const frame = role => ({ host: new URL(w.cfg.paneOrigins[role]).host, 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe', referer: `${origin}/` })
+      const enterPath = await entry('base', st.panes.base)
+      const entered = await raw(base, { path: enterPath, cap: false, headers: frame('base') })
+      assert.equal(entered.status, 303, layout)
+      assert.equal(entered.headers.location, '/login-base')
+      const name = paneCookieName(origin, w.cfg.paneOrigins.base)
+      assert.equal(name.startsWith('__Host-qa-'), secure, layout)
+      const [setCookie] = entered.headers['set-cookie']
+      assert.match(setCookie, new RegExp(`^${name}=[A-Za-z0-9_-]{43}; Path=/; HttpOnly; SameSite=Strict${secure ? '; Secure' : ''}$`), layout)
+      const cookie = setCookie.split(';')[0]
+      assert.notEqual(cookie.split('=')[1], token, 'the pane cookie is not the harness token')
+
+      // the redirect's next hop, and the app never sees the pane cookie
+      const landing = await raw(base, { path: '/login-base', cap: false, headers: { ...frame('base'), cookie } })
+      assert.deepEqual([landing.status, landing.body], [200, 'pane-base'], layout)
+      const echoed = await raw(base, { path: '/cookie', cap: false, headers: { host: frame('base').host, 'sec-fetch-site': 'same-origin', cookie: `rc_session=secret; ${cookie}` } })
+      assert.deepEqual([echoed.status, echoed.body], [200, '(none)'], layout)
+      // cookies ignore ports: the PR pane admits the same cookie
+      const prPage = await raw(pr, { path: '/x', cap: false, headers: { host: new URL(w.cfg.paneOrigins.pr).host, 'sec-fetch-site': 'same-origin', cookie } })
+      assert.deepEqual([prPage.status, prPage.body], [200, 'pane-pr'], layout)
+
+      // a ticket works once, and only on its own pane
+      const again = await raw(base, { path: enterPath, cap: false, headers: frame('base') })
+      assert.deepEqual([again.status, again.headers['x-qa-refusal'], again.headers['set-cookie']], [403, 'capability', undefined], layout)
+      const prTicket = await entry('base', '/')
+      const elsewhere = await raw(pr, { path: prTicket, cap: false, headers: frame('pr') })
+      assert.deepEqual([elsewhere.status, elsewhere.headers['set-cookie']], [403, undefined], layout)
+      assert.equal((await raw(base, { path: prTicket, cap: false, headers: frame('base') })).status, 403, 'spent on the wrong pane')
+      const own = await raw(pr, { path: await entry('pr', `${w.cfg.paneOrigins.pr}/deep/link?q=1#frag`), cap: false, headers: frame('pr') })
+      assert.deepEqual([own.status, own.headers.location], [303, '/deep/link?q=1#frag'], layout)
+    } finally { w.c.stop() }
+  }
+})
+
+test('POST /api/pane-entry takes base or pr, and a path on that pane; a pane origin on another host gets 409', async () => {
+  const { c, cfg } = makeWorld()
+  try {
+    const port = await harnessPort(c)
+    const entry = body => raw(port, { method: 'POST', path: '/qa/api/pane-entry', headers: JSON_TYPE, body: JSON.stringify(body) })
+    for (const role of [undefined, 'nope', 'harness', 1]) {
+      const res = await entry({ role, to: '/' })
+      assert.deepEqual([res.status, JSON.parse(res.body)], [400, { error: 'role must be base or pr' }], String(role))
+    }
+    for (const to of [42, '//evil.example/x', '/\\evil.example/x', 'https://evil.example/', 'javascript:alert(1)', 'https://h.ts.net:10000/x', 'http://h.ts.net:8443/x']) {
+      const res = await entry({ role: 'base', to })
+      assert.deepEqual([res.status, JSON.parse(res.body)], [400, { error: 'to must be a path on the base pane' }], String(to))
+    }
+    for (const to of [undefined, '/', '/a?b', 'a', 'https://H.TS.NET:8443/a?b']) {
+      assert.equal((await entry({ role: 'base', to })).status, 200, String(to))
+    }
+    // A path on the pane that starts with `//` (one a pane's bridge can report,
+    // or one that normalizes to it) still lands on the pane: a Location of
+    // `//x` would name another host.
+    const base = await proxyPort(c.servers.baseProxy)
+    for (const to of ['https://h.ts.net:8443//evil.example/x', 'https://h.ts.net:8443/\\evil.example/x', '/.//evil.example/x', '/%2e//evil.example/x', '/a/..//evil.example/x']) {
+      const res = await entry({ role: 'base', to })
+      assert.equal(res.status, 200, to)
+      const url = new URL(JSON.parse(res.body).url)
+      const entered = await raw(base, { path: url.pathname + url.search, cap: false, headers: { host: 'h.ts.net:8443' } })
+      assert.equal(entered.status, 303, to)
+      const landing = new URL(entered.headers.location, 'https://h.ts.net:8443/__qa/enter')
+      assert.deepEqual([landing.origin, landing.pathname], ['https://h.ts.net:8443', '//evil.example/x'], `${to} -> ${entered.headers.location}`)
+    }
+    cfg.paneOrigins = { ...cfg.paneOrigins, base: 'https://other.ts.net:8443' }
+    const moved = await entry({ role: 'base', to: '/' })
+    assert.equal(moved.status, 409)
+    assert.match(JSON.parse(moved.body).error, /^the harness origin https:\/\/h\.ts\.net:8444 and the base pane's origin https:\/\/other\.ts\.net:8443 are on different hosts/)
+    cfg.paneOrigins = { ...cfg.paneOrigins, base: 'not yet' }
+    assert.deepEqual(JSON.parse((await entry({ role: 'base', to: '/' })).body), { error: 'the base pane has no origin yet' })
+  } finally { c.stop() }
+})
+
+test('an invite enrols one more browser, even while a session runs, once', async () => {
+  const { c, token } = makeWorld({ hang: { 7: deferred() } })
+  try {
+    const port = await harnessPort(c)
+    const res = await raw(port, { method: 'POST', path: '/qa/api/invite', headers: JSON_TYPE, body: '{}' })
+    assert.equal(res.status, 200)
+    const { url, expiresAt } = JSON.parse(res.body)
+    const [, ticket] = url.match(/^https:\/\/h\.ts\.net:8444\/qa\/#enrol=([A-Za-z0-9_-]{43})$/)
+    assert.ok(Math.abs(expiresAt - (Date.now() + 10 * 60_000)) < 5000)
+    assert.notEqual(ticket, token)
+
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    assert.equal(await enrolment(port), BOOTING)
+    assert.equal(await enrolment(port, { invite: ticket }), 'open')
+    for (const invite of [ticket, 'guess', 42, token]) {
+      const again = await raw(port, { method: 'POST', path: '/qa/api/enrol', cap: false, headers: JSON_TYPE, body: JSON.stringify({ invite }) })
+      assert.deepEqual([again.status, again.headers['x-qa-refusal'], JSON.parse(again.body).error], [403, 'capability', 'this invite link has expired or was already used'], String(invite))
+    }
+  } finally { c.stop() }
+
+  // with no harness origin there is nowhere to send the invitee
+  const nowhere = makeWorld({ cfg: { publicHost: null, host: '0.0.0.0' } })
+  try {
+    const res = await raw(await harnessPort(nowhere.c), { method: 'POST', path: '/qa/api/invite', headers: JSON_TYPE, body: '{}' })
+    assert.deepEqual([res.status, JSON.parse(res.body).error], [409, 'no harness origin to invite a browser to (set QA_HARNESS_ORIGIN)'])
+  } finally { nowhere.c.stop() }
+})
+
+test('the event stream takes the token as ?cap=, and no other route does', async () => {
+  const { c, token } = makeWorld()
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const stream = await rawHead(port, { path: `/qa/api/progress?cap=${token}`, headers: { 'sec-fetch-site': 'same-origin' } })
+    assert.deepEqual([stream.status, stream.headers['content-type']], [200, 'text/event-stream'])
+    for (const r of [
+      { path: `/qa/api/state?cap=${token}` },
+      { method: 'POST', path: `/qa/api/teardown?cap=${token}`, headers: JSON_TYPE, body: '{}' },
+      // the stream's own path, but not a GET
+      { method: 'POST', path: `/qa/api/progress?cap=${token}`, headers: JSON_TYPE, body: '{}' },
+      // a header, even a wrong one, is what counts
+      { path: `/qa/api/progress?cap=${token}`, headers: { 'x-qa-cap': 'guess' } },
+      { path: `/qa/api/progress?cap=${token}`, headers: { 'x-qa-cap': '' } },
+    ]) {
+      const res = await rawHead(port, { ...r, headers: { 'sec-fetch-site': 'same-origin', ...r.headers } })
+      assert.deepEqual([res.status, res.headers['x-qa-refusal']], [403, 'capability'], `${r.method ?? 'GET'} ${r.path} ${JSON.stringify(r.headers ?? {})}`)
+    }
+  } finally { c.stop() }
+})
+
+test('a restart revokes every token and pane cookie', async () => {
+  const first = makeWorld({ enrolled: false })
+  let token, cookie
+  try {
+    const { harness, base } = await allPorts(first.c)
+    token = JSON.parse((await raw(harness, { method: 'POST', path: '/qa/api/enrol', headers: JSON_TYPE, body: '{}' })).body).token
+    const entry = await raw(harness, { method: 'POST', path: '/qa/api/pane-entry', headers: { ...JSON_TYPE, 'x-qa-cap': token }, body: '{"role":"base","to":"/"}' })
+    const url = new URL(JSON.parse(entry.body).url)
+    const entered = await raw(base, { path: url.pathname + url.search, cap: false, headers: { host: url.host, 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'navigate', referer: 'https://h.ts.net:8444/' } })
+    cookie = entered.headers['set-cookie'][0].split(';')[0]
+    // admitted (no session yet, so the pane has nothing to show)
+    assert.equal((await raw(base, { path: '/x', cap: false, headers: { cookie } })).status, 503)
+  } finally { first.c.stop() }
+
+  const second = makeWorld({ enrolled: false })
+  try {
+    const { harness, base } = await allPorts(second.c)
+    const state = await raw(harness, { path: '/qa/api/state', cap: false, headers: { 'x-qa-cap': token } })
+    assert.deepEqual([state.status, state.headers['x-qa-refusal']], [403, 'capability'])
+    const pane = await raw(base, { path: '/x', cap: false, headers: { cookie } })
+    assert.deepEqual([pane.status, pane.headers['x-qa-refusal']], [403, 'capability'])
+  } finally { second.c.stop() }
+})
+
+// POST /api/enrol is the one API route anyone may call, so it must not buffer
+// whatever a caller sends before it decides. Every body is small JSON.
+test('a JSON body over 64 KiB gets 413 without being read whole, on POST /api/enrol and every other route', async () => {
+  const { c, calls } = makeWorld({ hang: { 7: deferred() } })
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const big = JSON.stringify({ pad: 'x'.repeat(70 * 1024) })
+    for (const [path, cap] of [['/qa/api/enrol', false], ['/qa/api/session', true], ['/qa/api/pane-entry', true]]) {
+      // declared up front, and streamed with no Content-Length
+      for (const headers of [{ ...JSON_TYPE, 'content-length': String(Buffer.byteLength(big)) }, JSON_TYPE]) {
+        const res = await raw(port, { method: 'POST', path, cap, headers, body: big })
+        assert.deepEqual([res.status, JSON.parse(res.body), res.headers.connection], [413, { error: 'request body too large' }, 'close'], `${path} ${JSON.stringify(headers)}`)
+      }
+    }
+    // a declared length alone is refused before a byte is read
+    const declared = await raw(port, { method: 'POST', path: '/qa/api/enrol', cap: false, headers: { ...JSON_TYPE, 'content-length': '268435456' }, body: '{}' }).catch(err => err)
+    assert.equal(declared.status ?? declared.code, 413, String(declared))
+    assert.deepEqual(calls.filter(x => x[0] === 'ensureBuilt').map(x => x[1]), [7], 'no takeover')
+  } finally { c.stop() }
+})
+
+test('a JSON body that isn\'t an object is read as {}, never a 500', async () => {
+  const { c } = makeWorld({ hang: { 7: deferred() } })
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    for (const body of ['null', '[]', '1', '"x"', 'true', 'not json']) {
+      const enrol = await raw(port, { method: 'POST', path: '/qa/api/enrol', cap: false, headers: JSON_TYPE, body })
+      assert.deepEqual([enrol.status, enrol.headers['x-qa-refusal']], [403, 'capability'], `enrol ${body}`)
+      const session = await raw(port, { method: 'POST', path: '/qa/api/session', headers: JSON_TYPE, body })
+      assert.deepEqual([session.status, JSON.parse(session.body)], [400, { error: 'pr (number) required' }], `session ${body}`)
+      const entry = await raw(port, { method: 'POST', path: '/qa/api/pane-entry', headers: JSON_TYPE, body })
+      assert.equal(entry.status, 400, `pane-entry ${body}`)
+    }
+  } finally { c.stop() }
+})
+
+test('startConductor refuses a forwardClientCookies name starting with qa-, and pane origins on another host than the harness origin, before anything starts', () => {
+  let swept = false
+  const provisioner = { sweep: () => { swept = true } }
+  for (const name of ['qa-1', 'QA-x', '__Host-qa-x', '__Secure-qa-x']) {
+    assert.throws(
+      () => startOnly({ forwardClientCookies: ['locale', name] }, { provisioner }),
+      err => err.message === `startConductor: cfg.forwardClientCookies can't name ${JSON.stringify(name)}: cookie names starting with qa- are the conductor's own`,
+      name,
+    )
+  }
+  for (const [cfg, harness, role, pane] of [
+    [{ paneOrigins: { base: 'https://other.ts.net:8443', pr: 'https://h.ts.net:10000' } }, 'https://h.ts.net:8444', 'base', 'https://other.ts.net:8443'],
+    [{ paneOrigins: { base: 'https://h.ts.net:8443', pr: 'https://h.tail1234.ts.net:10000' } }, 'https://h.ts.net:8444', 'pr', 'https://h.tail1234.ts.net:10000'],
+    [{ harnessOrigin: 'https://qa.example:8444' }, 'https://qa.example:8444', 'base', 'https://h.ts.net:8443'],
+    [{ publicHost: null, harnessOrigin: 'http://localhost:3100', paneOrigins: LOOPBACK_PANES }, 'http://localhost:3100', 'base', 'http://127.0.0.1:3101'],
+    // derived from a fixed loopback port
+    [{ publicHost: null, host: '::1', ports: { harness: 3100, base: 0, pr: 0 }, paneOrigins: LOOPBACK_PANES }, 'http://[::1]:3100', 'base', 'http://127.0.0.1:3101'],
+  ]) {
+    assert.throws(() => startOnly(cfg, { provisioner }), err => {
+      assert.equal(err.message,
+        `startConductor: the harness origin ${harness} and the ${role} pane's origin ${pane} are on different hosts, ` +
+        `and the pane cookie never reaches a pane framed from another site: serve the harness and both panes on one hostname`)
+      return true
+    }, JSON.stringify(cfg))
+  }
+  assert.equal(swept, false, 'refused before the startup sweep')
+})
+
+// --- #29: the enrolment window, at its edges --------------------------------------------
+
+// The routes that hand out a capability are guarded like every other: another
+// page can neither drive them nor send them a type an HTML form can.
+test('POST /api/enrol, /api/invite and /api/pane-entry sit behind the same-origin, harness-host and JSON checks', async () => {
+  const { c, calls, capability } = makeWorld()
+  try {
+    const port = await harnessPort(c)
+    await waitFor(() => calls.some(x => x[0] === 'sweep-done'))
+    const enrolled = capability.size()
+    const host = `127.0.0.1:${port}`
+    const body = '{"role":"base","to":"/"}'
+    for (const path of ['/qa/api/enrol', '/qa/api/invite', '/qa/api/pane-entry']) {
+      // another site's page, a pane's page, and an older browser's cross-site POST
+      for (const headers of [{ 'sec-fetch-site': 'cross-site' }, { 'sec-fetch-site': 'same-site', origin: 'https://h.ts.net:10000' }, { origin: 'https://evil.example' }]) {
+        const res = await raw(port, { method: 'POST', path, headers: { host, ...JSON_TYPE, ...headers }, body })
+        assert.deepEqual([res.status, JSON.parse(res.body).error], [403, 'cross-site request refused'], `${path} ${JSON.stringify(headers)}`)
+      }
+      // a handler at another port of the harness hostname
+      const elsewhere = await raw(port, { method: 'POST', path, headers: { host: 'h.ts.net:8443', 'sec-fetch-site': 'same-origin', ...JSON_TYPE }, body })
+      assert.deepEqual([elsewhere.status, JSON.parse(elsewhere.body).error], [403, 'not the harness origin'], path)
+      // a type an HTML form can send
+      for (const type of [null, 'text/plain', 'application/x-www-form-urlencoded']) {
+        const res = await raw(port, { method: 'POST', path, headers: type ? { 'content-type': type } : {}, body })
+        assert.equal(res.status, 415, `${path} ${type}`)
+      }
+    }
+    assert.equal(capability.size(), enrolled, 'no browser enrolled')
+  } finally { c.stop() }
+})
+
+// Boot A (#7) is taken over inside launchServices; boot B (#8) starts with A
+// in flight, A settles, then B fails and tears down cleanly. B's own teardown doesn't count: a
+// cleanup teardown must follow once both have settled.
+test('a failed boot\'s own clean teardown does not mark the panes clean when another boot was in flight as it started', async () => {
+  const launchedA = deferred()
+  const gateA = deferred()
+  const gateB = deferred()
+  let launches = 0
+  const { c, calls } = makeWorld({
+    provisioner: {
+      launchServices: async () => {
+        launches++
+        if (launches === 1) { launchedA.resolve(); await gateA.promise; return }
+        await gateB.promise
+        throw new Error('launch failed')
+      },
+    },
+  })
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await launchedA.promise
+    await api(port, 'POST', '/api/session', { pr: 8, takeover: true })
+    await waitFor(() => launches === 2)
+    gateA.resolve() // A starts its app after the takeover's teardown, sees the abort, settles
+    await new Promise(r => setTimeout(r, 20))
+    gateB.resolve() // B fails, and its own teardown succeeds
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'error')
+    await waitFor(async () => (await enrolment(port)) === 'open')
+    // the takeover's (2), B's own (2), and the cleanup once both had settled (2)
+    assert.equal(calls.filter(x => x[0] === 'teardown').length, 6)
+  } finally { c.stop() }
+})
+
+// The cancelled boot starts its app and settles while the teardown runs: that teardown may have
+// missed it, so a cleanup teardown must follow before enrolment opens.
+test('a cancelled boot that settles during the teardown gets a cleanup teardown before enrolment opens', async () => {
+  const launched = deferred()
+  const launchGate = deferred()
+  const teardownGate = deferred()
+  let first = true
+  const { c, calls } = makeWorld({
+    provisioner: {
+      launchServices: async () => { launched.resolve(); await launchGate.promise },
+      teardown: async ({ paneRef }) => {
+        calls.push(['teardown', paneRef.role])
+        if (first) { first = false; await teardownGate.promise }
+      },
+    },
+  })
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await launched.promise
+    const ending = api(port, 'POST', '/api/teardown')
+    await waitFor(() => calls.some(x => x[0] === 'teardown'))
+    launchGate.resolve() // the boot goes on, sees the abort and settles, mid-teardown
+    await new Promise(r => setTimeout(r, 20))
+    teardownGate.resolve()
+    await ending
+    await waitFor(async () => (await enrolment(port)) === 'open')
+    assert.deepEqual(calls.filter(x => x[0] === 'teardown').map(x => x[1]), ['base', 'pr', 'base', 'pr'], 'a cleanup ran after the boot settled')
+  } finally { c.stop() }
+})
+
+// The cleanup removes the panes by their fixed names, so a boot started while
+// it runs must not provision until it is done.
+test('a boot waits for the cleanup teardown in flight before it builds or provisions', async () => {
+  const cleanupGate = deferred()
+  let teardowns = 0
+  const { c, calls } = makeWorld({
+    failAt: 'launchServices',
+    provisioner: {
+      teardown: async ({ paneRef }) => {
+        teardowns++
+        calls.push(['teardown', paneRef.role])
+        if (teardowns === 1) throw new Error('busy') // the failed boot's own teardown fails
+        if (teardowns === 3) await cleanupGate.promise // the cleanup after it hangs
+      },
+    },
+  })
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(() => teardowns === 3)
+    assert.equal((await api(port, 'POST', '/api/session', { pr: 8 })).ok, true)
+    await new Promise(r => setTimeout(r, 20))
+    assert.equal(calls.some(x => x[0] === 'ensureBuilt' && x[1] === 8), false, 'held back by the cleanup')
+    cleanupGate.resolve()
+    await waitFor(() => calls.some(x => x[0] === 'ensureBuilt' && x[1] === 8))
+    const seq = calls.filter(x => x[0] === 'teardown' || (x[0] === 'ensureBuilt' && x[1] === 8)).map(x => x[0])
+    assert.deepEqual(seq.slice(0, 5), ['teardown', 'teardown', 'teardown', 'teardown', 'ensureBuilt'])
+  } finally { c.stop() }
+})
+
+// A boot that returned from bootSession after it was cancelled ran PR code.
+test('a boot cancelled during its last sign-in still counts as having run: a cleanup teardown follows it', async () => {
+  const signing = deferred()
+  const signGate = deferred()
+  const { c, calls, adapters } = makeWorld()
+  adapters.auth.establishSession = async ({ pane }) => {
+    if (pane.ref.role === 'pr') { signing.resolve(); await signGate.promise }
+    return { landingUrl: `login-${pane.ref.role}`, cookies: [] }
+  }
+  try {
+    const port = await harnessPort(c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await signing.promise
+    await api(port, 'POST', '/api/teardown')
+    assert.equal(await enrolment(port), STOPPING)
+    signGate.resolve() // bootSession returns normally, to a boot that was cancelled
+    await waitFor(async () => (await enrolment(port)) === 'open')
+    assert.equal(calls.filter(x => x[0] === 'teardown').length, 4, 'the cleanup ran after the boot settled')
+  } finally { c.stop() }
+})
+
+// Nothing can frame a pane then, but the route must not fail.
+test('with no harness origin, POST /api/pane-entry still issues a ticket', async () => {
+  const { c } = makeWorld({ cfg: { publicHost: null, host: '0.0.0.0' } })
+  try {
+    const res = await raw(await harnessPort(c), { method: 'POST', path: '/qa/api/pane-entry', headers: JSON_TYPE, body: '{"role":"base","to":"/"}' })
+    assert.equal(res.status, 200, res.body)
+    assert.match(JSON.parse(res.body).url, /^https:\/\/h\.ts\.net:8443\/__qa\/enter\?t=[A-Za-z0-9_-]{43}$/)
+  } finally { c.stop() }
+})
+
+// A Provisioner that rejects with a string: bootSession can't mark it, and its
+// teardown failed, so a cleanup must run before enrolment opens.
+test('a boot that fails with a non-Error, and whose own teardown fails, gets a cleanup before enrolment opens', async () => {
+  let failing = 1
+  const w = makeWorld({
+    provisioner: {
+      launchServices: async () => { throw 'launch failed' }, // eslint-disable-line no-throw-literal
+      teardown: async ({ paneRef }) => {
+        w.calls.push(['teardown', paneRef.role])
+        if (failing > 0) { failing--; throw new Error('busy') }
+      },
+    },
+  })
+  try {
+    const port = await harnessPort(w.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'error')
+    await waitFor(async () => (await enrolment(port)) === 'open')
+    assert.deepEqual(w.calls.filter(x => x[0] === 'teardown').map(x => x[1]), ['base', 'pr', 'base', 'pr'])
+  } finally { w.c.stop() }
 })
