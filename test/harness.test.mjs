@@ -133,7 +133,7 @@ test('LABELS names every boot step generically', () => {
 // test reads what the page did: its API calls, EventSource URLs, frame srcs,
 // history edits and stored token.
 
-function fakeBrowser({ hash = '#/', stored = null, routes = {}, elements = {} }) {
+function fakeBrowser({ hash = '#/', stored = null, routes = {}, elements = {}, clock = null }) {
   const log = [] // ['fetch', method, path, headers, body] | ['replace', url] | ['source', url] | ['set', id, prop, value]
   const listeners = []
   const intervals = [] // { fn, ms }, in the order set; none ever runs by itself
@@ -185,6 +185,7 @@ function fakeBrowser({ hash = '#/', stored = null, routes = {}, elements = {} })
     history: { replaceState: (_s, _t, url) => { log.push(['replace', url]); location.hash = `#${String(url).split('#')[1] ?? ''}` } },
     location,
     navigator: {},
+    ...(clock ? { performance: { now: () => clock.perf() }, Date: class extends Date { static now() { return clock.wall() } } } : {}),
     setTimeout: () => 0,
     setInterval: (fn, ms) => intervals.push({ fn, ms }),
     clearInterval: () => {},
@@ -730,4 +731,34 @@ test('a click, submit, change or Enter a pane reports is marked, value-free, mir
     { pane: 'base', type: 'click' }, { pane: 'base', type: 'submit' }, { pane: 'pr', type: 'submit' }, { pane: 'base', type: 'enter' }, { pane: 'pr', type: 'change' },
   ])
   assert.doesNotMatch(JSON.stringify(b.log.filter(e => e[0] === 'fetch')), /SECRET|card-number/)
+})
+
+// The throttle runs on a monotonic clock: the wall clock stepping back an
+// hour holds no mark back, and the first mark goes at once, however soon
+// after the page loaded.
+test('the mark throttle runs on a monotonic clock', async () => {
+  let perf = 50
+  let wall = 1_000_000_000
+  const b = fakeBrowser({
+    hash: '#/pr/7',
+    stored: 'tok-1',
+    routes: {
+      'GET /qa/api/state': { body: { status: 'ready', pr: 7, panes: PANES } },
+      'POST /qa/api/pane-entry': entryRoute,
+      'POST /qa/api/actions/mark': { body: { recorded: true } },
+    },
+    clock: { perf: () => perf, wall: () => wall },
+  })
+  await b.settle()
+  const [, , onMessage] = b.listeners.find(([name, type]) => name === 'window' && type === 'message')
+  const marks = () => b.log.filter(e => e[0] === 'fetch' && e[2] === '/qa/api/actions/mark')
+  const click = () => onMessage({ origin: PANES.baseOrigin, data: { qa: 1, kind: 'event', type: 'click' } })
+  click() // 50 ms after the page started
+  perf += 150
+  wall -= 3_600_000
+  click() // 150 ms on, the wall clock an hour back
+  perf += 50
+  click() // 50 ms on: held back
+  await b.settle()
+  assert.equal(marks().length, 2)
 })
