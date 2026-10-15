@@ -99,7 +99,7 @@ function inviteFromHash(hash) {
   const BOOTING = ['ensuring-image', 'cloning', 'migrating', 'starting']
 
   const S = {
-    pr: null, panes: null, paneOrigins: null, mounted: null,
+    pr: null, panes: null, paneOrigins: null, mounted: null, startedAt: null,
     mirror: true, scrollMirror: true,
     path: { base: '', pr: '' }, lastMsg: { base: 0, pr: 0 }, hasNav: { base: false, pr: false },
     unmatched: { base: 0, pr: 0 },
@@ -133,7 +133,8 @@ function inviteFromHash(hash) {
   let enrolling = null
   let enrolledAt = 0
 
-  // Resolves to whether it enrolled, once the view it then renders is up.
+  // Resolves, once the view it then renders is up, to whether this browser
+  // holds the token it got: one refused while that view was drawn is gone.
   async function enrol(invite = null) {
     let token
     try {
@@ -146,16 +147,17 @@ function inviteFromHash(hash) {
     }
     cap.set(token); enrolledAt = Date.now()
     await render()
-    return true
+    return cap.get() === token
   }
 
   // An API call was refused for want of the capability: drop the token and
   // enrol again, once at a time. A token refused just after it was given
-  // shows the enrolment view instead of trying again.
+  // (while the view after enrolling is drawn, say) shows the enrolment view
+  // instead of trying again.
   function lostCapability() {
     cap.clear()
-    if (enrolling) return
     if (Date.now() - enrolledAt < 5000) return showEnrol(null)
+    if (enrolling) return
     enrolling = enrol().finally(() => { enrolling = null })
   }
 
@@ -268,7 +270,9 @@ function inviteFromHash(hash) {
       + `<button class="ghost" data-back="1">Back</button></div>`
     c.querySelector('[data-resume]').onclick = () => go(`#/pr/${state.pr}`)
     c.querySelector('[data-back]').onclick = () => { $('conflictSlot').innerHTML = '' }
-    twoStepConfirm(c.querySelector('[data-takeover]'), 'End & open?', () => openSession(wantPr, { takeover: true }))
+    twoStepConfirm(c.querySelector('[data-takeover]'), 'End & open?', () => openSession(wantPr, { takeover: true }).catch(err => {
+      if (!showConflict(err, wantPr)) announce(`Couldn't open #${wantPr}: ${err.message}`, true)
+    }))
     return c
   }
 
@@ -322,6 +326,9 @@ function inviteFromHash(hash) {
     const btn = e.target.closest('button[data-open]'); if (!btn) return
     const num = +btn.dataset.open
     if (btn.dataset.resume) return go(`#/pr/${num}`)
+    // one Open QA at a time: rows redrawn meanwhile (a re-enrolment's) are
+    // enabled, but take no click
+    if (picking) return
     // the row stays while it is re-rendered (a re-enrolment's, say); the
     // buttons in it don't
     const row = btn.closest('.pr')
@@ -330,13 +337,17 @@ function inviteFromHash(hash) {
     openSession(num).catch(err => {
       row.removeAttribute('aria-busy')
       for (const b of $('prList').querySelectorAll('button[data-open]')) b.disabled = false
-      if (err.status === 409 && err.body && err.body.session) {
-        $('conflictSlot').innerHTML = ''; $('conflictSlot').appendChild(conflictCard(err.body.session, num))
-      } else {
-        const slot = row.querySelector('.rowErr'); slot.hidden = false; slot.textContent = err.message
-      }
+      if (!showConflict(err, num)) { const slot = row.querySelector('.rowErr'); slot.hidden = false; slot.textContent = err.message }
     })
   })
+
+  // A 409 naming the session that holds the conductor gets its conflict
+  // card. Returns whether it did.
+  function showConflict(err, num) {
+    if (!(err.status === 409 && err.body && err.body.session)) return false
+    $('conflictSlot').innerHTML = ''; $('conflictSlot').appendChild(conflictCard(err.body.session, num))
+    return true
+  }
   $('refreshBtn').onclick = () => renderPicker(null)
 
   async function openSession(num, opts = {}) {
@@ -344,9 +355,10 @@ function inviteFromHash(hash) {
     try {
       await postJson('/session', { pr: num, ...opts }).catch(async err => {
         // A restart revoked the token, and with it any session: once this
-        // browser has enrolled again, ask once more.
+        // browser has enrolled again, ask once more. Not as a takeover: a
+        // session started since gets its conflict card, not an unseen end.
         if (!(err.capability && enrolling && await enrolling)) throw err
-        return postJson('/session', { pr: num, ...opts })
+        return postJson('/session', { pr: num })
       })
       go(`#/pr/${num}/boot`)
     } finally { picking = false }
@@ -451,7 +463,7 @@ function inviteFromHash(hash) {
     showView('session'); setPill(`session: #${pr}`)
     const panes = meta.panes
     if (S.mounted !== pr) {
-      S.mounted = pr; S.pr = pr; S.panes = panes; S.paneOrigins = [panes.baseOrigin, panes.prOrigin]
+      S.mounted = pr; S.startedAt = meta.startedAt ?? null; S.pr = pr; S.panes = panes; S.paneOrigins = [panes.baseOrigin, panes.prOrigin]
       S.path = { base: '', pr: '' }; S.hasNav = { base: false, pr: false }; S.lastMsg = { base: Date.now(), pr: Date.now() }
       S.unmatched = { base: 0, pr: 0 }; renderUnmatched('base'); renderUnmatched('pr')
       // as given: the pane proxy tells each pane's bridge whom to talk to
@@ -468,7 +480,7 @@ function inviteFromHash(hash) {
   }
 
   function teardownSessionUi() {
-    S.mounted = null; closeSse()
+    S.mounted = null; S.startedAt = null; closeSse()
     if (S.idlePoll) { clearInterval(S.idlePoll); S.idlePoll = null }
     if (S.dotPoll) { clearInterval(S.dotPoll); S.dotPoll = null }
     $('baseFrame').removeAttribute('src'); $('prFrame').removeAttribute('src')
@@ -574,7 +586,12 @@ function inviteFromHash(hash) {
   function startIdlePoll() { pollIdle(); S.idlePoll = setInterval(pollIdle, 60000) }
   async function pollIdle() {
     let s; try { s = await api('/state') } catch { return }
-    if (s.status !== 'ready') return
+    if (S.mounted === null) return // the view went meanwhile
+    // a view mounted from the ready event learns its session's start here
+    if (S.startedAt === null && s.status === 'ready' && s.pr === S.mounted) S.startedAt = s.startedAt
+    // The session this view shows ended, or was opened again (by another
+    // browser, say), whose panes took new pane cookies: draw it afresh.
+    if (s.status !== 'ready' || s.pr !== S.mounted || s.startedAt !== S.startedAt) { teardownSessionUi(); return render() }
     if (!s.lastActivity || !s.idleMinutes) return
     const left = s.lastActivity + s.idleMinutes * 60000 - Date.now()
     const chip = $('idleChip'); chip.textContent = `auto-end ${mmss(left)}`
