@@ -3552,6 +3552,11 @@ test('marks: a pane and a kind of action, rate-limited, grouping the requests af
     await new Promise(r => setTimeout(r, 120))
     assert.deepEqual(JSON.parse((await mark({ pane: 'pr', type: 'change' })).body), { recorded: true })
     assert.equal((await api(ports.harness, 'GET', '/api/state')).lastActivity, active)
+    // the mark is the pane's that posted it, and so is a refused one
+    assert.deepEqual(JSON.parse((await mark({ pane: 'pr', type: 'change' })).body), { recorded: false })
+    const after = JSON.parse((await raw(ports.harness, { path: `/qa/api/actions?after=${log.seq}` })).body)
+    assert.deepEqual(after.marks.map(m => [m.pane, m.type]), [['pr', 'change']])
+    assert.deepEqual(after.marksDropped, { base: 1, pr: 1 })
   } finally { w.c.stop() }
 })
 
@@ -3563,10 +3568,11 @@ test('the action log is the running session\'s: empty before ready, gone at a te
   try {
     await raw(ports.base, { path: '/one' })
     await new Promise(r => setTimeout(r, 30))
+    const first = (await actions()).log
     assert.equal((await actions()).requests.length, 1)
     await api(ports.harness, 'POST', '/api/teardown')
     const gone = await actions()
-    assert.deepEqual([gone.active, gone.requests, gone.marks], [false, [], []])
+    assert.deepEqual([gone.active, gone.log, gone.requests, gone.marks], [false, null, [], []])
     assert.equal((await mark()).status, 409, 'no session to mark')
     // the next boot: nothing until it is ready, and nothing of the last
     await api(ports.harness, 'POST', '/api/session', { pr: 8 })
@@ -3576,6 +3582,7 @@ test('the action log is the running session\'s: empty before ready, gone at a te
     await waitFor(async () => (await api(ports.harness, 'GET', '/api/state')).status === 'ready')
     const fresh = await actions()
     assert.deepEqual([fresh.active, fresh.requests, fresh.seq], [true, [], 0])
+    assert.match(fresh.log, /^[0-9a-f]{16}$/)
 
     // the same PR opened again, with no teardown: the boot drops the log too
     await raw(ports.base, { path: '/two' })
@@ -3586,6 +3593,10 @@ test('the action log is the running session\'s: empty before ready, gone at a te
     const booting = await actions()
     assert.deepEqual([booting.active, booting.requests], [false, []])
     hang[8].resolve()
+    // a reader sees another log: its cursor is the last session's
+    await waitFor(async () => (await api(ports.harness, 'GET', '/api/state')).status === 'ready')
+    const next = await actions()
+    assert.equal(new Set([first, fresh.log, next.log]).size, 3)
   } finally { w.c.stop() }
 })
 
