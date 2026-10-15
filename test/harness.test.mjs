@@ -32,6 +32,10 @@ test('isolationLabel: nothing before a verdict, else what it says, its reasons a
   assert.deepEqual(isolationLabel({ verdict: 'bogus', reasons: [] }, true), { text: 'isolation unknown · strict', warn: true, title: STRICT })
   assert.equal(isolationLabel({ verdict: 'isolated', reasons: [] }, true).text, 'isolated · strict')
   assert.equal(isolationLabel(null, true), null)
+  // a verdict named like an Object member is just unknown
+  for (const verdict of ['constructor', 'toString', '__proto__']) {
+    assert.deepEqual(isolationLabel({ verdict, reasons: [] }), { text: 'isolation unknown', warn: true, title: '' }, verdict)
+  }
 })
 
 test('isCapabilityRefusal: a 403 marked by its header or, the header dropped, by its body', () => {

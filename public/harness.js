@@ -54,12 +54,14 @@ function isCapabilityRefusal(status, refusalHeader, body) {
 // What the header's isolation chip says for a verdict (/api/state's
 // `isolation`): its text, whether it warns, and its reasons as the title;
 // null before there is one.
+// A Map, so a verdict named like an Object member is just unknown.
+const NOT_ISOLATED = new Map([['reachable', 'not isolated'], ['shared-host', 'shared host']])
 function isolationLabel(isolation, strict = false) {
   if (!isolation || typeof isolation !== 'object') return null
   const reasons = Array.isArray(isolation.reasons) ? isolation.reasons.join('; ') : ''
   const label = isolation.verdict === 'isolated'
     ? { text: 'isolated', warn: false, title: 'The PR pane can\'t reach the base pane, so the base pane shows what the base did' }
-    : { text: { reachable: 'not isolated', 'shared-host': 'shared host' }[isolation.verdict] || 'isolation unknown', warn: true, title: reasons }
+    : { text: NOT_ISOLATED.get(isolation.verdict) || 'isolation unknown', warn: true, title: reasons }
   if (!strict) return label
   // strict mode (QA_REQUIRE_ISOLATION=1), said beside the verdict
   const rule = 'QA_REQUIRE_ISOLATION=1 refuses a session that isn\'t isolated'
