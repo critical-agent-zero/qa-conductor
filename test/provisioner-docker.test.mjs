@@ -634,12 +634,13 @@ test('the probe\'s verdict: reachable on any hit, unknown when it can\'t tell, i
   const podmanInfo = Object.assign(new Error('docker info: Command failed'), {
     stderr: 'Emulate Docker CLI using podman. Create /etc/containers/nodocker to quiet msg.\nError: template: info:1:2: executing "info" at <.OperatingSystem>: can\'t evaluate field OperatingSystem in type *define.Info\n',
   })
+  const dual = { base: '172.19.0.2 fd00:19::2 \n', pr: '172.20.0.3 fd00:20::3 \n' }
   const cases = [
     [{}, 'isolated', []],
     // The probe must show it could reach something, its own pane's
     // database: tools missing or broken in the image (no /dev/tcp, say)
     // print `probe done` and nothing else.
-    [{ probe: 'probe done\n' }, 'unknown', [/^the probe couldn't reach the PR pane's own database at 172\.20\.0\.3:5432, so what it didn't reach proves nothing/]],
+    [{ probe: 'probe done\n' }, 'unknown', [/^the probe couldn't reach the PR pane's own database over IPv4 \(172\.20\.0\.3:5432\), so its IPv4 misses prove nothing$/]],
     [{ probe: 'listener 10.0.2.2\nprobe done\n' }, 'reachable', [/10\.0\.2\.2:3100/]],
     [{ pr: '\n' }, 'unknown', [/^could not find the panes' addresses: qa-pg-pr has none/]],
     // a preflight that finds a tool missing ends the run before any probing
@@ -667,9 +668,15 @@ test('the probe\'s verdict: reachable on any hit, unknown when it can\'t tell, i
     // A daemon on another host publishes the pane apps there, not on this
     // conductor's loopback: the probe can't speak for them. Only the scheme
     // and host are shown.
-    [{ endpoint: 'tcp://10.0.0.5:2376\n' }, 'unknown', [/^the Docker daemon is at tcp:\/\/10\.0\.0\.5, not on this host, so the probe can't speak for this host's loopback$/]],
-    [{ endpoint: 'ssh://me@build-box\n' }, 'unknown', [/^the Docker daemon is at ssh:\/\/build-box, not on this host/]],
+    [{ endpoint: 'tcp://10.0.0.5:2376\n' }, 'unknown', [/^the Docker daemon is at tcp:\/\/10\.0\.0\.5, which may not be this host, so the probe can't speak for this host's loopback$/]],
+    [{ endpoint: 'ssh://me@build-box\n' }, 'unknown', [/^the Docker daemon is at ssh:\/\/build-box, which may not be this host/]],
     [{ endpoint: 'npipe:////./pipe/docker_engine\n' }, 'isolated', []],
+    // Dual-stack: each family's misses count only once its own control hit.
+    // An IPv4 self hit vouches for nothing over IPv6, nor the reverse.
+    [{ ...dual, probe: 'self 172.20.0.3:5432\nprobe done\n' }, 'unknown', [/^the probe couldn't reach the PR pane's own database over IPv6 \(fd00:20::3:5432\), so its IPv6 misses prove nothing$/]],
+    [{ ...dual, probe: 'self fd00:20::3:5432\nprobe done\n' }, 'unknown', [/^the probe couldn't reach the PR pane's own database over IPv4 \(172\.20\.0\.3:5432\), so its IPv4 misses prove nothing$/]],
+    [{ ...dual, probe: 'self 172.20.0.3:5432\nself fd00:20::3:5432\nprobe done\n' }, 'isolated', []],
+    [{ ...dual, probe: 'open fd00:19::2:5432\nself 172.20.0.3:5432\nprobe done\n' }, 'reachable', [/fd00:19::2:5432/]],
     [{ endpoint: new Error('unknown command "context"') }, 'unknown', [/^could not tell where the Docker daemon runs: unknown command/]],
     // a hit in a run that then failed or was killed still counts
     [{ probe: Object.assign(new Error('docker run: Command failed'), { killed: true, signal: 'SIGKILL', stdout: 'listener 10.0.2.2\n' }) }, 'reachable', [/10\.0\.2\.2:3100/, /^the probe didn't finish within 30 s/]],
@@ -746,7 +753,9 @@ test('the probe script reports the listener that answers the canary and the addr
     assert.deepEqual(await runScript(closedPort, [`127.0.0.1:${closedPort}`]), ['probe done', `self 127.0.0.1:${openPort}`])
     assert.deepEqual(await runScript(closedPort, [], [`127.0.0.1:${closedPort}`]), ['probe done'], 'its own database not reached: no self line')
     // An IPv6 address goes bare, as `docker inspect` gives it: the script
-    // splits the port off at the last colon. Where this host has ::1.
+    // splits the port off at the last colon. Written out in full, so a
+    // split at the first colon would try host `0` instead. Where this host
+    // has ::1.
     const open6 = net.createServer(socket => socket.end())
     const v6 = await new Promise(resolve => {
       open6.once('error', () => resolve(null))
@@ -754,7 +763,8 @@ test('the probe script reports the listener that answers the canary and the addr
     })
     if (v6 !== null) {
       try {
-        assert.deepEqual(await runScript(closedPort, [`::1:${v6}`], [`::1:${v6}`]), [`open ::1:${v6}`, 'probe done', `self ::1:${v6}`])
+        const full = `0:0:0:0:0:0:0:1:${v6}`
+        assert.deepEqual(await runScript(closedPort, [full], [full]), [`open ${full}`, 'probe done', `self ${full}`])
       } finally { open6.close() }
     }
   } finally {
