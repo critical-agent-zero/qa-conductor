@@ -261,7 +261,8 @@ test('pane responses let only the demo harness frame them', async () => {
     const harness = `http://127.0.0.1:${demo.ports.harness}`
     assert.equal((await state(demo.ports.harness)).harnessOrigin, harness, 'derived from the bound port')
     const page = await get(demo.ports.harness, '/')
-    assert.deepEqual([page.headers['content-security-policy'], page.headers['x-frame-options']], ["frame-ancestors 'self'", 'SAMEORIGIN'])
+    const panes = `http://127.0.0.1:${demo.ports.base} http://127.0.0.1:${demo.ports.pr}`
+    assert.deepEqual([page.headers['content-security-policy'], page.headers['x-frame-options']], [`frame-ancestors 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-src ${panes}`, 'SAMEORIGIN'])
     await bootToReady(demo.ports.harness, 101)
     const cookie = await paneCookie(demo)
     for (const role of ['base', 'pr']) {

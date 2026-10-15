@@ -90,7 +90,14 @@ What changed in each release, newest first. A 0.x minor version may break the in
     - routes: `GET /api/data` and `POST /api/data/snapshot` (`{rebaseline: true}` to re-baseline);
     - `bootSession` takes `deps.capture`;
     - the demo has an inspector, and **#106**, whose *Empty cart* deletes the saved carts too.
+  - **The harness shows them:**
+    - **Data** (`d`): the trust chip, Snapshot now and Re-baseline, both spans, divergence and each pane's changes, and a badge counting the PR-only destructive changes;
+    - **Actions** (`a`): each reported action with the requests it set off, read on from its cursor, and from 0 again for another session or a `resync`.
+
+    Both draw what PR code controls as text only.
   - **What breaks:** `/api/state` has `data: {available}`, so a test that compares it whole must add it.
+- **The harness's Content-Security-Policy is tighter:** `script-src 'self'; object-src 'none'; base-uri 'none'; frame-src <pane origins>`, beside `frame-ancestors 'self'`.
+  - **What breaks:** a harness page changed to load a script from elsewhere, or inline, no longer runs it. A test that compares the harness's `Content-Security-Policy` must expect the new one.
 
 ### The Docker Provisioner
 

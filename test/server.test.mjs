@@ -625,12 +625,17 @@ test('an IPv6-literal harness origin is logged as an error naming a localhost or
       errorLines.join('\n'),
     )
     assert.equal((await raw(base, { path: '/x' })).headers['content-security-policy'], "frame-ancestors 'self'")
+    // nor frame-src: the harness's own policy leaves it out rather than refuse the panes
+    const { harness } = await allPorts(c)
+    assert.equal((await raw(harness, { path: '/qa/' })).headers['content-security-policy'], "frame-ancestors 'self'; script-src 'self'; object-src 'none'; base-uri 'none'")
   } finally { c.stop() }
 })
 
 // --- 0.3.0: frame locks ----------------------------------------------------------
 
-const HARNESS_FRAME = { 'content-security-policy': "frame-ancestors 'self'", 'x-frame-options': 'SAMEORIGIN', 'referrer-policy': 'strict-origin-when-cross-origin' }
+// #8: the harness also runs only its own scripts and frames only the panes
+const HARNESS_CSP = "frame-ancestors 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-src https://h.ts.net:8443 https://h.ts.net:10000"
+const HARNESS_FRAME = { 'content-security-policy': HARNESS_CSP, 'x-frame-options': 'SAMEORIGIN', 'referrer-policy': 'strict-origin-when-cross-origin' }
 const frameHeaders = res => Object.fromEntries(Object.keys(HARNESS_FRAME).map(k => [k, res.headers[k]]))
 
 // The harness starts sessions and posts verdicts in one click, so a page that
@@ -3939,4 +3944,21 @@ test('startConductor refuses an inspector with no open(), or with rules that are
     [{ open: () => ({}), rules: { classify: [{ collection: 'x', fields: ['a'], as: 'public' }] } }, /adapters\.inspector\.rules: classify\[0\]\.as must be secret or pii/],
   ]) assert.throws(() => startOnly({}, { inspector }), re, JSON.stringify(inspector))
   assert.doesNotThrow(() => startOnly({}, { inspector: { open: () => ({}) } }))
+})
+
+// Owner decision C: nothing of the data checks reaches GitHub. The verdict
+// comment says nothing of them, whatever they found.
+test('the verdict comment says nothing of the data checks', async () => {
+  const { w, ports, snapshot, stores } = await dataWorld()
+  try {
+    stores.pr.saved_carts.rows = []
+    assert.equal((await snapshot()).status, 200)
+    const preview = await api(ports.harness, 'GET', '/api/verdict/preview?verdict=reject&notes=x')
+    assert.doesNotMatch(JSON.stringify(preview), /saved_carts|owner|reset_token|delete|emptied|snapshot/i)
+    const posted = []
+    w.github.postComment = async (pr, body) => { posted.push([pr, body]); return 'https://c' }
+    assert.equal((await raw(ports.harness, { method: 'POST', path: '/qa/api/verdict', headers: JSON_TYPE, body: '{"verdict":"reject","notes":"x"}' })).status, 200)
+    assert.equal(posted.length, 1)
+    assert.doesNotMatch(posted[0][1], /saved_carts|owner|reset_token|delete|emptied|snapshot|example\.org/i)
+  } finally { w.c.stop() }
 })
