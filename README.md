@@ -464,7 +464,7 @@ Its limits:
 - **Fixed names and ports.** The containers, the networks and the host ports are the same on every run, so run one conductor per Docker host.
 - **The host's loopback.** The panes' apps are published there, and the conductor listens there by default. Where a container can reach the host's loopback (such as Docker Desktop, through `host.docker.internal`, and some rootless runtimes), the PR pane's app can reach all of them:
   - the base pane's app, on its host port, with no session but the base app's own;
-  - the base pane's proxy, which signs every request in as the operator, and the harness API. Both answer it `403`, since it holds no enrolled browser's capability ([Security](#security)).
+  - the base pane's proxy, which signs every request in as the operator, and the harness API. Both answer it `403`, since it holds no enrolled browser's capability ([Security](#security)). That holds over https. On plain-http loopback, a PR page working with the PR app can lift the pane cookie through the browser, which then admits it to the base pane's proxy until that session ends; the harness API still needs the token ([Security](#security)).
 
   It still can't reach the base pane's database directly: that has no host port.
 - **A conductor off loopback.** With a non-loopback `QA_BIND_HOST` (none mode only), a container on any runtime, native Linux Docker Engine included, can reach the harness and the base pane's proxy through its network's gateway or the host's address, unless a host firewall drops that traffic. Both refuse it the same way.
