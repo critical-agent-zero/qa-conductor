@@ -62,22 +62,22 @@ What changed in each release, newest first. A 0.x minor version may break the in
 ### The action log
 
 - **Each session keeps an action log:** what each pane's proxy forwarded to its app, and a mark for each action the panes reported. Requests group under the mark they most likely came from. It is the first part of #8's data checks. README's [Security](README.md#security) and [HTTP API](README.md#http-api-harness-port) have the details.
-  - **No values.** An entry keeps the method, the path, the status, the time and the bytes sent back: never a header, a cookie, a body or a query value. A query keeps its keys. A path segment that looks like a value (an email address, a `key=value` pair, a long number, a token) shows only its kind; that is a heuristic, and a short code can slip through. A request a guard refuses is only counted, by reason. A mark keeps the pane and the kind of action (`click`, `submit`, `change`, `enter`), never the element or what was typed.
+  - **No values.** An entry keeps the method, the path, the status, the time and the bytes sent back: never a header, a cookie, a body or a query value. A query keeps its keys. A path segment that looks like a value (an email address, a `key=value` pair, a run of seven digits or more, a token), even encoded twice, shows only its kind; that is a heuristic, and a short code can slip through. A request a guard refuses is only counted, by reason. A mark keeps the pane and the kind of action (`click`, `submit`, `change`, `enter`), never the element or what was typed.
   - **The running session's only.** It lives in memory from ready to the next boot or teardown, as the cookie jars do, and a request lands in the log of the session it started in. Nothing of it reaches the event stream, the conductor's log or GitHub.
   - **New:**
-    - routes: `GET /api/actions?after=N&limit=M`, read in pages of at most 2,000 requests, and `POST /api/actions/mark`;
-    - the harness posts a mark for the clicks, submits, changes and Enters a pane reports, mirrored or not, at most one of each kind a pane every 100 ms;
+    - routes: `GET /api/actions?after=N&limit=M`, read in pages of at most 2,000 new and 2,000 regrouped requests, each naming its `log`, and `POST /api/actions/mark`;
+    - the harness posts a mark for the clicks, submits, changes and Enters a pane reports, mirrored or not, at most one of each kind a pane every 100 ms, from a budget per pane that refills;
     - `createPaneProxy` takes `recorder` and `onRefused`.
 
 ### The data checks' engine
 
 - **A new entry point, `@critical-labs/qa-conductor/data-diff`:** the pure engine of #8's data checks, with no I/O. README's [Data checks](README.md#data-checks) has the details.
   - **What a snapshot keeps:** each collection's rows, key and true count, at most 10,000 rows a collection and 32 MB in all.
-  - **Masking:** a secret-looking or `secret` field keeps only a digest, and a `pii` one a fingerprint, its type and its length, as HMACs under a key made for the session.
+  - **Masking:** a secret-looking or `secret` field keeps only a digest, and a `pii` one a fingerprint, its type and its length, as HMACs under a key made for the session. JSON keeps no value under a secret-looking key, and that includes JSON held in a string.
   - **Comparing:**
     - what changed between two snapshots of a pane, by key;
     - where the PR pane's changes depart from the base pane's;
-    - which of the PR's changes are destructive: red when only the PR made them, amber when the base did too.
+    - which of the PR's changes are destructive: red unless the base made the same change (the same rows, the same field), then amber.
   - **Advisory unless isolated:** unless the session's isolation verdict is `isolated`, the base's changes excuse nothing.
 
 ### The Docker Provisioner
