@@ -554,11 +554,14 @@ const provisioner = createDockerProvisioner({
 
     An app that ignores them reaches nothing outside its network.
 - **The allowlist, `egress`.**
-  - **Entries:** `api.example.com` (that host), `*.example.com` (any host under it, not the domain itself) or a public IP address, each with an optional `:port`. Without a port, an entry allows 80 and 443. Anything else throws when the Provisioner is made.
+  - **Entries:** `api.example.com` (that host), `*.example.com` (any host under it, not the domain itself) or a public IP address (an IPv6 one in brackets), each with an optional `:port`. Without a port, an entry allows 80 and 443. They are compared as the URL parser has them. Anything else throws when the Provisioner is made: a private address in any form, a name only this host or its network has (`*.localhost`, `*.internal`, `*.local`, …), a bad port.
+  - **A wildcard is as wide as written:** `*.github.io` admits every site under it.
   - **Empty, or `internal: true`:** no egress at all.
   - **What a request needs:** a host on the list, and every address it resolves to public. The forwarder connects to the address it checked, so a second DNS answer can't swap it.
   - **Always refused, listed or not:** loopback, private, link-local (cloud metadata), CGNAT and Tailscale, unique-local and the like, so every address a runtime gives the host.
-  - **A refusal** answers `403` with `X-QA-Egress: refused` and a reason. The forwarder logs it (`docker logs qa-fwd-pr`).
+  - **Per address, not per host:** HTTPS goes through a tunnel the forwarder doesn't inspect, so its SNI and Host can name any site served from a listed name's addresses. Don't list a name on a shared CDN's addresses unless every site there may be reached.
+  - **A refusal** answers `403` with `X-QA-Egress: refused` and a reason. The forwarder logs it (`docker logs qa-fwd-pr`). A host it can't reach answers `502` with `X-QA-Egress: failed`.
+  - **Every wait is bounded:** a connect takes at most 10 s, and a tunnel or an answer idle for 5 minutes is closed.
 - **The verdict.** With the topology up, the check's result says `internal: true`, and:
   - the probe decides alone. The runtime's own reasons (Docker Desktop's forwarding, Podman's networks) and the macOS floor give way to it. It tries the same addresses as ever, from the internal network;
   - the probe also asks the forwarder's proxy for each of them, as a `CONNECT`. One it lets through is a hit, and a proxy that doesn't answer at all makes the verdict `unknown`.
