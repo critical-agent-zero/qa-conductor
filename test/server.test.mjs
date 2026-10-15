@@ -3533,7 +3533,7 @@ test('the action log keeps each forwarded request with no header, cookie, body o
   } finally { w.c.stop() }
 })
 
-test('marks: a pane and a kind of action, rate-limited, grouping the requests after them; refusals only counted', async () => {
+test('marks: a pane and a kind of action, rate-limited, in one sequence with the requests; refusals only counted', async () => {
   const { w, ports } = await readyWorld()
   try {
     const mark = body => raw(ports.harness, { method: 'POST', path: '/qa/api/actions/mark', headers: JSON_TYPE, body: JSON.stringify(body) })
@@ -3552,7 +3552,8 @@ test('marks: a pane and a kind of action, rate-limited, grouping the requests af
     const log = JSON.parse((await raw(ports.harness, { path: '/qa/api/actions' })).body)
     assert.deepEqual(log.marks.map(m => [m.pane, m.type]), [['base', 'click']])
     assert.deepEqual(Object.keys(log.marks[0]).sort(), ['at', 'pane', 'seq', 'type'])
-    assert.deepEqual(log.requests.map(r => [r.path, r.mark]), [['/cart', log.marks[0].seq]])
+    // the request after the mark, in one sequence
+    assert.deepEqual(log.requests.map(r => [r.path, r.seq > log.marks[0].seq]), [['/cart', true]])
     assert.deepEqual(log.refused, { base: {}, pr: { 'cross-site framing refused': 1 } })
     assert.deepEqual(log.marksDropped, { base: 1, pr: 0 })
     assert.doesNotMatch(JSON.stringify(log), /SECRET/)
@@ -3792,7 +3793,7 @@ test('the data checks: S0 after each seed, S1 at ready, Snapshot now on demand; 
     const ready = await data()
     assert.deepEqual([ready.available, ready.active, ready.trust, ready.session], [true, true, 'advisory', null])
     assert.equal(ready.boot.divergence.collections.saved_carts.status, 'same')
-    assert.deepEqual(ready.errors, { base: null, pr: null })
+    assert.deepEqual(ready.errors, { boot: { base: null, pr: null }, session: { base: null, pr: null } })
 
     // the PR pane's "Empty cart" also deletes the saved carts
     stores.pr.saved_carts.rows = []
@@ -3809,10 +3810,10 @@ test('the data checks: S0 after each seed, S1 at ready, Snapshot now on demand; 
     // pii as a fingerprint
     const updated = after.session.base.collections.saved_carts.updated[0].fields[0]
     assert.deepEqual([updated.field, updated.before.t, updated.after.t], ['owner', 'pii', 'pii'])
-    const events = await sseEvents(ports.harness, evs => evs.filter(e => e.kind === 'capture').length >= 6)
+    const events = await sseEvents(ports.harness, evs => evs.filter(e => e.kind === 'capture').length >= 4)
     const captures = events.filter(e => e.kind === 'capture')
     assert.deepEqual(captures.map(e => [e.pane, e.phase, e.ok]), [
-      ['base', 'seeded', true], ['pr', 'seeded', true], ['base', 'ready', true], ['pr', 'ready', true], ['base', 'now', true], ['pr', 'now', true],
+      ['base', 'seeded', true], ['pr', 'seeded', true], ['base', 'ready', true], ['pr', 'ready', true],
     ])
     for (const e of captures) assert.deepEqual(Object.keys(e).sort(), ['at', 'kind', 'ok', 'pane', 'phase'])
     for (const text of [JSON.stringify(after), JSON.stringify(events), JSON.stringify(await api(ports.harness, 'GET', '/api/state')), w.lines.join('\n')]) {
@@ -3961,4 +3962,48 @@ test('the verdict comment says nothing of the data checks', async () => {
     assert.equal(posted.length, 1)
     assert.doesNotMatch(posted[0][1], /saved_carts|owner|reset_token|delete|emptied|snapshot|example\.org/i)
   } finally { w.c.stop() }
+})
+
+// A boot taken over while its inspector is still reading: what that read
+// reports later is no session's, and stays out of the next boot's stream.
+test('a superseded boot\'s capture events never reach the next boot\'s stream', async () => {
+  let hold = deferred()
+  let first = true
+  const inspect = storeInspector({ snapshot: async () => { if (first) { first = false; await hold.promise } } })
+  const w = makeWorld({ inspector: inspect.inspector })
+  inspect.attach(w)
+  try {
+    const port = await harnessPort(w.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(() => w.calls.some(c => c[0] === 'inspector.open'))
+    // open the same PR again while its first read hangs: a new boot with no
+    // teardown between, which aborts the old one as it starts
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    hold.resolve() // the old boot's read ends now
+    await new Promise(r => setTimeout(r, 30))
+    const events = await sseEvents(port, evs => evs.some(e => e.kind === 'ready'))
+    assert.deepEqual(events.filter(e => e.kind === 'capture').map(e => [e.pane, e.phase]), [['base', 'seeded'], ['pr', 'seeded'], ['base', 'ready'], ['pr', 'ready']])
+  } finally { w.c.stop() }
+})
+
+// The next boot waits for the last session's probes to close.
+test('a boot of the same PR again waits for the last session\'s probes to close before it builds', async () => {
+  const closing = deferred()
+  const inspect = storeInspector()
+  const original = inspect.inspector.open
+  inspect.inspector.open = async args => {
+    const probe = await original(args)
+    return { ...probe, close: async () => { await closing.promise; return probe.close() } }
+  }
+  const { w, ports } = await dataWorld({ inspect })
+  try {
+    const builds = () => w.calls.filter(c => c[0] === 'ensureBuilt').length
+    const before = builds()
+    await api(ports.harness, 'POST', '/api/session', { pr: 7 })
+    await new Promise(r => setTimeout(r, 50))
+    assert.equal(builds(), before, 'no build while a probe is still closing')
+    closing.resolve()
+    await waitFor(() => builds() === before + 1)
+  } finally { closing.resolve(); w.c.stop() }
 })

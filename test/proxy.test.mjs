@@ -1147,13 +1147,16 @@ test('a request\'s recorder is the session\'s at its start: a late response neve
   const s = sinks()
   const later = []
   let release
-  const { proxyPort } = await setupCap(t, (req, res) => { release = () => res.end('slow') }, s.options)
+  let arrived
+  const atApp = new Promise(resolve => { arrived = resolve })
+  const { proxyPort } = await setupCap(t, (req, res) => { release = () => res.end('slow'); arrived() }, s.options)
   const pending = request(proxyPort, '/slow', { headers: { ...OWN, cookie: '__Host-qa-test=good-pane' } })
-  await new Promise(r => setTimeout(r, 30))
+  // the request has started, and is waiting at the app
+  await atApp
   s.swap(entry => later.push(entry)) // the next session
   release()
   await pending
-  await new Promise(r => setTimeout(r, 20))
+  while (s.recorded.length + later.length < 1) await new Promise(r => setTimeout(r, 5))
   assert.deepEqual([s.recorded.map(e => e.path), later], [['/slow'], []])
 })
 

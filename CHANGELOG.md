@@ -61,31 +61,32 @@ What changed in each release, newest first. A 0.x minor version may break the in
 
 ### The action log
 
-- **Each session keeps an action log:** what each pane's proxy forwarded to its app, and a mark for each action the panes reported. Requests group under the mark they most likely came from. It is the first part of #8's data checks. README's [Security](README.md#security) and [HTTP API](README.md#http-api-harness-port) have the details.
+- **Each session keeps an action log:** what each pane's proxy forwarded to its app, and a mark for each action the panes reported, in one sequence, from which a reader groups the requests under the action they most likely came from. It is the first part of #8's data checks. README's [Security](README.md#security) and [HTTP API](README.md#http-api-harness-port) have the details.
   - **No values.** An entry keeps the method, the path, the status, the time and the bytes sent back: never a header, a cookie, a body or a query value. A query keeps its keys. A path segment that looks like a value (an email address, a `key=value` pair, a run of seven digits or more, a token), even encoded twice, shows only its kind; that is a heuristic, and a short code can slip through. A request a guard refuses is only counted, by reason. A mark keeps the pane and the kind of action (`click`, `submit`, `change`, `enter`), never the element or what was typed.
   - **The running session's only.** It lives in memory from ready to the next boot or teardown, as the cookie jars do, and a request lands in the log of the session it started in. Nothing of it reaches the event stream, the conductor's log or GitHub.
   - **New:**
-    - routes: `GET /api/actions?after=N&limit=M`, read in pages of at most 2,000 new and 2,000 regrouped requests, each naming its `log`, and `POST /api/actions/mark`;
+    - routes: `GET /api/actions?after=N&limit=M`, which reads requests and marks in one sequence, at most 2,000 at a time, each read naming its `log`, and `POST /api/actions/mark`;
     - the harness posts a mark for the clicks, submits, changes and Enters a pane reports, mirrored or not, at most one of each kind a pane every 100 ms, from a budget per pane that refills;
     - `createPaneProxy` takes `recorder` and `onRefused`.
 
 ### The data checks' engine
 
 - **A new entry point, `@critical-labs/qa-conductor/data-diff`:** the pure engine of #8's data checks, with no I/O. README's [Data checks](README.md#data-checks) has the details.
-  - **What a snapshot keeps:** each collection's rows, key and true count, at most 10,000 rows a collection and 32 MB in all.
-  - **Masking:** a secret-looking or `secret` field keeps only a digest, and a `pii` one a fingerprint, its type and its length, as HMACs under a key made for the session. JSON keeps no value under a secret-looking key, and that includes JSON held in a string.
+  - **What a snapshot keeps:** each collection's rows, key and true count, at most 10,000 rows a collection, 32 MB in all, shared fairly, and 1,000 collections.
+  - **Masking:** a secret-looking or `secret` field keeps only a digest, and a `pii` one a fingerprint, its type and its length, as HMACs under a key made for the session. JSON keeps no value under a secret-looking key, in JSON held in strings too (three deep) and NDJSON, and text that shows a secret-looking key is masked whole.
   - **Comparing:**
     - what changed between two snapshots of a pane, by key;
     - where the PR pane's changes depart from the base pane's;
-    - which of the PR's changes are destructive: red unless the base made the same change (the same rows, the same field), then amber.
+    - which of the PR's changes are destructive: red unless the base made the same change (the same rows, the same fields), then amber. A collection a PR cut short where the base's wasn't is flagged `unverified`.
   - **Advisory unless isolated:** unless the session's isolation verdict is `isolated`, the base's changes excuse nothing.
 
 ### The data checks
 
 - **A new optional seam, `adapters.inspector`, lets the data checks read each pane's data.** Each session snapshots each pane right after its seed (`seeded`), once both panes are signed in (`ready`), and on demand (`now`), in memory only. README's [Data checks](README.md#data-checks) and [The seams](README.md#the-seams) have the details.
   - **What it shows:** the boot span and the session span, each pane's diff, their divergence, and the PR's destructive flags, trusted only when the session's isolation verdict is `isolated`.
-  - **It never fails a boot:** an inspector that throws, hangs past 30 s or returns nonsense leaves its pane without data and says why.
-  - **No values leave the harness:** they reach only `GET /api/data`, behind the capability. The event stream gets `{kind: 'capture', pane, phase, ok}`, and nothing reaches a log or GitHub.
+  - **It never fails a boot:** an inspector that throws, hangs past 30 s or returns nonsense leaves its pane without data and says why, and a call that times out is told to stop. A pane whose ready read failed keeps its seeded snapshot until a later one gives it a baseline.
+  - **No values leave the harness:** they reach only `GET /api/data`, behind the capability. The event stream gets `{kind: 'capture', pane, phase, ok}` for the boot's two phases, and nothing reaches a log or GitHub.
+  - **One answer stays small:** it lists at most 50 rows of each kind a collection and 50 divergence changes, about 4 MB of rows in all, with whole counts, and is built once for each state.
   - **New:**
     - routes: `GET /api/data` and `POST /api/data/snapshot` (`{rebaseline: true}` to re-baseline);
     - `bootSession` takes `deps.capture`;
