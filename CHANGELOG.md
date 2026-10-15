@@ -8,7 +8,7 @@ What changed in each release, newest first. A 0.x minor version may break the in
 
 - **The conductor answers only browsers it has enrolled.** Code that reached the conductor on loopback could send whatever a browser would: any `Tailscale-User-Login`, `Origin` and Fetch Metadata. That includes a process pane, or a container pane on a runtime that forwards to the host's loopback, such as Docker Desktop. So PR code could read both panes' sign-in URLs from `/api/state`, take over or end the session and post a verdict. It could also use the base pane through its proxy, signed in as the reviewer. Now every `/api/*` route but `POST /api/enrol`, and every pane request, needs an enrolled browser's capability, else it gets `403` with `X-QA-Refusal: capability`. README's [Security](README.md#security) has the details.
   - **Enrolment:** a browser enrols only while no PR code can be running. That means the session is idle, or failed and torn down, every boot has settled, a teardown has succeeded since, and the startup sweep succeeded. When a cancelled boot settles, the conductor runs that teardown itself, so **Cancel boot** now tears the panes down twice. A try to enrol with no session running runs a failed sweep or teardown again, at most once every five seconds, and waits up to three seconds for one in flight before it answers. An enrolled browser can hand out an invite link, which enrols one more browser, once, within ten minutes, whatever is running.
-  - **The harness** keeps its token in `localStorage` and sends it as `X-QA-Cap`, or `?cap=` on the event stream. It loads each pane through a one-time link that sets the pane cookie, `HttpOnly` and `SameSite=Strict`. A restart revokes every token and cookie.
+  - **The harness** keeps its token in `localStorage` and sends it as `X-QA-Cap`, or `?cap=` on the event stream. It loads each pane through a one-time link that sets the pane cookie, `HttpOnly` and `SameSite=Strict`. A pane cookie lasts one session, and a restart revokes every token and cookie.
   - **New:**
     - routes: `POST /api/enrol`, `POST /api/invite`, `POST /api/pane-entry`, and `GET /__qa/enter` on each pane;
     - in the harness: an enrolment view and an **Invite** button;
@@ -25,13 +25,13 @@ What changed in each release, newest first. A 0.x minor version may break the in
     - **The harness and both panes must share one hostname.** A `SameSite=Strict` cookie never reaches a pane framed from another site, and with no public suffix list the conductor can tell only that one hostname is one site. `startConductor` refuses pane origins on another hostname than the harness origin, a same-site layout such as `qa.example.com` with `base.example.com` included. Pane origins assigned after start are checked when the harness loads a pane: `/api/pane-entry` answers `409`. With a `::1` bind, set both pane origins on `localhost` too, beside `QA_HARNESS_ORIGIN`.
     - **`QA_FORWARD_CLIENT_COOKIES` and `forwardClientCookies` refuse a name starting with `qa-`**, in any case, after `__Host-` or `__Secure-` too. `loadConfig`, `startConductor` and `createPaneProxy` throw: those are the conductor's own.
     - **A `landingUrl` must be on its pane's origin**, or relative to it. One elsewhere isn't loaded, and the pane's bar says why.
-    - **Scripts that call the API must enrol** with `POST /api/enrol` while no session runs, then send `X-QA-Cap`. A script that fetches a pane needs its cookie, from `/api/pane-entry` and then the pane's `/__qa/enter`.
+    - **Scripts that call the API must enrol** with `POST /api/enrol` while no session runs, then send `X-QA-Cap`. A script that fetches a pane needs its cookie, for each session, from `/api/pane-entry` and then the pane's `/__qa/enter`.
     - **Self-QA over a tailnet** no longer shows the inner demos' own panes, which are on another hostname, this machine's loopback.
     - A test that counts teardowns after a cancelled boot sees the cleanup's too.
   - **The demo and `npm run qa` need nothing new.** They start idle, so the browser that opens them enrols by itself, and so does each inner demo's harness, inside its pane.
   - **What it doesn't close:**
     - the base app's own published port;
-    - on plain-http loopback, a PR page and the PR app lifting the pane cookie through the browser;
+    - on plain-http loopback, a PR page and the PR app lifting the pane cookie through the browser, which then works until that session ends;
     - a process pane reading the token from the browser's profile;
     - PR code that outlives its teardown.
 

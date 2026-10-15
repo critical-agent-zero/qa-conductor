@@ -2757,6 +2757,49 @@ test('a restart revokes every token and pane cookie', async () => {
   } finally { second.c.stop() }
 })
 
+// On plain-http loopback the PR app may see the pane cookie (README,
+// Security): the value must die with its session, not admit the base pane in
+// every later one.
+test('a pane cookie lasts one session: a teardown, a boot and a ready each give the browser a new one', async () => {
+  const w = makeWorld({ enrolled: false })
+  try {
+    const { harness, base, pr } = await allPorts(w.c)
+    const token = JSON.parse((await raw(harness, { method: 'POST', path: '/qa/api/enrol', headers: JSON_TYPE, body: '{}' })).body).token
+    const cap = { 'x-qa-cap': token }
+    const enter = async role => {
+      const entry = await raw(harness, { method: 'POST', path: '/qa/api/pane-entry', headers: { ...JSON_TYPE, ...cap }, body: JSON.stringify({ role, to: '/' }) })
+      const url = new URL(JSON.parse(entry.body).url)
+      const entered = await raw(role === 'base' ? base : pr, { path: url.pathname + url.search, cap: false, headers: { host: url.host, 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'navigate', referer: 'https://h.ts.net:8444/' } })
+      return entered.headers['set-cookie'][0].split(';')[0]
+    }
+    const status = async (port, cookie) => (await raw(port, { path: '/page', cap: false, headers: { cookie } })).status
+    const ready = async () => waitFor(async () => (await raw(harness, { path: '/qa/api/state', cap: false, headers: cap })).body.includes('"status":"ready"'))
+
+    await raw(harness, { method: 'POST', path: '/qa/api/session', headers: { ...JSON_TYPE, ...cap }, body: '{"pr":7}' })
+    await ready()
+    const first = await enter('pr')
+    assert.deepEqual([await status(base, first), await status(pr, first)], [200, 200])
+
+    await raw(harness, { method: 'POST', path: '/qa/api/teardown', headers: { ...JSON_TYPE, ...cap }, body: '{}' })
+    for (const port of [base, pr]) {
+      const res = await raw(port, { path: '/page', cap: false, headers: { cookie: first } })
+      assert.deepEqual([res.status, res.headers['x-qa-refusal']], [403, 'capability'], 'gone with its session')
+    }
+    // the same browser, its harness token still good, enters the next session
+    await raw(harness, { method: 'POST', path: '/qa/api/session', headers: { ...JSON_TYPE, ...cap }, body: '{"pr":8}' })
+    await ready()
+    const second = await enter('base')
+    assert.notEqual(second, first)
+    assert.deepEqual([await status(base, second), await status(base, first)], [200, 403])
+
+    // a session replaced without a teardown (the same PR opened again)
+    await raw(harness, { method: 'POST', path: '/qa/api/session', headers: { ...JSON_TYPE, ...cap }, body: '{"pr":8}' })
+    await ready()
+    assert.equal(await status(base, second), 403)
+    assert.equal(await status(base, await enter('base')), 200)
+  } finally { w.c.stop() }
+})
+
 // POST /api/enrol is the one API route anyone may call, so it must not buffer
 // whatever a caller sends before it decides. Every body is small JSON.
 test('a JSON body over 64 KiB gets 413 without being read whole, on POST /api/enrol and every other route', async () => {

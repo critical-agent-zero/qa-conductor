@@ -103,6 +103,25 @@ test('a pane-entry ticket is single use, bound to its role, and lasts ENTER_TTL_
   for (const bad of [undefined, '', 'garbage', token, cap.paneToken(token)]) assert.equal(cap.redeemEnter(bad, 'base'), null, String(bad))
 })
 
+test('rotatePanes gives every browser a new pane token, and the old ones admit nothing; harness tokens and live tickets still work', () => {
+  const cap = createCapability({ ...fakes(), maxBrowsers: 2 })
+  const [a, b] = [cap.enrol(), cap.enrol()]
+  const before = [cap.paneToken(a), cap.paneToken(b)]
+  const ticket = cap.enter(cap.browser(a), 'base', '/x')
+  cap.rotatePanes()
+  const after = [cap.paneToken(a), cap.paneToken(b)]
+  for (const old of before) assert.equal(cap.admitsPane(old), false, old)
+  for (const fresh of after) assert.equal(cap.admitsPane(fresh), true, fresh)
+  assert.equal(new Set([...before, ...after]).size, 4)
+  for (const token of [a, b]) assert.ok(cap.browser(token))
+  assert.deepEqual(cap.redeemEnter(ticket, 'base'), { to: '/x', paneToken: after[0] }, 'a ticket sets the pane token of now')
+  // a browser dropped since takes its new pane token with it
+  cap.browser(b)
+  cap.enrol()
+  assert.equal(cap.admitsPane(after[0]), false)
+  assert.equal(cap.admitsPane(after[1]), true)
+})
+
 test('a ticket of a browser dropped since it was minted lets nobody in', () => {
   const cap = createCapability({ ...fakes(), maxBrowsers: 1 })
   const first = cap.enrol()

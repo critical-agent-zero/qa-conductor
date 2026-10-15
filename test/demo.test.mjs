@@ -252,12 +252,12 @@ test('startDemo({ harnessOrigin, frameAncestors }) puts both in the pane policy'
   const demo = await startDemo({ port: 0, speed: 0, log, harnessOrigin: harness, frameAncestors: [outer] })
   try {
     assert.equal((await state(demo.ports.harness)).harnessOrigin, harness)
-    const cookie = await paneCookie(demo)
-    const idle = await get(demo.ports.base, '/', { cookie })
+    const idle = await get(demo.ports.base, '/', { cookie: await paneCookie(demo) })
     assert.equal(idle.status, 503)
     assert.equal(idle.headers['content-security-policy'], `frame-ancestors 'self' ${harness} ${outer}`)
     await bootToReady(demo.ports.harness, 101)
-    const framed = await get(demo.ports.pr, '/', { ...iframeFrom(`${harness}/`), cookie })
+    // a pane cookie lasts one session, so the harness enters the panes again
+    const framed = await get(demo.ports.pr, '/', { ...iframeFrom(`${harness}/`), cookie: await paneCookie(demo) })
     assert.equal(framed.status, 200)
     assert.equal(framed.headers['content-security-policy'], `frame-ancestors 'self' ${harness} ${outer}`)
     assert.ok(framed.body.includes(`<script src="/__qa/bridge.js" data-harness="${harness}"></script>`))
