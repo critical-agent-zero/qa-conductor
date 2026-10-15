@@ -4,6 +4,7 @@ import http from 'node:http'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { monotonicNow } from '../lib/action-log.mjs'
 import {
   createPaneProxy, parseSetCookie, requestHostname, isAllowedHost, panePolicy,
 } from '../lib/proxy.mjs'
@@ -1207,26 +1208,32 @@ test('an upstream that fails is recorded as 502, a client that goes away as abor
 })
 
 test('an entry counts a piped body\'s bytes, starts when the request did, and has no status when the client left before the app answered', { timeout: 10_000 }, async (t) => {
+  // the log's clock, which a wall clock an hour behind doesn't move
+  const wall = Date.now
+  t.mock.method(Date, 'now', () => wall() - 3_600_000)
   const s = sinks()
+  let appSawNever
+  const sawNever = new Promise(resolve => { appSawNever = resolve })
   const { proxyPort } = await setupCap(t, (req, res) => {
     if (req.url === '/body') { res.setHeader('content-type', 'application/json'); return res.end('x'.repeat(1234)) }
     if (req.url === '/slow') return setTimeout(() => res.end('late'), 150)
-    if (req.url === '/never') return setTimeout(() => { res.setHeader('connection', 'close'); res.end('too late') }, 300) // after the client left
+    if (req.url === '/never') { appSawNever(); return setTimeout(() => { res.setHeader('connection', 'close'); res.end('too late') }, 300) } // after the client left
   }, s.options)
   const own = { headers: { ...OWN, cookie: '__Host-qa-test=good-pane' } }
-  const began = Date.now()
   await request(proxyPort, '/body', own)
+  const began = monotonicNow()
   await request(proxyPort, '/slow', own)
   await new Promise((resolve) => {
     const req = http.request({ host: '127.0.0.1', port: proxyPort, path: '/never', headers: own.headers, agent: false })
     req.on('error', () => resolve())
     req.end()
-    setTimeout(() => { req.destroy(); resolve() }, 50)
+    // gone once the app has the request, before it answers
+    sawNever.then(() => { req.destroy(); resolve() })
   })
-  await new Promise(r => setTimeout(r, 50))
+  while (s.recorded.length < 3) await new Promise(r => setTimeout(r, 5))
   const [body, slow, never] = s.recorded
   assert.deepEqual([body.path, body.bytes], ['/body', 1234])
-  assert.ok(slow.at - began < 100, 'taken as the request started')
+  assert.ok(slow.at >= began && slow.at - began < 100, `taken as the request started (${slow.at - began} ms)`)
   assert.ok(slow.ms >= 140, `${slow.ms} ms`)
   assert.deepEqual([never.path, never.status, never.aborted], ['/never', 0, true])
 })
