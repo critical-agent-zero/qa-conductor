@@ -70,6 +70,13 @@ What changed in each release, newest first. A 0.x minor version may break the in
 - **New in `createDocker`:** `createNetwork(name, { internal })`, `networkInternal(name)`, `runForwarder(name, image, network, { hostPort, config, source })` and `connectNetwork(network, container, { alias })`. `runApp` publishes nothing when `hostPort` is `null`.
 - **Nothing changes without `internal`.**
 
+### Hardening opt-ins
+
+- **README's [Hardening opt-ins](README.md#hardening-opt-ins) documents three more, each with what it guarantees and what it doesn't** (#32):
+  - **a `sandbox-exec` profile for the process Provisioner on macOS**, which shuts the PR pane out of the conductor's and the base pane's loopback ports. It was checked on macOS 12, and gives a check to run on 14 and 15;
+  - **tagging the conductor's Tailscale node**, so a request that reaches `tailscale serve` from the node itself carries no login for the identity gate to admit;
+  - **Unix-socket listeners behind `tailscale serve`**, which the conductor doesn't support yet: what they would guarantee, and what supporting them would take.
+
 ### The Docker Provisioner
 
 - **The PR pane can no longer reach the base pane's database.** Both panes' containers joined one network, and both databases had the same superuser and password, which the PR pane's own `dsn` carried. So PR code, by mistake or on purpose, could change the base pane's data, or call the base app directly, and skew the comparison.
