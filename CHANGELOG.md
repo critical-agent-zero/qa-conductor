@@ -80,6 +80,18 @@ What changed in each release, newest first. A 0.x minor version may break the in
     - which of the PR's changes are destructive: red unless the base made the same change (the same rows, the same field), then amber.
   - **Advisory unless isolated:** unless the session's isolation verdict is `isolated`, the base's changes excuse nothing.
 
+### The data checks
+
+- **A new optional seam, `adapters.inspector`, lets the data checks read each pane's data.** Each session snapshots each pane right after its seed (`seeded`), once both panes are signed in (`ready`), and on demand (`now`), in memory only. README's [Data checks](README.md#data-checks) and [The seams](README.md#the-seams) have the details.
+  - **What it shows:** the boot span and the session span, each pane's diff, their divergence, and the PR's destructive flags, trusted only when the session's isolation verdict is `isolated`.
+  - **It never fails a boot:** an inspector that throws, hangs past 30 s or returns nonsense leaves its pane without data and says why.
+  - **No values leave the harness:** they reach only `GET /api/data`, behind the capability. The event stream gets `{kind: 'capture', pane, phase, ok}`, and nothing reaches a log or GitHub.
+  - **New:**
+    - routes: `GET /api/data` and `POST /api/data/snapshot` (`{rebaseline: true}` to re-baseline);
+    - `bootSession` takes `deps.capture`;
+    - the demo has an inspector, and **#106**, whose *Empty cart* deletes the saved carts too.
+  - **What breaks:** `/api/state` has `data: {available}`, so a test that compares it whole must add it.
+
 ### The Docker Provisioner
 
 - **The PR pane can no longer reach the base pane's database.** Both panes' containers joined one network, and both databases had the same superuser and password, which the PR pane's own `dsn` carried. So PR code, by mistake or on purpose, could change the base pane's data, or call the base app directly, and skew the comparison.
