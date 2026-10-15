@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { inspect } from 'node:util'
-import { createDocker } from '../lib/docker.mjs'
+import { createDocker, errorLine } from '../lib/docker.mjs'
 import { makeExecFileFn } from '../lib/exec.mjs'
 
 function recordingExec(stdoutByIndex = []) {
@@ -48,6 +48,8 @@ test('runPg builds the exact docker run argv, and passes the password in the CLI
     '--name', 'qa-pg-base',
     '--network', 'qa-session-base',
     '--label', 'qa-conductor-session',
+    // ping-style raw sockets (crafted packets) are no pane's business
+    '--cap-drop', 'NET_RAW',
     '-e', 'POSTGRES_USER=qa',
     // no value: docker takes it from its own environment
     '-e', 'POSTGRES_PASSWORD',
@@ -131,6 +133,7 @@ test('runMigrate names its container when given a name', async () => {
     '--name', 'qa-migrate-pr',
     '--network', 'qa-session-pr',
     '--label', 'qa-conductor-session',
+    '--cap-drop', 'NET_RAW',
     '--env-file', '/compose/.env.qa-pr',
     'ghcr.io/x/app:migrate-pr-7-abc',
   ]])
@@ -149,6 +152,7 @@ test('createDocker threads a custom postgres identity and label through argv', a
     '--name', 'widget-pg',
     '--network', 'widget-qa',
     '--label', 'widget-qa-session',
+    '--cap-drop', 'NET_RAW',
     '-e', 'POSTGRES_USER=widget',
     '-e', 'POSTGRES_PASSWORD',
     '-e', 'POSTGRES_DB=maindb',
@@ -197,6 +201,7 @@ test('runApp builds the exact docker run argv with loopback port mapping', async
     '--name', 'qa-app-pr',
     '--network', 'qa-session',
     '--label', 'qa-conductor-session',
+    '--cap-drop', 'NET_RAW',
     '--env-file', '/compose/.env.qa-pr',
     '-p', '127.0.0.1:3112:3000',
     'ghcr.io/x/app:pr-7-abc',
@@ -211,6 +216,7 @@ test('runMigrate builds the exact docker run argv', async () => {
     'docker', 'run', '--rm',
     '--network', 'qa-session',
     '--label', 'qa-conductor-session',
+    '--cap-drop', 'NET_RAW',
     '--env-file', '/compose/.env.qa-pr',
     'ghcr.io/x/app:migrate-pr-7-abc',
   ]])
@@ -481,6 +487,70 @@ test('rmForce removes all names in one call, and tolerates only names already go
   ]) {
     await assert.rejects(createDocker({ execFileFn: recordingExec([err]) }).rmForce(['a', 'b']), e => e === err, err.message)
   }
+})
+
+// The isolation probe's calls: what the runtime is, where things are on the
+// panes' networks, and the probe container itself.
+test('runtime, endpoint, networkGateways, containerAddresses and runProbe build exact argv', async () => {
+  const exec = recordingExec([
+    'Client: Docker Engine - Community\nServer: Docker Engine - Community\n', 'Ubuntu 24.04.1 LTS\n', 'unix:///var/run/docker.sock\n',
+    '172.20.0.1 fd00:20::1 \n', '172.19.0.2 fd00:19::2 \n', 'listener 10.0.2.2\nprobe done\n',
+  ])
+  const docker = createDocker({ execFileFn: exec, postgres: { image: 'postgres:15' } })
+  assert.deepEqual(await docker.runtime(), { version: 'Client: Docker Engine - Community\nServer: Docker Engine - Community\n', os: 'Ubuntu 24.04.1 LTS', osError: null })
+  assert.equal(await docker.endpoint(), 'unix:///var/run/docker.sock')
+  assert.deepEqual(await docker.networkGateways('qa-session-pr'), ['172.20.0.1', 'fd00:20::1'])
+  // a dual-stack network gives each container an IPv6 address too
+  assert.deepEqual(await docker.containerAddresses('qa-pg-base'), ['172.19.0.2', 'fd00:19::2'])
+  assert.equal(await docker.runProbe('qa-probe-pr', 'qa-session-pr', 'echo hi', ['3100', '/x']), 'listener 10.0.2.2\nprobe done\n')
+  assert.deepEqual(exec.calls, [
+    ['docker', 'version'],
+    ['docker', 'info', '--format', '{{.OperatingSystem}}'],
+    ['docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'],
+    ['docker', 'network', 'inspect', '--format', '{{range .IPAM.Config}}{{.Gateway}} {{end}}', 'qa-session-pr'],
+    ['docker', 'inspect', '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{.GlobalIPv6Address}} {{end}}', 'qa-pg-base'],
+    // gone when it ends, labelled for the sweep, no capabilities, no ports and
+    // no mounts: it only connects out
+    ['docker', 'run', '--rm', '--name', 'qa-probe-pr', '--network', 'qa-session-pr', '--label', 'qa-conductor-session', '--cap-drop', 'ALL', '--entrypoint', 'bash', 'postgres:15', '-c', 'echo hi', 'probe', '3100', '/x'],
+  ])
+  await assert.rejects(docker.runProbe('qa probe', 'qa-session-pr', 'x', []), /unsafe container name/)
+})
+
+// The podman-docker shim's `docker info` has no .OperatingSystem: the
+// runtime is still known from `docker version`.
+test('runtime keeps what docker version said when docker info fails, and fails only when version does', async () => {
+  const infoFails = dockerFailure('Error: template: info:1:2: executing "info" at <.OperatingSystem>: can\'t evaluate field OperatingSystem in type *define.Info\n')
+  const shim = createDocker({ execFileFn: recordingExec(['Client: Podman Engine\nVersion: 5.2.0\n', infoFails]) })
+  const out = await shim.runtime()
+  assert.deepEqual([out.version, out.os, out.osError], ['Client: Podman Engine\nVersion: 5.2.0\n', null, infoFails])
+  const down = dockerFailure('Cannot connect to the Docker daemon\n')
+  await assert.rejects(createDocker({ execFileFn: recordingExec([down]) }).runtime(), e => e === down)
+})
+
+// A wedged daemon must not hold the boot at the probe for ever. The docker
+// CLI passes SIGTERM on to the container, whose bash, as PID 1, ignores it:
+// so SIGKILL. And a teardown's abort stops it too.
+test('runProbe gives docker run a timeout, 30 s unless told otherwise, then SIGKILL, and the boot\'s signal', async () => {
+  const opts = []
+  const exec = async (file, args, o) => { opts.push(o ?? null); return { stdout: 'probe done\n' } }
+  const docker = createDocker({ execFileFn: exec })
+  const { signal } = new AbortController()
+  await docker.runProbe('qa-probe-pr', 'qa-session-pr', 'x', [])
+  await docker.runProbe('qa-probe-pr', 'qa-session-pr', 'x', [], { timeoutMs: 50, signal })
+  assert.deepEqual(opts, [{ timeout: 30_000, killSignal: 'SIGKILL' }, { timeout: 50, killSignal: 'SIGKILL', signal }])
+})
+
+// What docker said, for a reason a person reads: the first line that says
+// something, past the shim's banner and the logger's warnings, else the
+// first line there is.
+test('errorLine reads past the lines that say nothing of the failure', () => {
+  assert.equal(errorLine(dockerFailure(`${SHIM_BANNER}\n${LOGRUS_TTY}\nError: cannot connect to Podman\n`)), 'Error: cannot connect to Podman')
+  assert.equal(errorLine(new Error('docker run: Command failed: docker run …\nno bash')), 'no bash')
+  assert.equal(errorLine(new Error('docker run: Command failed: exec: "bash": not found')), 'docker run: Command failed: exec: "bash": not found')
+  assert.equal(errorLine(new Error('plain')), 'plain')
+  assert.equal(errorLine(dockerFailure(`${SHIM_BANNER}\n`)), SHIM_BANNER)
+  assert.equal(errorLine('a string'), 'a string')
+  assert.equal(errorLine(new Error('')), 'no detail')
 })
 
 test('rmForce with no names makes no call', async () => {

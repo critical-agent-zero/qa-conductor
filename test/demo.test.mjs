@@ -159,6 +159,8 @@ test('a good PR reaches ready, and both pane proxies serve distinguishable pages
     assert.equal(s.pr, 101)
     assert.equal(s.baseTag, 'main@demo123')
     assert.equal(s.prTag, '#101@abc1234')
+    // the demo's panes are this process's own servers: one host, one user
+    assert.equal(s.isolation.verdict, 'shared-host')
     assert.equal(s.panes.base, `http://127.0.0.1:${demo.ports.base}/`)
     assert.equal(s.panes.pr, `http://127.0.0.1:${demo.ports.pr}/`)
 

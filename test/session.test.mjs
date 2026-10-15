@@ -107,6 +107,34 @@ function makeDeps({ failAt = null, migrationStrategy = 'one-shot-image', require
   return { deps, calls, getSubscribed: () => subscribed }
 }
 
+// The conductor's isolation verdict (#29): checked as the boot starts, before
+// the build, and once both panes' databases exist, before anything of the
+// PR's (a migrate, an app) runs. A throw fails the boot there.
+// A strict boot refused at 'panes' must not have copied the data first:
+// the check runs once both databases exist, before either is seeded.
+test('bootSession calls checkIsolation at the start, before the build, and once both databases exist, before any seed, migrate or launch', async () => {
+  const { deps, calls } = makeDeps()
+  deps.checkIsolation = async ({ stage, signal }) => { calls.push(['checkIsolation', stage, signal === deps.signal]) }
+  await bootSession(deps, 7)
+  const seq = calls.map(c => (c[0] === 'checkIsolation' ? `check:${c[1]}` : c[0] === 'progress' ? `progress:${c[1]}` : c[0]))
+  const at = name => seq.indexOf(name)
+  assert.ok(at('progress:ensuring-image') < at('check:start') && at('check:start') < at('ensureBuilt'), seq.join(' '))
+  assert.ok(seq.lastIndexOf('provisionDatabase') < at('check:panes'), seq.join(' '))
+  assert.ok(at('check:panes') < at('seedPane') && at('check:panes') < at('reserveServices'), seq.join(' '))
+  assert.ok(at('check:panes') < at('progress:migrating') && at('check:panes') < at('runMigrate'), seq.join(' '))
+  assert.deepEqual(calls.filter(c => c[0] === 'checkIsolation').map(c => c.slice(1)), [['start', true], ['panes', true]])
+
+  for (const stage of ['start', 'panes']) {
+    const failing = makeDeps()
+    failing.deps.checkIsolation = async check => { if (check.stage === stage) throw new Error(`not isolated (${stage})`) }
+    await assert.rejects(() => bootSession(failing.deps, 7), new RegExp(`not isolated \\(${stage}\\)`))
+    const names = failing.calls.map(c => c[0])
+    for (const pr of ['seedPane', 'reserveServices', 'runMigrate', 'launchServices', 'establishSession']) assert.equal(names.includes(pr), false, `${stage}: ${pr}`)
+    if (stage === 'start') assert.equal(names.includes('ensureBuilt'), false, 'refused before the build')
+    assert.deepEqual(failing.calls.filter(c => c[0] === 'teardown').map(c => c[1].paneRef.role), ['base', 'pr'], stage)
+  }
+})
+
 test('bootSession happy path: seam order, tags, loginUrls, upstreams', async () => {
   const { deps, calls } = makeDeps()
   const out = await bootSession(deps, 7)
@@ -117,10 +145,10 @@ test('bootSession happy path: seam order, tags, loginUrls, upstreams', async () 
   assert.deepEqual(out.upstreams, { base: 3111, pr: 3112 })
   // progress order
   assert.deepEqual(calls.filter(c => c[0] === 'progress').map(c => c[1]), ['ensuring-image', 'cloning', 'migrating', 'starting'])
-  // per pane: provision -> seed -> reserve, with the configured public origin
+  // both databases, then per pane seed -> reserve, with the configured public origin
   const seq = calls.map(c => c[0])
   const iProv = seq.indexOf('provisionDatabase')
-  assert.deepEqual(seq.slice(iProv, iProv + 3), ['provisionDatabase', 'seedPane', 'reserveServices'])
+  assert.deepEqual(seq.slice(iProv, iProv + 6), ['provisionDatabase', 'provisionDatabase', 'seedPane', 'reserveServices', 'seedPane', 'reserveServices'])
   assert.deepEqual(calls.filter(c => c[0] === 'provisionDatabase').map(c => c[1].paneRef.publicOrigin), [ORIGINS.base, ORIGINS.pr])
   // seed gets the provisioner's db handle and the declared databases
   const seedCall = calls.find(c => c[0] === 'seedPane')[1]
@@ -392,19 +420,29 @@ test('bootSession passes signal to every Provisioner call', async () => {
   }
 })
 
-test('bootSession checks for an abort between panes while provisioning', async () => {
+test('bootSession checks for an abort between panes while provisioning, seeding and reserving', async () => {
   const ac = new AbortController()
   const { deps, calls } = makeDeps()
   deps.signal = ac.signal
   const reserve = deps.adapters.provisioner.reserveServices
   deps.adapters.provisioner.reserveServices = async args => {
     const out = await reserve(args)
-    if (args.paneRef.role === 'base') ac.abort() // teardown lands while base is provisioning
+    if (args.paneRef.role === 'base') ac.abort() // teardown lands while base is being set up
     return out
   }
   await assert.rejects(() => bootSession(deps, 7), err => err.name === 'AbortError')
-  assert.deepEqual(calls.filter(c => c[0] === 'provisionDatabase').map(c => c[1].paneRef.role), ['base'], 'pr pane never provisioned')
+  assert.deepEqual(calls.filter(c => c[0] === 'seedPane').map(c => c[1].paneRef.role), ['base'], 'pr pane never seeded')
+  assert.deepEqual(calls.filter(c => c[0] === 'reserveServices').map(c => c[1].paneRef.role), ['base'])
   assert.equal(calls.some(c => c[0] === 'teardown'), false)
+
+  // while provisioning: the PR pane's database is never made
+  const early = new AbortController()
+  const e = makeDeps()
+  e.deps.signal = early.signal
+  const provision = e.deps.adapters.provisioner.provisionDatabase
+  e.deps.adapters.provisioner.provisionDatabase = async args => { const out = await provision(args); if (args.paneRef.role === 'base') early.abort(); return out }
+  await assert.rejects(() => bootSession(e.deps, 7), err => err.name === 'AbortError')
+  assert.deepEqual(e.calls.filter(c => c[0] === 'provisionDatabase').map(c => c[1].paneRef.role), ['base'], 'pr pane never provisioned')
 })
 
 test('bootSession checks for an abort before each launch and before waiting for health', async () => {

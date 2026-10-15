@@ -16,13 +16,13 @@ const WORK = '/work'
 const PASSWORD = /^[0-9a-f]{48}$/
 
 // Every docker CLI call, with the env it was given; image inspect answers, so
-// nothing is pulled. `answer(args)` may return an Error for a call to reject
+// nothing is pulled. `answer(args, opts)` may return (or resolve to) an Error for a call to reject
 // with, or a string for its stdout.
 function recordingExec({ answer = () => null } = {}) {
   const calls = []
   const fn = async (file, args, opts = {}) => {
-    calls.push({ file, args, env: opts.env ?? null })
-    const out = answer(args)
+    calls.push({ file, args, env: opts.env ?? null, timeout: opts.timeout ?? null, killSignal: opts.killSignal ?? null, signal: opts.signal ?? null })
+    const out = await answer(args, opts)
     if (out instanceof Error) throw out
     return { stdout: out ?? '' }
   }
@@ -190,7 +190,7 @@ test('teardown removes each pane\'s own network, and sweep removes both and the 
   assert.deepEqual(teardown, [
     'rm -f -v qa-app-base qa-migrate-base qa-pg-base',
     'network rm qa-session-base',
-    'rm -f -v qa-app-pr qa-migrate-pr qa-pg-pr',
+    'rm -f -v qa-app-pr qa-migrate-pr qa-probe-pr qa-pg-pr',
     'network rm qa-session-pr',
   ])
   assert.deepEqual(s.fsx.removed, [`${WORK}/.env.qa-base`, `${WORK}/.env.qa-pr`])
@@ -255,7 +255,7 @@ test('teardown and sweep reject when docker can\'t remove a container or network
   // every step was still tried: the network, and the env file with its password
   assert.deepEqual(docker(s.exec).map(c => c.args.join(' ')), [
     'rm -f -v qa-app-base qa-migrate-base qa-pg-base', 'network rm qa-session-base',
-    'rm -f -v qa-app-pr qa-migrate-pr qa-pg-pr', 'network rm qa-session-pr',
+    'rm -f -v qa-app-pr qa-migrate-pr qa-probe-pr qa-pg-pr', 'network rm qa-session-pr',
   ])
   assert.deepEqual(s.fsx.removed, [`${WORK}/.env.qa-base`, `${WORK}/.env.qa-pr`])
 
@@ -548,3 +548,328 @@ function steps(signal) {
     p => p.launchServices({ paneRef: { role: 'base' }, services: { app: BASE_IMG }, env: { app: {} }, reserved: { app: { port: 3111 } }, signal }),
   ]
 }
+
+// --- #29: the isolation probe ----------------------------------------------------
+// Once both panes' databases exist, before anything of the PR's runs, a
+// container on the PR pane's network tries to reach this conductor at every
+// address a runtime gives the host's loopback (the harness answers a canary
+// path with a nonce), and the base pane's database by address.
+
+const CANARY = { port: 3100, path: '/__qa/canary/n0nce', expect: 'qa-canary n0nce' }
+
+// The docker CLI the probe meets; each value may be an Error to fail with.
+// By default the probe reaches nothing but the PR pane's own database, its
+// positive control.
+function probeDocker({
+  version = 'Server: Docker Engine - Community\n', os = 'Ubuntu 24.04.1 LTS\n', gateway = '172.20.0.1 \n',
+  base = '172.19.0.2 \n', pr = '172.20.0.3 \n', probe = 'self 172.20.0.3:5432\nprobe done\n', endpoint = 'unix:///var/run/docker.sock\n',
+} = {}) {
+  return (args, opts) => {
+    if (args[0] === 'version') return version
+    if (args[0] === 'info') return os
+    if (args[0] === 'context' && args[1] === 'inspect') return endpoint
+    if (args[0] === 'network' && args[1] === 'inspect') return gateway
+    if (args[0] === 'inspect') return args.at(-1) === 'qa-pg-pr' ? pr : base
+    if (args[0] === 'run' && args.includes('qa-probe-pr')) return typeof probe === 'function' ? probe(opts) : probe
+    return null
+  }
+}
+
+const probeRun = exec => runs(exec).find(c => valueOf(c.args, '--name') === 'qa-probe-pr')
+// The probe's own arguments: port, path, expected body, the host addresses,
+// `--`, the addresses it only connects to, `--`, then its own pane's
+// database, which it must reach.
+const probeArgs = call => call.args.slice(call.args.indexOf('probe') + 1)
+
+test('the probe runs on the PR network once both databases exist and before any migrate, gone when done, with no ports, mounts or capabilities', async () => {
+  const s = makeSession({ answer: probeDocker() })
+  const verdicts = []
+  s.deps.checkIsolation = async ({ stage, signal }) => {
+    if (stage === 'panes') verdicts.push(await s.provisioner.isolation({ signal, canary: CANARY }))
+  }
+  await bootSession(s.deps, 7)
+  assert.deepEqual(verdicts, [{ verdict: 'isolated', reasons: [] }])
+  const calls = docker(s.exec).map(c => c.args.join(' '))
+  const at = calls.findIndex(c => c.startsWith('run ') && c.includes('--name qa-probe-pr'))
+  for (const before of ['network create --label qa-conductor-session qa-session-pr', 'run -d --name qa-pg-base', 'run -d --name qa-pg-pr']) {
+    const i = calls.findIndex(c => c.startsWith(before))
+    assert.ok(i !== -1 && i < at, `${before} (${i}) before the probe (${at})`)
+  }
+  const firstMigrate = calls.findIndex(c => c.includes('--name qa-migrate-'))
+  assert.ok(firstMigrate > at, `the probe (${at}) before any migrate (${firstMigrate})`)
+
+  const { args } = probeRun(s.exec)
+  assert.equal(args[1], '--rm')
+  assert.equal(valueOf(args, '--network'), 'qa-session-pr')
+  assert.equal(valueOf(args, '--label'), 'qa-conductor-session')
+  assert.equal(valueOf(args, '--cap-drop'), 'ALL')
+  for (const flag of ['-p', '--publish', '-v', '--volume', '--mount', '--env-file', '-e', '--privileged']) assert.equal(args.includes(flag), false, flag)
+  const own = probeArgs(probeRun(s.exec))
+  assert.deepEqual(own.slice(0, 3), ['3100', '/__qa/canary/n0nce', 'qa-canary n0nce'])
+  const sep = own.indexOf('--')
+  const hosts = own.slice(3, sep)
+  for (const host of [
+    'host.docker.internal', 'gateway.docker.internal', 'host.containers.internal', '192.168.65.254', '192.168.127.254', '10.0.2.2', '172.20.0.1',
+    // Lima (colima, Rancher Desktop on Linux): its name, its fixed host
+    // address, and Rancher Desktop's name
+    'host.lima.internal', '192.168.5.2', 'host.rancher-desktop.internal',
+  ]) assert.ok(hosts.includes(host), host)
+  assert.deepEqual(own.slice(sep + 1), ['172.19.0.2:5432', '--', '172.20.0.3:5432'], 'the base pane\'s database, then the PR pane\'s own, by address')
+  assert.equal(probeRun(s.exec).timeout, 30_000)
+
+  // every address the base database has, on every network it joined
+  const multi = makeSession({ answer: probeDocker({ base: '172.19.0.2 10.9.0.4 \n', pr: '172.20.0.3 10.8.0.5 \n' }) })
+  await multi.provisioner.isolation({ canary: CANARY })
+  const multiArgs = probeArgs(probeRun(multi.exec))
+  assert.deepEqual(multiArgs.slice(multiArgs.indexOf('--') + 1), ['172.19.0.2:5432', '10.9.0.4:5432', '--', '172.20.0.3:5432', '10.8.0.5:5432'])
+
+  // a dual-stack network: the IPv6 addresses too, as targets and as the control
+  const dual = makeSession({ answer: probeDocker({ base: '172.19.0.2 fd00:19::2 \n', pr: '172.20.0.3 fd00:20::3 \n' }) })
+  await dual.provisioner.isolation({ canary: CANARY })
+  const dualArgs = probeArgs(probeRun(dual.exec))
+  assert.deepEqual(dualArgs.slice(dualArgs.indexOf('--') + 1), ['172.19.0.2:5432', 'fd00:19::2:5432', '--', '172.20.0.3:5432', 'fd00:20::3:5432'])
+})
+
+test('the probe\'s verdict: reachable on any hit, unknown when it can\'t tell, isolated otherwise', async () => {
+  const podmanInfo = Object.assign(new Error('docker info: Command failed'), {
+    stderr: 'Emulate Docker CLI using podman. Create /etc/containers/nodocker to quiet msg.\nError: template: info:1:2: executing "info" at <.OperatingSystem>: can\'t evaluate field OperatingSystem in type *define.Info\n',
+  })
+  const dual = { base: '172.19.0.2 fd00:19::2 \n', pr: '172.20.0.3 fd00:20::3 \n' }
+  const cases = [
+    [{}, 'isolated', []],
+    // The probe must show it could reach something, its own pane's
+    // database: tools missing or broken in the image (no /dev/tcp, say)
+    // print `probe done` and nothing else.
+    [{ probe: 'probe done\n' }, 'unknown', [/^the probe couldn't reach the PR pane's own database over IPv4 \(172\.20\.0\.3:5432\), so its IPv4 misses prove nothing$/]],
+    [{ probe: 'listener 10.0.2.2\nprobe done\n' }, 'reachable', [/10\.0\.2\.2:3100/]],
+    [{ pr: '\n' }, 'unknown', [/^could not find the panes' addresses: qa-pg-pr has none/]],
+    // a preflight that finds a tool missing ends the run before any probing
+    [{ probe: Object.assign(new Error('docker run: Command failed'), { stderr: 'the probe needs timeout, grep and cat, and a timeout that takes its seconds first\n' }) }, 'unknown', [/^the probe couldn't run: the probe needs timeout, grep and cat/]],
+    // a run that didn't end in time
+    [{ probe: Object.assign(new Error('docker run: Command failed'), { killed: true, signal: 'SIGTERM' }) }, 'unknown', [/^the probe didn't finish within 30 s/]],
+    // the podman-docker shim: no OperatingSystem in its info, and a banner
+    [{ version: 'Client: Podman Engine\nVersion: 5.2.0\n', os: podmanInfo }, 'reachable', [/^Podman's networks don't keep one pane's containers from the other's/]],
+    [{ os: podmanInfo }, 'unknown', [/^could not tell the container runtime: Error: template: info/]],
+    [{ probe: 'listener host.docker.internal\nself 172.20.0.3:5432\nprobe done\n' }, 'reachable', [/^the PR pane reached this conductor at host\.docker\.internal:3100, so it can reach the host's loopback, where the base app is published/]],
+    [{ probe: 'open 172.19.0.2:5432\nself 172.20.0.3:5432\nprobe done\n' }, 'reachable', [/^the PR pane reached the base pane's database at 172\.19\.0\.2:5432/]],
+    [{ probe: 'listener 10.0.2.2\nopen 172.19.0.2:5432\nself 172.20.0.3:5432\nprobe done\n' }, 'reachable', [/10\.0\.2\.2:3100/, /172\.19\.0\.2:5432/]],
+    // a hit before it stopped still counts
+    [{ probe: 'listener 10.0.2.2\n' }, 'reachable', [/10\.0\.2\.2:3100/, /^the probe didn't finish/]],
+    [{ os: 'Docker Desktop\n', probe: new Error('no bash') }, 'reachable', [/^Docker Desktop/, /^the probe couldn't run: no bash/]],
+    [{ probe: '' }, 'unknown', [/^the probe didn't finish/]],
+    [{ probe: new Error('docker run: Command failed: exec: "bash": executable file not found in $PATH') }, 'unknown', [/^the probe couldn't run: .*bash/]],
+    [{ os: 'Docker Desktop\n' }, 'reachable', [/^Docker Desktop forwards host\.docker\.internal to the host's loopback/]],
+    [{ version: 'Client: Podman Engine\nServer: Podman Engine\n' }, 'reachable', [/^Podman's networks don't keep one pane's containers from the other's/]],
+    [{ os: new Error('Cannot connect to the Docker daemon') }, 'unknown', [/^could not tell the container runtime: Cannot connect/]],
+    [{ gateway: new Error('No such network') }, 'unknown', [/^could not find the panes' addresses: No such network/]],
+    [{ base: '\n' }, 'unknown', [/^could not find the panes' addresses: qa-pg-base has none/]],
+    // no daemon to ask at all
+    [{ version: new Error('Cannot connect to the Docker daemon') }, 'unknown', [/^could not tell the container runtime: Cannot connect/]],
+    // A daemon on another host publishes the pane apps there, not on this
+    // conductor's loopback: the probe can't speak for them. Only the scheme
+    // and host are shown.
+    [{ endpoint: 'tcp://10.0.0.5:2376\n' }, 'unknown', [/^the Docker daemon is at tcp:\/\/10\.0\.0\.5, which may not be this host, so the probe can't speak for this host's loopback$/]],
+    [{ endpoint: 'ssh://me@build-box\n' }, 'unknown', [/^the Docker daemon is at ssh:\/\/build-box, which may not be this host/]],
+    [{ endpoint: 'npipe:////./pipe/docker_engine\n' }, 'isolated', []],
+    // Dual-stack: each family's misses count only once its own control hit.
+    // An IPv4 self hit vouches for nothing over IPv6, nor the reverse.
+    [{ ...dual, probe: 'self 172.20.0.3:5432\nprobe done\n' }, 'unknown', [/^the probe couldn't reach the PR pane's own database over IPv6 \(fd00:20::3:5432\), so its IPv6 misses prove nothing$/]],
+    [{ ...dual, probe: 'self fd00:20::3:5432\nprobe done\n' }, 'unknown', [/^the probe couldn't reach the PR pane's own database over IPv4 \(172\.20\.0\.3:5432\), so its IPv4 misses prove nothing$/]],
+    [{ ...dual, probe: 'self 172.20.0.3:5432\nself fd00:20::3:5432\nprobe done\n' }, 'isolated', []],
+    [{ ...dual, probe: 'open fd00:19::2:5432\nself 172.20.0.3:5432\nprobe done\n' }, 'reachable', [/fd00:19::2:5432/]],
+    [{ endpoint: new Error('unknown command "context"') }, 'unknown', [/^could not tell where the Docker daemon runs: unknown command/]],
+    // a hit in a run that then failed or was killed still counts
+    [{ probe: Object.assign(new Error('docker run: Command failed'), { killed: true, signal: 'SIGKILL', stdout: 'listener 10.0.2.2\n' }) }, 'reachable', [/10\.0\.2\.2:3100/, /^the probe didn't finish within 30 s/]],
+    [{ probe: Object.assign(new Error('docker run: Command failed'), { code: 1, stdout: 'open 172.19.0.2:5432\n', stderr: 'boom\n' }) }, 'reachable', [/172\.19\.0\.2:5432/, /^the probe couldn't run: boom/]],
+  ]
+  for (const [docker, verdict, reasons] of cases) {
+    const s = makeSession({ answer: probeDocker(docker) })
+    const out = await s.provisioner.isolation({ canary: CANARY })
+    assert.equal(out.verdict, verdict, JSON.stringify(docker))
+    assert.equal(out.reasons.length, reasons.length, `${JSON.stringify(docker)}: ${out.reasons.join(' | ')}`)
+    reasons.forEach((re, i) => assert.match(out.reasons[i], re, JSON.stringify(docker)))
+  }
+})
+
+test('the probe doesn\'t run once the boot is aborted, and a teardown removes one still running', async () => {
+  const s = makeSession({ answer: probeDocker() })
+  const ac = new AbortController()
+  ac.abort()
+  await assert.rejects(s.provisioner.isolation({ signal: ac.signal, canary: CANARY }), err => err.name === 'AbortError')
+  assert.equal(probeRun(s.exec), undefined)
+  // nor once it is aborted while the probe's addresses are looked up
+  const late = new AbortController()
+  const lookup = probeDocker()
+  const t = makeSession({ answer: args => { if (args[0] === 'inspect') late.abort(); return lookup(args) } })
+  await assert.rejects(t.provisioner.isolation({ signal: late.signal, canary: CANARY }), err => err.name === 'AbortError')
+  assert.equal(probeRun(t.exec), undefined)
+  await s.provisioner.teardown({ paneRef: { role: 'pr' } })
+  assert.deepEqual(docker(s.exec).map(c => c.args.join(' ')).at(-2), 'rm -f -v qa-app-pr qa-migrate-pr qa-probe-pr qa-pg-pr')
+})
+
+// The probe's script, run here with bash against loopback listeners: one that
+// answers the canary, one that answers something else, a port that's open
+// and one that's closed.
+test('the probe script reports the listener that answers the canary and the address that accepts a connection, and finishes', async () => {
+  const { createServer } = await import('node:http')
+  const net = await import('node:net')
+  const { execFile } = await import('node:child_process')
+  const { mkdtempSync, writeFileSync, chmodSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const s = makeSession({ answer: probeDocker() })
+  await s.provisioner.isolation({ canary: CANARY })
+  const call = probeRun(s.exec)
+  const script = valueOf(call.args, '-c')
+
+  const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port)))
+  const canary = createServer((req, res) => res.end(req.url === CANARY.path ? `${CANARY.expect}\n` : 'nope'))
+  const other = createServer((req, res) => res.end('some other server'))
+  const open = net.createServer(socket => socket.end())
+  const closed = net.createServer()
+  const [canaryPort, otherPort, openPort, closedPort] = [await listen(canary), await listen(other), await listen(open), await listen(closed)]
+  await new Promise(resolve => closed.close(resolve)) // nothing listens there now
+  // `timeout` comes with the probe image's coreutils; macOS has none
+  const shim = mkdtempSync(join(tmpdir(), 'qa-probe-'))
+  writeFileSync(join(shim, 'timeout'), '#!/bin/sh\nshift\nexec "$@"\n')
+  chmodSync(join(shim, 'timeout'), 0o755)
+  const runScript = (port, targets, selves = [`127.0.0.1:${openPort}`]) => new Promise((resolve, reject) => {
+    execFile('bash', ['-c', script, 'probe', String(port), CANARY.path, CANARY.expect, '127.0.0.1', '--', ...targets, '--', ...selves], {
+      env: { ...process.env, PATH: `${shim}:${process.env.PATH}` }, timeout: 20_000,
+    }, (err, stdout) => {
+      if (err) return reject(err)
+      // `probe done` comes last: in a --rm container, nothing still running
+      // when bash exits gets to report
+      const lines = stdout.split('\n').filter(Boolean)
+      if (lines.at(-1) !== 'probe done') return reject(new Error(`probe done is not last:\n${stdout}`))
+      resolve(lines.sort())
+    })
+  })
+  try {
+    assert.deepEqual(await runScript(canaryPort, [`127.0.0.1:${openPort}`, `127.0.0.1:${closedPort}`]), [
+      'listener 127.0.0.1', `open 127.0.0.1:${openPort}`, 'probe done', `self 127.0.0.1:${openPort}`,
+    ])
+    assert.deepEqual(await runScript(otherPort, []), ['probe done', `self 127.0.0.1:${openPort}`], 'another server on the port is no hit')
+    assert.deepEqual(await runScript(closedPort, [`127.0.0.1:${closedPort}`]), ['probe done', `self 127.0.0.1:${openPort}`])
+    assert.deepEqual(await runScript(closedPort, [], [`127.0.0.1:${closedPort}`]), ['probe done'], 'its own database not reached: no self line')
+    // An IPv6 address goes bare, as `docker inspect` gives it: the script
+    // splits the port off at the last colon. Written out in full, so a
+    // split at the first colon would try host `0` instead. Where this host
+    // has ::1.
+    const open6 = net.createServer(socket => socket.end())
+    const v6 = await new Promise(resolve => {
+      open6.once('error', () => resolve(null))
+      open6.listen(0, '::1', () => resolve(open6.address().port))
+    })
+    if (v6 !== null) {
+      try {
+        const full = `0:0:0:0:0:0:0:1:${v6}`
+        assert.deepEqual(await runScript(closedPort, [full], [full]), [`open ${full}`, 'probe done', `self ${full}`])
+      } finally { open6.close() }
+    }
+  } finally {
+    for (const server of [canary, other, open]) server.close()
+    rmSync(shim, { recursive: true, force: true })
+  }
+})
+
+// The probe's image may lack a tool, or have one that works otherwise: no
+// `timeout` (macOS has none), an old BusyBox one that wants `-t`, no `grep`.
+// Each failure inside the script would otherwise go unseen: every connect
+// "fails", and the probe ends in `probe done` with nothing found. So it
+// checks its tools first and stops, which the verdict reads as unknown.
+test('the probe script stops before probing when a tool it needs is missing or different, and the verdict is unknown', async () => {
+  const { execFile } = await import('node:child_process')
+  const { mkdtempSync, writeFileSync, chmodSync, rmSync, symlinkSync, existsSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join, delimiter } = await import('node:path')
+  const which = name => process.env.PATH.split(delimiter).map(dir => join(dir, name)).find(p => existsSync(p))
+  const s = makeSession({ answer: probeDocker() })
+  await s.provisioner.isolation({ canary: CANARY })
+  const script = valueOf(probeRun(s.exec).args, '-c')
+
+  const gnuTimeout = '#!/bin/sh\nshift\nexec "$@"\n'
+  const oldBusyBox = '#!/bin/sh\n[ "$1" = -t ] || { echo "timeout: invalid option" >&2; exit 1; }\nshift 2\nexec "$@"\n'
+  // a tool that is there but does nothing: the listener pipes through cat
+  // into grep, so the preflight does too
+  const silent = '#!/bin/sh\nexit 0\n'
+  const finds = '#!/bin/sh\nexit 1\n'
+  const kits = {
+    'no timeout': { tools: ['cat', 'grep'] },
+    'an old BusyBox timeout': { tools: ['cat', 'grep'], shims: { timeout: oldBusyBox } },
+    'no grep': { tools: ['cat'], shims: { timeout: gnuTimeout } },
+    'no cat': { tools: ['grep'], shims: { timeout: gnuTimeout } },
+    'a cat that copies nothing': { tools: ['grep'], shims: { timeout: gnuTimeout, cat: silent } },
+    'a grep that finds nothing': { tools: ['cat'], shims: { timeout: gnuTimeout, grep: finds } },
+  }
+  const dirs = []
+  try {
+    for (const [kit, { tools, shims = {} }] of Object.entries(kits)) {
+      const dir = mkdtempSync(join(tmpdir(), 'qa-probe-kit-'))
+      dirs.push(dir)
+      for (const tool of ['bash', ...tools]) symlinkSync(which(tool), join(dir, tool))
+      for (const [name, body] of Object.entries(shims)) { writeFileSync(join(dir, name), body); chmodSync(join(dir, name), 0o755) }
+      const timeout = shims.timeout
+      // what a shim execs to show it works
+      if (timeout) symlinkSync(which('true'), join(dir, 'true'))
+      const err = await new Promise(resolve => {
+        execFile(join(dir, 'bash'), ['-c', script, 'probe', '3100', CANARY.path, CANARY.expect, '127.0.0.1', '--', '--', '127.0.0.1:1'], {
+          env: { PATH: dir }, timeout: 20_000,
+        }, (error, stdout, stderr) => resolve(Object.assign(error ?? new Error('exited 0'), { stdout, stderr })))
+      })
+      assert.equal(err.code, 3, `${kit}: ${err.message}`)
+      assert.doesNotMatch(err.stdout, /probe done/, kit)
+      assert.match(err.stderr, /^the probe needs timeout, grep and cat, and a timeout that takes its seconds first/, kit)
+      // as docker run reports it, the verdict
+      const t = makeSession({ answer: probeDocker({ probe: Object.assign(new Error('docker run: Command failed'), { stderr: err.stderr }) }) })
+      const out = await t.provisioner.isolation({ canary: CANARY })
+      assert.equal(out.verdict, 'unknown', kit)
+    }
+  } finally {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// The docker CLI under a wedged daemon, or passing SIGTERM on to a bash
+// that ignores it: a real child that ignores SIGTERM, run with the options
+// runProbe gives, through the real exec wrapper.
+test('a probe that doesn\'t finish within its time is killed and its container removed, and the verdict is unknown', async () => {
+  const { makeExecFileFn } = await import('../lib/exec.mjs')
+  const stubborn = opts => makeExecFileFn()(process.execPath, ['-e', "process.on('SIGTERM', () => {}); setTimeout(() => {}, 20000)"], opts).then(r => r.stdout, err => err)
+  const s = makeSession({ answer: probeDocker({ probe: stubborn }), provisionerOptions: { probeTimeoutMs: 300 } })
+  const began = Date.now()
+  const out = await s.provisioner.isolation({ canary: CANARY })
+  assert.ok(Date.now() - began < 5_000, `${Date.now() - began} ms`)
+  assert.deepEqual(out, { verdict: 'unknown', reasons: ['the probe didn\'t finish within 300 ms, so it can\'t say what the PR pane reaches'] })
+  assert.deepEqual([probeRun(s.exec).timeout, probeRun(s.exec).killSignal], [300, 'SIGKILL'])
+  assert.equal(docker(s.exec).at(-1).args.join(' '), 'rm -f -v qa-probe-pr')
+
+  // an exec that never settles at all is bounded too
+  const never = makeSession({ answer: probeDocker({ probe: () => new Promise(() => {}) }), provisionerOptions: { probeTimeoutMs: 100 } })
+  const stuck = await never.provisioner.isolation({ canary: CANARY })
+  assert.equal(stuck.verdict, 'unknown')
+  assert.match(stuck.reasons[0], /^the probe didn't finish within 100 ms/)
+  assert.equal(docker(never.exec).at(-1).args.join(' '), 'rm -f -v qa-probe-pr')
+
+  // 30 s unless told otherwise, said in seconds; and the boot's signal goes along
+  const ac = new AbortController()
+  const plain = makeSession({ answer: probeDocker() })
+  await plain.provisioner.isolation({ signal: ac.signal, canary: CANARY })
+  assert.deepEqual([probeRun(plain.exec).timeout, probeRun(plain.exec).signal], [30_000, ac.signal])
+  const late = makeSession({ answer: probeDocker({ probe: Object.assign(new Error('docker run: Command failed'), { killed: true, signal: 'SIGKILL' }) }) })
+  assert.match((await late.provisioner.isolation({ canary: CANARY })).reasons[0], /^the probe didn't finish within 30 s/)
+})
+
+// A teardown or takeover mid-probe aborts it: the run stops, and the boot
+// with it (the PR pane's teardown removes the container).
+test('a probe aborted mid-run rejects as aborted', async () => {
+  const ac = new AbortController()
+  const s = makeSession({
+    answer: probeDocker({
+      probe: opts => new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })))),
+    }),
+  })
+  const running = s.provisioner.isolation({ signal: ac.signal, canary: CANARY })
+  setTimeout(() => ac.abort(), 20)
+  await assert.rejects(running, err => err.name === 'AbortError')
+})

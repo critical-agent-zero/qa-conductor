@@ -32,6 +32,7 @@ In scope is any way around one of the defences the README's [Security](README.md
 - **the request guards**: the `Host` allowlist, the harness API's same-origin and harness-origin checks, its JSON-only writes, and the pane request guard;
 - **the per-browser capability**: a harness API route or a pane served without an enrolled browser's token or pane cookie, a browser enrolled while a session's PR code can be running, without an invite, or a token, pane cookie or ticket that reaches a pane app or a page other than the harness;
 - **the framing rules**: another page framing the harness, or a pane outside the harness origin and `QA_FRAME_ANCESTORS`, or driving a pane's mirror bridge;
+- **the isolation verdict**: a session reported `isolated` although its PR pane can reach the base pane, or the canary route answering anything but a check's own path;
 - **cookie isolation**: a pane app that gets a cookie other than its own jar's and the ones `QA_FORWARD_CLIENT_COOKIES` names, or a cookie an earlier session's app set;
 - **token handling**: `GITHUB_QA_TOKEN`, `QA_GHCR_TOKEN` or the conductor's own environment reaching a pane's process, a page, a log line or the verdict comment;
 - **pane isolation** in `adapters/provisioner-docker`, on Docker Engine with its default iptables rules: the PR pane's containers reaching the base pane's other than through the host ([Known limits](README.md#known-limits)), or one pane's generated database password reaching the other pane ([its section](README.md#built-in-adaptersprovisioner-docker-docker-provisioner)).
