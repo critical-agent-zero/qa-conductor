@@ -48,6 +48,7 @@ function withCap(port, headers) {
 function makeWorld({
   hang = {}, failAt = null, sweepGate = null, sweepFails = false, provisioner: provisionerOverrides = {},
   cfg: cfgOverrides = {}, readBaseEnv: readBaseEnvOverride = null, exposure = null, logThrowsOn = null, enrolled = true,
+  pacing = { retryGapMs: 0, enrolWaitMs: 0 },
 } = {}) {
   const calls = []
   const appHits = []
@@ -133,7 +134,7 @@ function makeWorld({
   }
   const quiet = { log: record(logLines), error: record(errorLines) }
   const capability = enrolled ? createCapability() : undefined
-  const conductor = startConductor({ cfg, github, fsx, adapters, readBaseEnv, log: quiet, ...(enrolled ? { capability } : {}) })
+  const conductor = startConductor({ cfg, github, fsx, adapters, readBaseEnv, log: quiet, pacing, ...(enrolled ? { capability } : {}) })
   if (exposure) exposure.servers = conductor.servers
   // The enrolled browser's token, and its pane cookie under the name the
   // conductor reads: the harness origin as the conductor resolves it, in its
@@ -2457,6 +2458,101 @@ test('a teardown that fails shuts enrolment until one succeeds: the cleanup trie
     await waitFor(async () => (await enrolment(port)) === 'open')
     assert.equal(teardowns(), 8)
   } finally { c.stop() }
+})
+
+const SWEEP_FAILED = 'the startup cleanup failed: a try to enrol runs it again, at most once every few seconds'
+const TEARDOWN_FAILED = 'the last teardown failed: a try to enrol runs it again, at most once every few seconds'
+
+// Anything on loopback may try to enrol: tries in a loop must not keep the
+// Provisioner sweeping or tearing down back to back.
+test('tries to enrol run a failed sweep or teardown again at most once every five seconds', async () => {
+  let t = 1_000_000
+  const swept = makeWorld({ sweepFails: true, pacing: { now: () => t, enrolWaitMs: 0 } })
+  const sweeps = () => swept.calls.filter(x => x[0] === 'sweep').length
+  try {
+    const port = await harnessPort(swept.c)
+    await waitFor(() => swept.errorLines.some(l => l.includes('startup sweep failed')))
+    assert.equal(await enrolment(port), SWEEPING, 'the first try runs it again')
+    await waitFor(() => swept.errorLines.filter(l => l.includes('startup sweep failed')).length === 2)
+    for (let i = 0; i < 5; i++) assert.equal(await enrolment(port), SWEEP_FAILED)
+    t += 4_999
+    assert.equal(await enrolment(port), SWEEP_FAILED)
+    assert.equal(sweeps(), 2, 'none again within five seconds')
+    t += 1
+    assert.equal(await enrolment(port), SWEEPING)
+    assert.equal(sweeps(), 3)
+  } finally { swept.c.stop() }
+
+  const torn = makeWorld({
+    provisioner: { teardown: async ({ paneRef }) => { torn.calls.push(['teardown', paneRef.role]); if (paneRef.role === 'pr') throw new Error('docker is down') } },
+    pacing: { now: () => t, enrolWaitMs: 0 },
+  })
+  const teardowns = () => torn.calls.filter(x => x[0] === 'teardown').length
+  try {
+    const port = await harnessPort(torn.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    await api(port, 'POST', '/api/teardown')
+    await waitFor(() => torn.errorLines.filter(l => l.includes('failed (pr: docker is down)')).length === 2)
+    assert.equal(await enrolment(port), CLEANING)
+    await waitFor(() => torn.errorLines.filter(l => l.includes('failed (pr: docker is down)')).length === 3)
+    for (let i = 0; i < 5; i++) assert.equal(await enrolment(port), TEARDOWN_FAILED)
+    assert.equal(teardowns(), 6)
+    t += 5_000
+    assert.equal(await enrolment(port), CLEANING)
+    assert.equal(teardowns(), 8)
+  } finally { torn.c.stop() }
+})
+
+// The try that runs a failed sweep or teardown again, or finds one running,
+// waits for it a moment, so it can enrol once that succeeds.
+test('a try to enrol waits up to three seconds for the sweep or teardown in flight', async () => {
+  let sweeps = 0
+  const second = deferred()
+  const swept = makeWorld({ provisioner: { sweep: async () => { if (++sweeps === 1) throw new Error('docker unavailable'); await second.promise } }, pacing: {} })
+  try {
+    const port = await harnessPort(swept.c)
+    await waitFor(() => swept.errorLines.some(l => l.includes('startup sweep failed')))
+    const trying = enrolment(port)
+    await waitFor(() => sweeps === 2)
+    await new Promise(r => setTimeout(r, 100))
+    second.resolve()
+    assert.equal(await trying, 'open', 'the try that ran it again enrols')
+  } finally { swept.c.stop() }
+
+  let failing = 2
+  const cleared = deferred()
+  const torn = makeWorld({
+    provisioner: {
+      teardown: async ({ paneRef }) => {
+        if (paneRef.role !== 'pr') return
+        if (failing > 0) { failing--; throw new Error('docker is down') }
+        await cleared.promise
+      },
+    },
+    pacing: {},
+  })
+  try {
+    const port = await harnessPort(torn.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    await api(port, 'POST', '/api/teardown')
+    await waitFor(() => torn.errorLines.filter(l => l.includes('failed (pr: docker is down)')).length === 2)
+    const trying = enrolment(port)
+    await new Promise(r => setTimeout(r, 100))
+    cleared.resolve()
+    assert.equal(await trying, 'open')
+  } finally { torn.c.stop() }
+
+  // no longer than enrolWaitMs, with the sweep still running
+  const stuck = makeWorld({ sweepGate: deferred(), pacing: { enrolWaitMs: 150 } })
+  try {
+    const port = await harnessPort(stuck.c)
+    const began = Date.now()
+    assert.equal(await enrolment(port), SWEEPING)
+    const took = Date.now() - began
+    assert.ok(took >= 140 && took < 2_000, `${took} ms`)
+  } finally { stuck.c.stop() }
 })
 
 test('a failed boot that tore its panes down leaves enrolment open; one whose teardown failed gets a cleanup first', async () => {
