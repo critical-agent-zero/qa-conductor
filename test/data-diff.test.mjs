@@ -175,7 +175,7 @@ test('diffSnapshots: a truncated collection reports only its count; added and dr
   const big = (count, extra) => snap({ big: { key: ['id'], rows: [{ id: 1 }], count, truncated: true, ...extra } })
   const t = diffSnapshots(big(500), big(480)).collections.big
   assert.deepEqual([t.status, t.truncated, t.inserted, t.deleted, t.updated, t.countBefore, t.countAfter], ['changed', true, [], [], [], 500, 480])
-  assert.equal(diffSnapshots(big(500), big(500)).collections.big.status, 'same', 'no claim either way past the count')
+  assert.equal(diffSnapshots(big(500), big(500)).collections.big.status, 'unknown', 'no claim either way past the count')
   const before = snap({ a: { key: ['id'], fields: ['id', 'x'], rows: [{ id: 1, x: 1 }] }, gone: { key: ['id'], rows: [{ id: 1 }] } })
   const after = snap({ a: { key: ['id'], fields: ['id', 'y'], rows: [{ id: 1, y: 0 }] }, fresh: { key: ['id'], rows: [{ id: 7 }] } })
   const d = diffSnapshots(before, after).collections
@@ -262,7 +262,7 @@ test('flagChanges: deletes, emptied and dropped collections, dropped fields, mas
     ['saved_carts', 'delete', 'red', 3, 0],
     ['saved_carts', 'emptied', 'red', 1, 0],
   ])
-  assert.ok(flags.every(f => !('field' in f)))
+  assert.deepEqual(flags.filter(f => 'field' in f).map(f => [f.kind, f.field]), [['column-dropped', 'topic']])
   // a cleared field is amber at most, and names the field
   const cleared = flagChanges(diffSnapshots(seed, seed), diffSnapshots(seed, s({ ...seedCollections, messages: { key: ['id'], fields: ['id', 'topic', 'deleted_at'], rows: [{ id: 1, topic: '', deleted_at: null }] } })), rules, { trusted: false })
   assert.deepEqual(cleared.map(f => [f.collection, f.kind, f.severity, f.field, f.pr]), [['messages', 'cleared', 'amber', 'topic', 1]])
@@ -452,7 +452,7 @@ test('divergence: a collection one pane dropped while the other changed it diffe
 
 test('names that Object.prototype has are ordinary names', () => {
   const odd = { constructor: { key: ['id'], rows: [{ id: 1 }] }, toString: { key: null, rows: [] } }
-  Object.defineProperty(odd, '__proto__', { value: { key: ['id'], rows: [{ id: 1, __proto__: 'x' }] }, enumerable: true })
+  Object.defineProperty(odd, '__proto__', { value: { key: ['id'], rows: [JSON.parse('{"id":1,"__proto__":"x"}')] }, enumerable: true })
   const before = snap({})
   const after = sanitizeSnapshot({ collections: odd }, { masker: masker(), rules: none })
   assert.deepEqual(Object.keys(after.collections).sort(), ['__proto__', 'constructor', 'toString'])
@@ -481,7 +481,7 @@ test('the thresholds\' edges, and volatile fields leave the key and the declared
   const mass = (n, changed, rules = none) => kindsOf(flagChanges(diffSnapshots(s(n, 0), s(n, 0)), diffSnapshots(s(n, 0), s(n, changed)), rules, { trusted: true }), 'mass-change').length
   assert.equal(mass(5, 2), 1, '2 of 5 is over 20% of a collection of 5')
   assert.equal(mass(30, 30, validateRules({ destructive: [{ collection: 'c', maxChanged: 30 }] })), 0, 'up to maxChanged is no mass change')
-  assert.equal(mass(30, 31 > 30 ? 30 : 0, validateRules({ destructive: [{ collection: 'c', maxChanged: 29 }] })), 1)
+  assert.equal(mass(30, 30, validateRules({ destructive: [{ collection: 'c', maxChanged: 29 }] })), 1)
   const v = snap({ c: { key: ['id', 'updated_at'], fields: ['id', 'updated_at', 'n'], rows: [{ id: 1, updated_at: 1, n: 1 }] } }, { volatile: [{ collection: 'c', fields: ['updated_at'] }] })
   assert.deepEqual([v.collections.c.key, v.collections.c.fields], [['id'], ['id', 'n']])
   // two cleared fields, in field order
