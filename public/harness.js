@@ -582,16 +582,18 @@ function inviteFromHash(hash) {
 
   // #8: each action a pane's bridge reports, mirrored or not, becomes a mark
   // in the session's action log: the pane and the kind of action, never the
-  // element or a value. At most one a pane every 100 ms, as the conductor
-  // keeps. The pane's own page can post such messages, so the log labels a
-  // mark as reported by that pane.
-  const lastMark = { base: 0, pr: 0 }
+  // element or a value. At most one of each kind a pane every 100 ms, as the
+  // conductor keeps: a click and the submit it sets off are two. The pane's
+  // own page can post such messages, so the log labels a mark as reported
+  // by that pane.
+  const lastMark = new Map()
   function markAction(pane, d) {
     const type = markType(d)
     if (type === null) return
     const now = Date.now()
-    if (now - lastMark[pane] < 100) return
-    lastMark[pane] = now
+    const kind = `${pane} ${type}`
+    if (now - (lastMark.get(kind) ?? 0) < 100) return
+    lastMark.set(kind, now)
     postJson('/actions/mark', { pane, type }).catch(() => {})
   }
 
