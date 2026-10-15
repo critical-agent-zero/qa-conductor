@@ -3524,7 +3524,7 @@ test('the action log keeps each forwarded request with no header, cookie, body o
   } finally { w.c.stop() }
 })
 
-test('marks: a pane and a kind of action, rate-limited, grouping the requests after them; refusals only counted', async () => {
+test('marks: a pane and a kind of action, rate-limited, in one sequence with the requests; refusals only counted', async () => {
   const { w, ports } = await readyWorld()
   try {
     const mark = body => raw(ports.harness, { method: 'POST', path: '/qa/api/actions/mark', headers: JSON_TYPE, body: JSON.stringify(body) })
@@ -3543,7 +3543,8 @@ test('marks: a pane and a kind of action, rate-limited, grouping the requests af
     const log = JSON.parse((await raw(ports.harness, { path: '/qa/api/actions' })).body)
     assert.deepEqual(log.marks.map(m => [m.pane, m.type]), [['base', 'click']])
     assert.deepEqual(Object.keys(log.marks[0]).sort(), ['at', 'pane', 'seq', 'type'])
-    assert.deepEqual(log.requests.map(r => [r.path, r.mark]), [['/cart', log.marks[0].seq]])
+    // the request after the mark, in one sequence
+    assert.deepEqual(log.requests.map(r => [r.path, r.seq > log.marks[0].seq]), [['/cart', true]])
     assert.deepEqual(log.refused, { base: {}, pr: { 'cross-site framing refused': 1 } })
     assert.deepEqual(log.marksDropped, { base: 1, pr: 0 })
     assert.doesNotMatch(JSON.stringify(log), /SECRET/)
