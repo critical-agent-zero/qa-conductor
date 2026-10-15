@@ -266,3 +266,20 @@ test('run as the container runs it: ready from its config, and a bad config exit
   // imported, as by these tests, it starts nothing
   assert.equal(process.env.PANE_FORWARDER, undefined)
 })
+
+// The conductor imports the file too (the Docker Provisioner checks the
+// allowlist with it): a PANE_FORWARDER in the conductor's own env must not
+// start a forwarder there. Only the file run as given to node -e runs.
+test('imported, it runs nothing, even with PANE_FORWARDER set', BOUNDED, async () => {
+  const child = spawn(process.execPath, ['--input-type=module', '-e', 'await import(process.env.FORWARDER_URL); console.log("imported")'], {
+    env: { PATH: process.env.PATH, FORWARDER_URL: new URL('../lib/forwarder.mjs', import.meta.url).href, PANE_FORWARDER: JSON.stringify({ proxy: { listen: 3128, allow: ['127.0.0.1'] } }) },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let out = ''
+  let err = ''
+  child.stdout.on('data', c => { out += c })
+  child.stderr.on('data', c => { err += c })
+  assert.equal(await exited(child), 0, err)
+  assert.equal(out.trim(), 'imported')
+  assert.doesNotMatch(err, /qa-forwarder/)
+})
