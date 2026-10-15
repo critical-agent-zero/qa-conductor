@@ -184,8 +184,21 @@ test('grouping: the nearest mark in the window, and the window\'s edge', () => {
   log.mark('base', 'submit') // at 10250: in the window, but further away
   log.record('pr', { at: 9_700, method: 'GET', path: '/edge', status: 200 }) // exactly 300 ms before a
   log.record('pr', { at: 9_699, method: 'GET', path: '/before', status: 200 }) // 301 ms before
+  log.record('pr', { at: 10_125, method: 'GET', path: '/tie', status: 200 }) // 125 ms from each
   const r = log.read(0).requests
-  assert.deepEqual(r.map(x => [x.path, x.mark]), [['/a', a.seq], ['/edge', a.seq], ['/before', null]])
+  assert.deepEqual(r.map(x => [x.path, x.mark]), [['/a', a.seq], ['/edge', a.seq], ['/before', null], ['/tie', a.seq]], 'a tie goes to the mark it started under')
+})
+
+// Marks stay in time order, which grouping relies on: a clock that steps
+// back is held at the last mark's time.
+test('a mark is never earlier than the one before it', () => {
+  const c = clock(1_000)
+  const log = createActionLog({ now: c.now })
+  log.mark('base', 'click')
+  c.tick(-200)
+  assert.equal(log.mark('pr', 'click').at, 1_000)
+  c.tick(500)
+  assert.equal(log.mark('pr', 'submit').at, 1_300)
 })
 
 // A request is numbered when it ends, but a mark up to 300 ms later can
@@ -195,12 +208,13 @@ test('a read after a sequence number gives again the earlier requests a newer ma
   const log = createActionLog({ now: c.now })
   log.record('base', { at: 900, method: 'POST', path: '/save', status: 303 })
   log.record('base', { at: 100, method: 'GET', path: '/old', status: 200 })
+  log.record('base', { at: 700, method: 'GET', path: '/edge', status: 200 })
   const first = log.read(0)
-  assert.deepEqual(first.requests.map(r => [r.path, r.mark]), [['/save', null], ['/old', null]])
+  assert.deepEqual(first.requests.map(r => [r.path, r.mark]), [['/save', null], ['/old', null], ['/edge', null]])
   c.tick(100)
   const click = log.mark('base', 'click') // at 1000
   const next = log.read(first.seq)
-  assert.deepEqual(next.requests.map(r => [r.path, r.mark]), [['/save', click.seq]], 'given again, regrouped; /old is too old to be')
+  assert.deepEqual(next.requests.map(r => [r.path, r.mark]), [['/save', click.seq], ['/edge', click.seq]], 'given again, regrouped; /old is too old to be')
   assert.deepEqual(next.marks.map(m => m.seq), [click.seq])
 })
 
@@ -217,4 +231,20 @@ test('read takes at most `limit` new requests, and says where to go on from', ()
   for (let i = 0; i < 2_500; i++) log.record('pr', { at: 10, method: 'GET', path: '/x', status: 200 })
   assert.equal(log.read(0).requests.length, 2_000)
   assert.equal(log.read(0, { limit: 9_999 }).requests.length, 2_000)
+})
+
+// A page groups only against the marks up to its `seq`, so a request never
+// names a mark the reader hasn't had; the next page gives that mark and the
+// request again, regrouped.
+test('a page never groups a request under a mark it does not give', () => {
+  const c = clock(1_000)
+  const log = createActionLog({ now: c.now })
+  log.record('base', { at: 900, method: 'POST', path: '/a', status: 200 }) // seq 1
+  log.record('base', { at: 950, method: 'POST', path: '/b', status: 200 }) // seq 2
+  const click = log.mark('base', 'click') // seq 3, at 1000: claims both
+  const page = log.read(0, { limit: 1 })
+  assert.deepEqual([page.requests.map(r => [r.path, r.mark]), page.marks, page.seq], [[['/a', null]], [], 1])
+  const rest = log.read(page.seq)
+  assert.deepEqual(rest.marks.map(m => m.seq), [click.seq])
+  assert.deepEqual(rest.requests.map(r => [r.path, r.mark]), [['/a', click.seq], ['/b', click.seq]])
 })

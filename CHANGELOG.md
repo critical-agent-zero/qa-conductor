@@ -65,7 +65,7 @@ What changed in each release, newest first. A 0.x minor version may break the in
   - **No values.** An entry keeps the method, the path, the status, the time and the bytes sent back: never a header, a cookie, a body or a query value. A query keeps its keys. A path segment that looks like a value (an email address, a `key=value` pair, a long number, a token) shows only its kind; that is a heuristic, and a short code can slip through. A request a guard refuses is only counted, by reason. A mark keeps the pane and the kind of action (`click`, `submit`, `change`, `enter`), never the element or what was typed.
   - **The running session's only.** It lives in memory from ready to the next boot or teardown, as the cookie jars do, and a request lands in the log of the session it started in. Nothing of it reaches the event stream, the conductor's log or GitHub.
   - **New:**
-    - routes: `GET /api/actions?after=N` and `POST /api/actions/mark`;
+    - routes: `GET /api/actions?after=N&limit=M`, read in pages of at most 2,000 requests, and `POST /api/actions/mark`;
     - the harness posts a mark for the clicks, submits, changes and Enters a pane reports, mirrored or not, at most one of each kind a pane every 100 ms;
     - `createPaneProxy` takes `recorder` and `onRefused`.
 
