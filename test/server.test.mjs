@@ -2218,6 +2218,9 @@ const API_ROUTES = [
   { method: 'POST', path: '/api/teardown', body: '{}' },
   { method: 'POST', path: '/api/invite', body: '{}' },
   { method: 'POST', path: '/api/pane-entry', body: '{"role":"base","to":"/"}' },
+  // the action log (#8)
+  { path: '/api/actions' }, { path: '/api/actions?after=0' },
+  { method: 'POST', path: '/api/actions/mark', body: '{"pane":"base","type":"click"}' },
   // the window is shut while a session runs
   { method: 'POST', path: '/api/enrol', body: '{}' },
   // a CORS preflight, and a HEAD
@@ -3392,5 +3395,120 @@ test('shared-host on macOS gives the declaration\'s reason alone', async () => {
     await api(port, 'POST', '/api/session', { pr: 7 })
     const st = await waitFor(async () => { const s = await api(port, 'GET', '/api/state'); return s.status === 'ready' && s })
     assert.deepEqual([st.isolation.verdict, st.isolation.reasons], ['shared-host', ['both panes run as one user on this host']])
+  } finally { w.c.stop() }
+})
+
+// --- #8: the action log -----------------------------------------------------------
+// What each pane's proxy forwarded, and the marks the harness posts, for the
+// running session only, with no value in them anywhere.
+
+async function readyWorld(opts) {
+  const w = makeWorld(opts)
+  const ports = await allPorts(w.c)
+  await api(ports.harness, 'POST', '/api/session', { pr: 7 })
+  await waitFor(async () => (await api(ports.harness, 'GET', '/api/state')).status === 'ready')
+  return { w, ports }
+}
+
+test('the action log keeps each forwarded request with no header, cookie, body or query value, in no answer or event', async () => {
+  const { w, ports } = await readyWorld()
+  try {
+    const before = (await api(ports.harness, 'GET', '/api/state')).lastActivity
+    await raw(ports.base, { path: '/page?token=abc123SECRETxyz', headers: { authorization: 'Bearer SECRET-bearer', cookie: 'sid=SECRET-sid' } })
+    await raw(ports.pr, { method: 'POST', path: '/cart/clear', headers: { 'content-type': 'text/plain' }, body: 'card=SECRET-card' })
+    await new Promise(r => setTimeout(r, 30))
+    const res = await raw(ports.harness, { path: '/qa/api/actions' })
+    assert.equal(res.headers['cache-control'], 'no-store')
+    const log = JSON.parse(res.body)
+    assert.equal(log.active, true)
+    assert.deepEqual(log.requests.map(r => [r.pane, r.method, r.path, r.status]), [['base', 'GET', '/page?token=…', 200], ['pr', 'POST', '/cart/clear', 200]])
+    const events = await sseEvents(ports.harness, evs => evs.some(e => e.kind === 'ready'))
+    for (const text of [res.body, JSON.stringify(events), JSON.stringify(await api(ports.harness, 'GET', '/api/state'))]) {
+      assert.doesNotMatch(text, /SECRET|abc123/)
+    }
+    assert.equal((await api(ports.harness, 'GET', '/api/state')).lastActivity > before, true, 'the pane requests were activity')
+    // reading the log is not
+    const active = (await api(ports.harness, 'GET', '/api/state')).lastActivity
+    await new Promise(r => setTimeout(r, 5))
+    await raw(ports.harness, { path: '/qa/api/actions?after=1' })
+    assert.equal((await api(ports.harness, 'GET', '/api/state')).lastActivity, active)
+  } finally { w.c.stop() }
+})
+
+test('marks: a pane and a kind of action, rate-limited, grouping the requests after them; refusals only counted', async () => {
+  const { w, ports } = await readyWorld()
+  try {
+    const mark = body => raw(ports.harness, { method: 'POST', path: '/qa/api/actions/mark', headers: JSON_TYPE, body: JSON.stringify(body) })
+    const first = await mark({ pane: 'base', type: 'click', selector: '#secret-selector', value: 'SECRET-typed' })
+    assert.deepEqual([first.status, JSON.parse(first.body)], [200, { recorded: true }])
+    assert.deepEqual(JSON.parse((await mark({ pane: 'base', type: 'click' })).body), { recorded: false }, 'within 100 ms')
+    for (const bad of [{ pane: 'both', type: 'click' }, { pane: 'base', type: 'keyup' }, {}, { pane: 'base' }]) {
+      const res = await mark(bad)
+      assert.equal(res.status, 400, JSON.stringify(bad))
+    }
+    await raw(ports.base, { path: '/cart' })
+    // another site's frame, which the guard refuses: counted, never logged
+    await raw(ports.pr, { path: '/x', cap: false, headers: { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe', referer: 'https://evil.example/' } })
+    await new Promise(r => setTimeout(r, 30))
+    const log = JSON.parse((await raw(ports.harness, { path: '/qa/api/actions' })).body)
+    assert.deepEqual(log.marks.map(m => [m.pane, m.type]), [['base', 'click']])
+    assert.deepEqual(Object.keys(log.marks[0]).sort(), ['at', 'pane', 'seq', 'type'])
+    assert.deepEqual(log.requests.map(r => [r.path, r.mark]), [['/cart', log.marks[0].seq]])
+    assert.deepEqual(log.refused, { base: {}, pr: { 'cross-site framing refused': 1 } })
+    assert.equal(log.marksDropped, 1)
+    assert.doesNotMatch(JSON.stringify(log), /SECRET/)
+    // a mark is no activity: PR code can post bridge messages
+    const active = (await api(ports.harness, 'GET', '/api/state')).lastActivity
+    await new Promise(r => setTimeout(r, 120))
+    assert.deepEqual(JSON.parse((await mark({ pane: 'pr', type: 'change' })).body), { recorded: true })
+    assert.equal((await api(ports.harness, 'GET', '/api/state')).lastActivity, active)
+  } finally { w.c.stop() }
+})
+
+test('the action log is the running session\'s: empty before ready, gone at a teardown and at the next boot', async () => {
+  const hang = { 8: deferred() }
+  const { w, ports } = await readyWorld({ hang })
+  const actions = async () => JSON.parse((await raw(ports.harness, { path: '/qa/api/actions' })).body)
+  const mark = () => raw(ports.harness, { method: 'POST', path: '/qa/api/actions/mark', headers: JSON_TYPE, body: '{"pane":"pr","type":"submit"}' })
+  try {
+    await raw(ports.base, { path: '/one' })
+    await new Promise(r => setTimeout(r, 30))
+    assert.equal((await actions()).requests.length, 1)
+    await api(ports.harness, 'POST', '/api/teardown')
+    const gone = await actions()
+    assert.deepEqual([gone.active, gone.requests, gone.marks], [false, [], []])
+    assert.equal((await mark()).status, 409, 'no session to mark')
+    // the next boot: nothing until it is ready, and nothing of the last
+    await api(ports.harness, 'POST', '/api/session', { pr: 8 })
+    assert.equal((await actions()).active, false)
+    assert.equal((await mark()).status, 409)
+    hang[8].resolve()
+    await waitFor(async () => (await api(ports.harness, 'GET', '/api/state')).status === 'ready')
+    const fresh = await actions()
+    assert.deepEqual([fresh.active, fresh.requests, fresh.seq], [true, [], 0])
+
+    // the same PR opened again, with no teardown: the boot drops the log too
+    await raw(ports.base, { path: '/two' })
+    await new Promise(r => setTimeout(r, 30))
+    assert.equal((await actions()).requests.length, 1)
+    hang[8] = deferred()
+    await api(ports.harness, 'POST', '/api/session', { pr: 8 })
+    const booting = await actions()
+    assert.deepEqual([booting.active, booting.requests], [false, []])
+    hang[8].resolve()
+  } finally { w.c.stop() }
+})
+
+test('POST /api/actions/mark sits behind the JSON, same-origin and shutdown checks', async () => {
+  const { w, ports } = await readyWorld()
+  try {
+    const path = '/qa/api/actions/mark'
+    const body = '{"pane":"base","type":"click"}'
+    assert.equal((await raw(ports.harness, { method: 'POST', path, headers: { 'content-type': 'text/plain' }, body })).status, 415)
+    assert.equal((await raw(ports.harness, { method: 'POST', path, headers: { ...JSON_TYPE, 'sec-fetch-site': 'cross-site' }, body })).status, 403)
+    const closing = w.c.shutdown()
+    const late = await raw(ports.harness, { method: 'POST', path, headers: JSON_TYPE, body }).catch(() => ({ status: 'closed' }))
+    assert.ok([503, 'closed'].includes(late.status), String(late.status))
+    await closing
   } finally { w.c.stop() }
 })

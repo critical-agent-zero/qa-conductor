@@ -63,6 +63,15 @@ function isolationLabel(isolation) {
   return { text: 'isolation unknown', warn: true, title }
 }
 
+// The kind of action a bridge event is, as the action log marks it (#8), or
+// null for one it doesn't: a click, a submit, a change, or Enter.
+function markType(event) {
+  const type = event && event.type
+  if (type === 'click' || type === 'submit' || type === 'change') return type
+  if (type === 'keydown' && event.key === 'Enter') return 'enter'
+  return null
+}
+
 // The ticket an invite link carries in its fragment (#enrol=<ticket>), else
 // null. The fragment never reaches a server or a Referer.
 function inviteFromHash(hash) {
@@ -548,6 +557,7 @@ function inviteFromHash(hash) {
     const pane = paneOf(ev.origin); if (!pane) return
     S.lastMsg[pane] = Date.now()
     if (d.kind === 'event') {
+      markAction(pane, d)
       if (!S.mirror) return
       if (d.type === 'scroll' && !S.scrollMirror) return
       const other = pane === 'base' ? 'pr' : 'base'
@@ -564,6 +574,21 @@ function inviteFromHash(hash) {
       announce(`Interaction not mirrored to ${pane === 'pr' ? 'PR' : 'base'} pane`)
     }
   })
+
+  // #8: each action a pane's bridge reports, mirrored or not, becomes a mark
+  // in the session's action log: the pane and the kind of action, never the
+  // element or a value. At most one a pane every 100 ms, as the conductor
+  // keeps. The pane's own page can post such messages, so the log labels a
+  // mark as reported by that pane.
+  const lastMark = { base: 0, pr: 0 }
+  function markAction(pane, d) {
+    const type = markType(d)
+    if (type === null) return
+    const now = Date.now()
+    if (now - lastMark[pane] < 100) return
+    lastMark[pane] = now
+    postJson('/actions/mark', { pane, type }).catch(() => {})
+  }
 
   function startDotPoll() {
     S.dotPoll = setInterval(() => {

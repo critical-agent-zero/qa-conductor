@@ -58,6 +58,16 @@ What changed in each release, newest first. A 0.x minor version may break the in
   - **`build-worktree` with an `install` step** makes every session's verdict `shared-host`, so `QA_REQUIRE_ISOLATION=1` refuses it before the build.
   - **A test that compares `/api/state` or the `ready` event whole** must add `isolation`. A test that compares `runPg`, `runMigrate` or `runApp`'s argv must add `--cap-drop NET_RAW`. A test that compares the PR pane's teardown must add `qa-probe-pr`.
 
+### The action log
+
+- **Each session keeps an action log:** what each pane's proxy forwarded to its app, and a mark for each action the panes reported. Requests group under the mark they most likely came from. It is the first part of #8's data checks. README's [Security](README.md#security) and [HTTP API](README.md#http-api-harness-port) have the details.
+  - **No values.** An entry keeps the method, the path, the status, the time and the bytes sent back: never a header, a cookie, a body or a query value. A query keeps its keys. A path segment that looks like a value (a token, an email address, a long number) shows only its kind. A request a guard refuses is only counted, by reason. A mark keeps the pane and the kind of action (`click`, `submit`, `change`, `enter`), never the element or what was typed.
+  - **The running session's only.** It lives in memory from ready to the next boot or teardown, as the cookie jars do, and a request lands in the log of the session it started in. Nothing of it reaches the event stream, the conductor's log or GitHub.
+  - **New:**
+    - routes: `GET /api/actions?after=N` and `POST /api/actions/mark`;
+    - the harness posts a mark for each click, submit, change or Enter a pane reports, mirrored or not;
+    - `createPaneProxy` takes `recorder` and `onRefused`.
+
 ### The Docker Provisioner
 
 - **The PR pane can no longer reach the base pane's database.** Both panes' containers joined one network, and both databases had the same superuser and password, which the PR pane's own `dsn` carried. So PR code, by mistake or on purpose, could change the base pane's data, or call the base app directly, and skew the comparison.

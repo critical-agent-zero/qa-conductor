@@ -636,3 +636,40 @@ test('a session view whose session ended or was opened again elsewhere notices o
   assert.equal(entries(), 4)
   assert.equal(b.location.hash, '#/', 'ended: back to the picker')
 })
+
+// #8: each action a pane's bridge reports becomes a mark in the session's
+// action log: the pane and the kind of action, never the element or a value.
+test('a click, submit, change or Enter a pane reports is marked, value-free, mirrored or not, at most one a pane each 100 ms', async () => {
+  const b = fakeBrowser({
+    hash: '#/pr/7',
+    stored: 'tok-1',
+    routes: {
+      'GET /qa/api/state': { body: { status: 'ready', pr: 7, panes: PANES } },
+      'POST /qa/api/pane-entry': entryRoute,
+      'POST /qa/api/actions/mark': { body: { recorded: true } },
+    },
+  })
+  await b.settle()
+  const [, , onMessage] = b.listeners.find(([name, type]) => name === 'window' && type === 'message')
+  const marks = () => b.log.filter(e => e[0] === 'fetch' && e[2] === '/qa/api/actions/mark').map(e => e[4])
+  const event = (origin, data) => onMessage({ origin, data: { qa: 1, kind: 'event', selector: '#card-number', value: '4111 SECRET', ...data } })
+  event(PANES.baseOrigin, { type: 'click' })
+  event(PANES.baseOrigin, { type: 'submit' }) // within 100 ms of the base pane's last
+  event(PANES.prOrigin, { type: 'submit' })
+  await new Promise(r => setTimeout(r, 110))
+  event(PANES.baseOrigin, { type: 'keydown', key: 'Escape' }) // not an action
+  event(PANES.baseOrigin, { type: 'input' }) // nor this
+  event(PANES.baseOrigin, { type: 'scroll' })
+  event(PANES.baseOrigin, { type: 'keydown', key: 'Enter' })
+  await new Promise(r => setTimeout(r, 110))
+  b.byId('mirrorBtn').onclick() // mirroring off: still marked
+  event(PANES.prOrigin, { type: 'change' })
+  // a message from anywhere else is no pane's
+  event('https://evil.example', { type: 'click' })
+  onMessage({ origin: PANES.prOrigin, data: { qa: 1, kind: 'nav', href: '/x' } })
+  await b.settle()
+  assert.deepEqual(marks(), [
+    { pane: 'base', type: 'click' }, { pane: 'pr', type: 'submit' }, { pane: 'base', type: 'enter' }, { pane: 'pr', type: 'change' },
+  ])
+  assert.doesNotMatch(JSON.stringify(b.log.filter(e => e[0] === 'fetch')), /SECRET|card-number/)
+})
