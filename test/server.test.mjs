@@ -2189,6 +2189,8 @@ function rawHead(port, { method = 'GET', path = '/', headers = {}, body = null }
       res.on('data', c => chunks.push(c))
       res.on('end', done)
     })
+    // a server that took an upgrade (101) answers here, not as a response
+    req.on('upgrade', (res, socket) => { socket.destroy(); resolve({ status: res.statusCode, headers: res.headers, body: '' }) })
     req.on('error', reject)
     if (body != null) req.write(body)
     req.end()
@@ -2220,6 +2222,8 @@ const API_ROUTES = [
   // a CORS preflight, and a HEAD
   { method: 'OPTIONS', path: '/api/session', headers: { 'access-control-request-method': 'POST', 'access-control-request-headers': 'x-qa-cap' } },
   { method: 'HEAD', path: '/api/state' },
+  // a websocket upgrade, which a later 'upgrade' listener must check too
+  { path: '/api/state', headers: UPGRADE }, { path: '/api/progress', headers: UPGRADE },
 ]
 
 test('PR code on loopback gets 403 X-QA-Refusal: capability from every API route, the event stream, both panes, the bridge and the pane entry, in none and tailscale modes', async () => {
@@ -2265,8 +2269,9 @@ test('PR code on loopback gets 403 X-QA-Refusal: capability from every API route
           for (const r of [
             { path: '/page' }, { path: '/cookie' }, { method: 'POST', path: '/x', body: '{}' }, { method: 'OPTIONS', path: '/x' }, { method: 'HEAD', path: '/page' },
             { path: '/__qa/bridge.js' }, { path: '/__qa/enter' }, { path: '/__qa/enter?t=guess' }, { path: `/__qa/enter?t=${w.token}` }, { path: `/__qa/enter?t=${paneToken}` },
+            { path: '/page', headers: UPGRADE }, { path: '/__qa/enter?t=guess', headers: UPGRADE },
           ]) {
-            check(await toPane({ ...r, headers: cookie ? { cookie } : {} }), `${mode} ${port} ${r.method ?? 'GET'} ${r.path} ${cookie}`)
+            check(await toPane({ ...r, headers: { ...r.headers, ...(cookie ? { cookie } : {}) } }), `${mode} ${port} ${r.method ?? 'GET'} ${r.path} ${r.headers ? 'upgrade ' : ''}${cookie}`)
           }
         }
       }
@@ -2709,6 +2714,38 @@ test('an invite enrols one more browser, even while a session runs, once', async
     const res = await raw(await harnessPort(nowhere.c), { method: 'POST', path: '/qa/api/invite', headers: JSON_TYPE, body: '{}' })
     assert.deepEqual([res.status, JSON.parse(res.body).error], [409, 'no harness origin to invite a browser to (set QA_HARNESS_ORIGIN)'])
   } finally { nowhere.c.stop() }
+})
+
+// A stream is checked as it opens. One whose browser is pushed out of the
+// enrolled 32 later must not go on getting events, `ready`'s pane URLs
+// among them.
+test('the event stream of a browser pushed out of the enrolled ends before the next event', async () => {
+  const w = makeWorld({ enrolled: false })
+  try {
+    const { harness } = await allPorts(w.c)
+    const enrol = async () => JSON.parse((await raw(harness, { method: 'POST', path: '/qa/api/enrol', cap: false, headers: JSON_TYPE, body: '{}' })).body).token
+    const first = await enrol()
+    let text = ''
+    // An idle stream sends no byte until its first event, so wait for the
+    // conductor to have taken the request instead.
+    const taken = new Promise(resolve => w.c.servers.harness.on('request', req => { if (req.url.includes('/api/progress')) setImmediate(resolve) }))
+    const ended = new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port: harness, path: `/qa/api/progress?cap=${first}`, agent: false }, res => {
+        res.on('data', c => { text += c })
+        res.on('end', () => resolve(res.statusCode))
+      }).on('error', reject)
+    })
+    await taken
+    let last
+    for (let i = 0; i < 32; i++) last = await enrol()
+    assert.equal((await raw(harness, { path: '/qa/api/state', cap: false, headers: { 'x-qa-cap': first } })).status, 403, 'pushed out')
+    await raw(harness, { method: 'POST', path: '/qa/api/session', cap: false, headers: { ...JSON_TYPE, 'x-qa-cap': last }, body: '{"pr":7}' })
+    let timer
+    const outcome = await Promise.race([ended, new Promise(r => { timer = setTimeout(() => r('still open'), 2000) })])
+    clearTimeout(timer)
+    assert.equal(outcome, 200, 'it was open, and has ended')
+    assert.equal(text, '', 'no event reached it')
+  } finally { w.c.stop() }
 })
 
 test('the event stream takes the token as ?cap=, and no other route does', async () => {

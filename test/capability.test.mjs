@@ -64,10 +64,14 @@ test('at most MAX_BROWSERS are enrolled: the least recently used is dropped, wit
   const cap = createCapability({ ...f, maxBrowsers: 3 })
   const [a, b, c] = [cap.enrol(), cap.enrol(), cap.enrol()]
   const paneA = cap.paneToken(a)
+  const recordB = cap.browser(b) // at the time it enrolled: no newer
   f.tick(1)
   assert.ok(cap.browser(a), 'a is used, so b is now the oldest')
+  assert.equal(cap.holds(recordB), true)
   const d = cap.enrol()
   assert.equal(cap.size(), 3)
+  assert.equal(cap.holds(recordB), false, 'a record kept from before says it was dropped')
+  assert.equal(cap.holds(null), false)
   assert.equal(cap.browser(b), null)
   for (const kept of [a, c, d]) assert.ok(cap.browser(kept))
   assert.equal(cap.admitsPane(paneA), true)
