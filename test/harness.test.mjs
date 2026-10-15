@@ -113,11 +113,11 @@ test('LABELS names every boot step generically', () => {
 // test reads what the page did: its API calls, EventSource URLs, frame srcs,
 // history edits and stored token.
 
-function fakeBrowser({ hash = '#/', stored = null, routes = {} }) {
+function fakeBrowser({ hash = '#/', stored = null, routes = {}, elements = {} }) {
   const log = [] // ['fetch', method, path, headers, body] | ['replace', url] | ['source', url] | ['set', id, prop, value]
   const listeners = []
   const store = new Map(stored === null ? [] : [['qa-cap', stored]])
-  const els = new Map()
+  const els = new Map(Object.entries(elements))
   const stub = name => {
     const props = {}
     return new Proxy(function () {}, {
@@ -310,4 +310,76 @@ test('reload and re-sync ask for the pane path on the pane origin', async () => 
     { role: 'pr', to: `${PANES.prOrigin}//evil.example/x?y=1` },
     { role: 'base', to: `${PANES.baseOrigin}//evil.example/x?y=1` },
   ])
+})
+
+// #prList as the DOM has it, so far as the picker uses it: setting its text
+// detaches every row, and a row is shown only while it is appended.
+function fakeList(text = 'Loading…') {
+  const list = {
+    text, children: [], listeners: [], texts: [],
+    appendChild(child) { child.parentNode = list; list.children.push(child); return child },
+    get textContent() { return list.text },
+    set textContent(value) { for (const child of list.children) child.parentNode = null; list.children = []; list.text = String(value); list.texts.push(list.text) },
+    addEventListener(type, fn) { list.listeners.push([type, fn]) },
+    querySelectorAll: () => [],
+  }
+  return list
+}
+
+// A restart revokes every token. The picker's ↻ then gets a refusal, the
+// browser enrols again, and the picker must show the rows, not the refusal.
+test('after a restart, refreshing the picker enrols the browser again and shows the PRs', async () => {
+  let token = 'tok-1'
+  const prList = fakeList()
+  const prs = [{ number: 7, title: 'a', imageStatus: 'built' }, { number: 8, title: 'b', imageStatus: 'built' }]
+  const enrolled = answer => (_, headers) => (headers['x-qa-cap'] === token ? answer : CAPTURE)
+  const b = fakeBrowser({
+    stored: 'tok-1',
+    elements: { prList },
+    routes: {
+      'GET /qa/api/state': enrolled({ body: { status: 'idle' } }),
+      'GET /qa/api/prs': enrolled({ body: { prs, session: null } }),
+      'POST /qa/api/enrol': () => ({ body: { token } }),
+    },
+  })
+  await b.settle()
+  assert.deepEqual(prList.children.map(row => row.dataset.pr), [7, 8])
+  assert.equal(prList.textContent, '')
+
+  token = 'tok-2' // the conductor restarted
+  b.byId('refreshBtn').onclick()
+  await b.settle()
+  assert.equal(b.store.get('qa-cap'), 'tok-2')
+  assert.equal(b.log.filter(e => e[0] === 'fetch' && e[2] === '/qa/api/enrol').length, 1)
+  assert.deepEqual(prList.children.map(row => row.dataset.pr), [7, 8])
+  assert.equal(prList.textContent, '', 'no refusal left in the list')
+  assert.ok(prList.children.every(row => row.parentNode === prList))
+  assert.ok(!prList.texts.some(text => /Failed|not enrolled/.test(text)), `never told it isn't enrolled: ${JSON.stringify(prList.texts)}`)
+})
+
+// Text that stood in for the rows (an error, "No open PRs.") goes once there
+// are rows again, and the rows it detached come back.
+test('the picker brings back its rows after an error or an empty list stood in for them', async () => {
+  let answer = { body: { prs: [{ number: 7, title: 'a' }], session: null } }
+  const prList = fakeList()
+  const b = fakeBrowser({
+    stored: 'tok-1',
+    elements: { prList },
+    routes: { 'GET /qa/api/state': { body: { status: 'idle' } }, 'GET /qa/api/prs': () => answer },
+  })
+  await b.settle()
+  const shown = () => [prList.textContent, prList.children.map(row => row.dataset.pr)]
+  assert.deepEqual(shown(), ['', [7]])
+  answer = { status: 502, body: { error: 'GitHub is down' } }
+  b.byId('refreshBtn').onclick(); await b.settle()
+  assert.deepEqual(shown(), ['Failed to load PRs: GitHub is down', []])
+  answer = { body: { prs: [{ number: 7, title: 'a' }, { number: 9, title: 'c' }], session: null } }
+  b.byId('refreshBtn').onclick(); await b.settle()
+  assert.deepEqual(shown(), ['', [7, 9]])
+  answer = { body: { prs: [], session: null } }
+  b.byId('refreshBtn').onclick(); await b.settle()
+  assert.deepEqual(shown(), ['No open PRs.', []])
+  answer = { body: { prs: [{ number: 9, title: 'c' }], session: null } }
+  b.byId('refreshBtn').onclick(); await b.settle()
+  assert.deepEqual(shown(), ['', [9]])
 })

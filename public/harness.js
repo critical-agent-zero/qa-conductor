@@ -233,7 +233,10 @@ function inviteFromHash(hash) {
     try {
       const { prs, session } = await api('/prs')
       patchRows(prs, session)
-    } catch (err) { $('prList').textContent = `Failed to load PRs: ${err.message}` }
+    } catch (err) {
+      if (err && err.capability) return // enrolment takes over, and renders again
+      $('prList').textContent = `Failed to load PRs: ${err.message}`
+    }
   }
 
   function renderConflict(state, opts) {
@@ -267,13 +270,16 @@ function inviteFromHash(hash) {
 
   function patchRows(prs, session) {
     const list = $('prList')
-    if (list.textContent === 'Loading…') list.textContent = ''
-    if (!prs.length && !rows.size) { list.textContent = 'No open PRs.'; return }
+    // Text that stood in for the rows ("Loading…", "No open PRs.", an error)
+    // detached them all: clear it, and each row is appended again below.
+    if (![...rows.values()].some(row => row.parentNode === list)) list.textContent = ''
+    if (!prs.length) { list.textContent = 'No open PRs.'; rows.clear(); return }
     const seen = new Set()
     for (const pr of prs) {
       seen.add(pr.number)
       let row = rows.get(pr.number)
-      if (!row) { row = document.createElement('div'); row.className = 'pr'; row.dataset.pr = pr.number; rows.set(pr.number, row); list.appendChild(row) }
+      if (!row) { row = document.createElement('div'); row.className = 'pr'; row.dataset.pr = pr.number; rows.set(pr.number, row) }
+      if (row.parentNode !== list) list.appendChild(row)
       const holds = session && session.pr === pr.number && session.status !== 'idle'
       const num = esc(pr.number)
       // A blocked PR can still be opened: the build's ensureBuilt is the real gate.
