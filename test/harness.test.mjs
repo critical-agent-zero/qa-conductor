@@ -123,11 +123,12 @@ test('LABELS names every boot step generically', () => {
 // test reads what the page did: its API calls, EventSource URLs, frame srcs,
 // history edits and stored token.
 
-function fakeBrowser({ hash = '#/', stored = null, routes = {} }) {
+function fakeBrowser({ hash = '#/', stored = null, routes = {}, elements = {} }) {
   const log = [] // ['fetch', method, path, headers, body] | ['replace', url] | ['source', url] | ['set', id, prop, value]
   const listeners = []
+  const intervals = [] // { fn, ms }, in the order set; none ever runs by itself
   const store = new Map(stored === null ? [] : [['qa-cap', stored]])
-  const els = new Map()
+  const els = new Map(Object.entries(elements))
   const stub = name => {
     const props = {}
     return new Proxy(function () {}, {
@@ -140,6 +141,11 @@ function fakeBrowser({ hash = '#/', stored = null, routes = {} }) {
         if (k === 'matches') return false
         if (k === 'dataset' || k === 'style') return (props[k] = {})
         if (k === 'addEventListener') return (type, fn) => listeners.push([name, type, fn])
+        // one element per selector, as a DOM that doesn't change gives
+        if (k === 'querySelector') {
+          const found = new Map()
+          return (props[k] = sel => { if (!found.has(sel)) found.set(sel, stub(`${name} ${sel}`)); return found.get(sel) })
+        }
         return (props[k] = stub(`${name}.${String(k)}`))
       },
       set(_, k, v) { props[k] = v; log.push(['set', name, k, v]); return true },
@@ -170,13 +176,13 @@ function fakeBrowser({ hash = '#/', stored = null, routes = {} }) {
     location,
     navigator: {},
     setTimeout: () => 0,
-    setInterval: () => 0,
+    setInterval: (fn, ms) => intervals.push({ fn, ms }),
     clearInterval: () => {},
   }
   const names = Object.keys(globals)
   new Function(...names, 'module', harnessSrc)(...names.map(n => globals[n]), undefined)
   const settle = async () => { for (let i = 0; i < 30; i++) await new Promise(r => setImmediate(r)) }
-  return { log, listeners, store, byId, location, settle }
+  return { log, listeners, store, byId, location, settle, intervals }
 }
 
 const CAPTURE = { status: 403, body: { error: 'this browser is not enrolled' }, headers: { 'x-qa-refusal': 'capability' } }
@@ -344,4 +350,289 @@ test('the header chip shows the session\'s isolation verdict, with its reasons a
   })
   await idle.settle()
   assert.equal(chip(idle).hidden, true)
+})
+
+// #prList as the DOM has it, so far as the picker uses it: setting its text
+// detaches every row, and a row is shown only while it is appended.
+function fakeList(text = 'Loading…') {
+  const list = {
+    text, children: [], listeners: [], texts: [],
+    appendChild(child) { child.parentNode = list; list.children.push(child); return child },
+    get textContent() { return list.text },
+    set textContent(value) { for (const child of list.children) child.parentNode = null; list.children = []; list.text = String(value); list.texts.push(list.text) },
+    addEventListener(type, fn) { list.listeners.push([type, fn]) },
+    querySelectorAll: () => [],
+  }
+  return list
+}
+
+// A restart revokes every token. The picker's ↻ then gets a refusal, the
+// browser enrols again, and the picker must show the rows, not the refusal.
+test('after a restart, refreshing the picker enrols the browser again and shows the PRs', async () => {
+  let token = 'tok-1'
+  const prList = fakeList()
+  const prs = [{ number: 7, title: 'a', imageStatus: 'built' }, { number: 8, title: 'b', imageStatus: 'built' }]
+  const enrolled = answer => (_, headers) => (headers['x-qa-cap'] === token ? answer : CAPTURE)
+  const b = fakeBrowser({
+    stored: 'tok-1',
+    elements: { prList },
+    routes: {
+      'GET /qa/api/state': enrolled({ body: { status: 'idle' } }),
+      'GET /qa/api/prs': enrolled({ body: { prs, session: null } }),
+      'POST /qa/api/enrol': () => ({ body: { token } }),
+    },
+  })
+  await b.settle()
+  assert.deepEqual(prList.children.map(row => row.dataset.pr), [7, 8])
+  assert.equal(prList.textContent, '')
+
+  token = 'tok-2' // the conductor restarted
+  b.byId('refreshBtn').onclick()
+  await b.settle()
+  assert.equal(b.store.get('qa-cap'), 'tok-2')
+  assert.equal(b.log.filter(e => e[0] === 'fetch' && e[2] === '/qa/api/enrol').length, 1)
+  assert.deepEqual(prList.children.map(row => row.dataset.pr), [7, 8])
+  assert.equal(prList.textContent, '', 'no refusal left in the list')
+  assert.ok(prList.children.every(row => row.parentNode === prList))
+  assert.ok(!prList.texts.some(text => /Failed|not enrolled/.test(text)), `never told it isn't enrolled: ${JSON.stringify(prList.texts)}`)
+})
+
+// Text that stood in for the rows (an error, "No open PRs.") goes once there
+// are rows again, and the rows it detached come back.
+test('the picker brings back its rows after an error or an empty list stood in for them', async () => {
+  let answer = { body: { prs: [{ number: 7, title: 'a' }], session: null } }
+  const prList = fakeList()
+  const b = fakeBrowser({
+    stored: 'tok-1',
+    elements: { prList },
+    routes: { 'GET /qa/api/state': { body: { status: 'idle' } }, 'GET /qa/api/prs': () => answer },
+  })
+  await b.settle()
+  const shown = () => [prList.textContent, prList.children.map(row => row.dataset.pr)]
+  assert.deepEqual(shown(), ['', [7]])
+  answer = { status: 502, body: { error: 'GitHub is down' } }
+  b.byId('refreshBtn').onclick(); await b.settle()
+  assert.deepEqual(shown(), ['Failed to load PRs: GitHub is down', []])
+  answer = { body: { prs: [{ number: 7, title: 'a' }, { number: 9, title: 'c' }], session: null } }
+  b.byId('refreshBtn').onclick(); await b.settle()
+  assert.deepEqual(shown(), ['', [7, 9]])
+  answer = { body: { prs: [], session: null } }
+  b.byId('refreshBtn').onclick(); await b.settle()
+  assert.deepEqual(shown(), ['No open PRs.', []])
+  answer = { body: { prs: [{ number: 9, title: 'c' }], session: null } }
+  b.byId('refreshBtn').onclick(); await b.settle()
+  assert.deepEqual(shown(), ['', [9]])
+})
+
+// Open QA on a picker row: the delegated click, as the picker gets it. Once
+// the click is handled, the button is detached, as a re-render of the row
+// (a re-enrolment's, say) leaves it.
+function clickOpen(prList, num) {
+  const row = { attrs: {}, err: {}, setAttribute(k, v) { row.attrs[k] = v }, removeAttribute(k) { delete row.attrs[k] }, querySelector: () => row.err }
+  let attached = true
+  const btn = { dataset: { open: String(num) }, closest: sel => (sel === '.pr' && attached ? row : null) }
+  row.btn = btn
+  const [, onClick] = prList.listeners.find(([type]) => type === 'click')
+  onClick({ target: { closest: () => btn } })
+  attached = false
+  return row
+}
+
+// A restart revoked the token, and with it any session: Open QA's refused
+// POST /api/session enrols the browser again, then is sent once more.
+test('after a restart, Open QA enrols the browser again and asks for the session once more, with the new token', async () => {
+  for (const retryRefused of [false, true]) {
+    let token = 'tok-1'
+    const sessions = []
+    const prList = fakeList()
+    const enrolled = answer => (_, headers) => (headers['x-qa-cap'] === token ? answer : CAPTURE)
+    const b = fakeBrowser({
+      stored: 'tok-1',
+      elements: { prList },
+      routes: {
+        'GET /qa/api/state': enrolled({ body: { status: 'idle' } }),
+        'GET /qa/api/prs': enrolled({ body: { prs: [{ number: 7, title: 'a' }], session: null } }),
+        'POST /qa/api/enrol': () => ({ body: { token } }),
+        'POST /qa/api/session': (body, headers) => {
+          sessions.push([headers['x-qa-cap'], body])
+          return headers['x-qa-cap'] === token && !retryRefused ? { status: 202, body: { ok: true } } : CAPTURE
+        },
+      },
+    })
+    await b.settle()
+    token = 'tok-2' // the conductor restarted
+    const row = clickOpen(prList, 7)
+    await b.settle()
+    assert.deepEqual(sessions, [['tok-1', { pr: 7 }], ['tok-2', { pr: 7 }]], 'once more, and only once')
+    if (!retryRefused) {
+      assert.equal(b.location.hash, '#/pr/7/boot')
+    } else {
+      // a token refused just after it was given: the row says so, and the
+      // enrolment view takes over
+      assert.equal(b.location.hash, '#/')
+      assert.equal(row.err.textContent, 'this browser is not enrolled')
+      assert.equal(row.attrs['aria-busy'], undefined)
+      assert.equal(b.byId('enrol').hidden, false)
+    }
+  }
+})
+
+// Any other refusal is the row's error, as before.
+test('Open QA refused for another reason shows it on the row and asks once', async () => {
+  const sessions = []
+  const prList = fakeList()
+  const b = fakeBrowser({
+    stored: 'tok-1',
+    elements: { prList },
+    routes: {
+      'GET /qa/api/state': { body: { status: 'idle' } },
+      'GET /qa/api/prs': { body: { prs: [{ number: 7, title: 'a' }], session: null } },
+      'POST /qa/api/session': body => { sessions.push(body); return { status: 503, body: { error: 'shutting down' } } },
+    },
+  })
+  await b.settle()
+  const row = clickOpen(prList, 7)
+  await b.settle()
+  assert.equal(sessions.length, 1)
+  assert.equal(row.err.textContent, 'shutting down')
+  assert.equal(b.log.filter(e => e[0] === 'fetch' && e[2] === '/qa/api/enrol').length, 0)
+})
+
+// A second restart, or 32 newer browsers, refuses the token the browser got
+// a moment ago, while the view after enrolling is still being drawn.
+test('a token refused while the view after enrolling is drawn shows the enrolment view', async () => {
+  let good = 'tok-1'
+  const prList = fakeList()
+  const enrolled = answer => (_, headers) => (headers['x-qa-cap'] === good ? answer : CAPTURE)
+  const b = fakeBrowser({
+    stored: 'tok-1',
+    elements: { prList },
+    routes: {
+      'GET /qa/api/state': enrolled({ body: { status: 'idle' } }),
+      'GET /qa/api/prs': enrolled({ body: { prs: [{ number: 7, title: 'a' }], session: null } }),
+      'POST /qa/api/enrol': () => ({ body: { token: 'tok-2' } }),
+    },
+  })
+  await b.settle()
+  good = 'nobody' // a restart, and tok-2 refused as soon as it is given
+  b.byId('refreshBtn').onclick()
+  await b.settle()
+  assert.equal(b.log.filter(e => e[0] === 'fetch' && e[2] === '/qa/api/enrol').length, 1, 'no loop')
+  assert.equal(b.store.get('qa-cap'), undefined)
+  assert.equal(b.byId('enrol').hidden, false)
+})
+
+// "End #8 and open #9", refused by a restart: once enrolled again, the try
+// once more must not end a session someone started meanwhile.
+test('a takeover a restart refused is sent again without takeover, so a new session gets the conflict card', async () => {
+  let token = 'tok-1'
+  const sessions = []
+  const prList = fakeList()
+  const conflictSlot = { children: [], innerHTML: '', appendChild(child) { conflictSlot.children.push(child); return child } }
+  const enrolled = answer => (_, headers) => (headers['x-qa-cap'] === token ? answer : CAPTURE)
+  const running = { pr: 8, status: 'ready' }
+  const b = fakeBrowser({
+    stored: 'tok-1',
+    elements: { prList, conflictSlot },
+    routes: {
+      'GET /qa/api/state': enrolled({ body: { status: 'idle' } }),
+      'GET /qa/api/prs': enrolled({ body: { prs: [{ number: 9, title: 'c' }], session: null } }),
+      'POST /qa/api/enrol': () => ({ body: { token } }),
+      'POST /qa/api/session': (body, headers) => {
+        sessions.push([headers['x-qa-cap'], body])
+        if (headers['x-qa-cap'] !== token) return CAPTURE
+        return body.takeover ? { status: 202, body: { ok: true } } : { status: 409, body: { error: 'session already active', session: running } }
+      },
+    },
+  })
+  await b.settle()
+  clickOpen(prList, 9)
+  await b.settle()
+  const card = conflictSlot.children.at(-1)
+  assert.ok(card, 'the conflict card')
+  token = 'tok-2' // the conductor restarted, and someone opened #8 again since
+  const takeover = card.querySelector('[data-takeover]')
+  takeover.onclick() // arm
+  takeover.onclick() // confirm
+  await b.settle()
+  assert.deepEqual(sessions.slice(1), [['tok-1', { pr: 9, takeover: true }], ['tok-2', { pr: 9 }]])
+  assert.equal(conflictSlot.children.length, 2, 'a new conflict card, rather than #8 ended unseen')
+})
+
+test('a takeover refused for another reason says so, rather than failing unseen', async () => {
+  const prList = fakeList()
+  const conflictSlot = { children: [], innerHTML: '', appendChild(child) { conflictSlot.children.push(child); return child } }
+  const b = fakeBrowser({
+    stored: 'tok-1',
+    elements: { prList, conflictSlot },
+    routes: {
+      'GET /qa/api/state': { body: { status: 'idle' } },
+      'GET /qa/api/prs': { body: { prs: [{ number: 9, title: 'c' }], session: null } },
+      'POST /qa/api/session': body => (body.takeover ? { status: 503, body: { error: 'shutting down' } } : { status: 409, body: { error: 'session already active', session: { pr: 8, status: 'ready' } } }),
+    },
+  })
+  await b.settle()
+  clickOpen(prList, 9)
+  await b.settle()
+  const takeover = conflictSlot.children.at(-1).querySelector('[data-takeover]')
+  takeover.onclick(); takeover.onclick()
+  await b.settle()
+  assert.equal(b.byId('announcerAssertive').textContent, "Couldn't open #9: shutting down")
+})
+
+// While one Open QA is on its way (a restart's re-enrolment included), the
+// redrawn rows take no other.
+test('a click on another row while an Open QA is on its way does nothing', async () => {
+  let token = 'tok-1'
+  const prList = fakeList()
+  const enrolled = answer => (_, headers) => (headers['x-qa-cap'] === token ? answer : CAPTURE)
+  const b = fakeBrowser({
+    stored: 'tok-1',
+    elements: { prList },
+    routes: {
+      'GET /qa/api/state': enrolled({ body: { status: 'idle' } }),
+      'GET /qa/api/prs': enrolled({ body: { prs: [{ number: 7, title: 'a' }, { number: 8, title: 'b' }], session: null } }),
+      'POST /qa/api/enrol': () => ({ body: { token }, ticks: 6 }),
+      'POST /qa/api/session': (_, headers) => (headers['x-qa-cap'] === token ? { status: 202, body: { ok: true } } : CAPTURE),
+    },
+  })
+  await b.settle()
+  token = 'tok-2'
+  clickOpen(prList, 7)
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r))
+  const other = clickOpen(prList, 8)
+  assert.deepEqual([other.attrs['aria-busy'], other.btn.textContent], [undefined, undefined])
+  await b.settle()
+  assert.deepEqual([other.attrs['aria-busy'], other.btn.textContent], [undefined, undefined])
+  assert.equal(b.location.hash, '#/pr/7/boot')
+})
+
+// A browser showing a session learns it ended, or was opened again (by
+// another browser, say), on its next idle poll: the new session's panes
+// take new pane cookies, so it enters them again.
+test('a session view whose session ended or was opened again elsewhere notices on its next idle poll', async () => {
+  let state = { status: 'ready', pr: 7, panes: PANES, startedAt: 1000, lastActivity: 1000, idleMinutes: 30 }
+  const b = fakeBrowser({
+    hash: '#/pr/7',
+    stored: 'tok-1',
+    routes: {
+      'GET /qa/api/state': () => ({ body: state }),
+      'GET /qa/api/prs': { body: { prs: [], session: null } },
+      'POST /qa/api/pane-entry': entryRoute,
+    },
+  })
+  await b.settle()
+  const entries = () => b.log.filter(e => e[0] === 'fetch' && e[2] === '/qa/api/pane-entry').length
+  const poll = async () => { b.intervals.filter(i => i.ms === 60000).at(-1).fn(); await b.settle() }
+  assert.equal(entries(), 2)
+  await poll()
+  assert.equal(entries(), 2, 'the same session: nothing to do')
+  state = { ...state, startedAt: 2000 }
+  await poll()
+  assert.equal(entries(), 4, 'opened again: both panes entered again')
+  assert.equal(b.location.hash, '#/pr/7')
+  state = { status: 'idle', pr: null }
+  await poll()
+  assert.equal(entries(), 4)
+  assert.equal(b.location.hash, '#/', 'ended: back to the picker')
 })

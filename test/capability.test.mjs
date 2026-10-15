@@ -64,10 +64,14 @@ test('at most MAX_BROWSERS are enrolled: the least recently used is dropped, wit
   const cap = createCapability({ ...f, maxBrowsers: 3 })
   const [a, b, c] = [cap.enrol(), cap.enrol(), cap.enrol()]
   const paneA = cap.paneToken(a)
+  const recordB = cap.browser(b) // at the time it enrolled: no newer
   f.tick(1)
   assert.ok(cap.browser(a), 'a is used, so b is now the oldest')
+  assert.equal(cap.holds(recordB), true)
   const d = cap.enrol()
   assert.equal(cap.size(), 3)
+  assert.equal(cap.holds(recordB), false, 'a record kept from before says it was dropped')
+  assert.equal(cap.holds(null), false)
   assert.equal(cap.browser(b), null)
   for (const kept of [a, c, d]) assert.ok(cap.browser(kept))
   assert.equal(cap.admitsPane(paneA), true)
@@ -101,6 +105,25 @@ test('a pane-entry ticket is single use, bound to its role, and lasts ENTER_TTL_
   assert.equal(cap.redeemEnter(inTime, 'pr').to, '/')
 
   for (const bad of [undefined, '', 'garbage', token, cap.paneToken(token)]) assert.equal(cap.redeemEnter(bad, 'base'), null, String(bad))
+})
+
+test('rotatePanes gives every browser a new pane token, and the old ones admit nothing; harness tokens and live tickets still work', () => {
+  const cap = createCapability({ ...fakes(), maxBrowsers: 2 })
+  const [a, b] = [cap.enrol(), cap.enrol()]
+  const before = [cap.paneToken(a), cap.paneToken(b)]
+  const ticket = cap.enter(cap.browser(a), 'base', '/x')
+  cap.rotatePanes()
+  const after = [cap.paneToken(a), cap.paneToken(b)]
+  for (const old of before) assert.equal(cap.admitsPane(old), false, old)
+  for (const fresh of after) assert.equal(cap.admitsPane(fresh), true, fresh)
+  assert.equal(new Set([...before, ...after]).size, 4)
+  for (const token of [a, b]) assert.ok(cap.browser(token))
+  assert.deepEqual(cap.redeemEnter(ticket, 'base'), { to: '/x', paneToken: after[0] }, 'a ticket sets the pane token of now')
+  // a browser dropped since takes its new pane token with it
+  cap.browser(b)
+  cap.enrol()
+  assert.equal(cap.admitsPane(after[0]), false)
+  assert.equal(cap.admitsPane(after[1]), true)
 })
 
 test('a ticket of a browser dropped since it was minted lets nobody in', () => {

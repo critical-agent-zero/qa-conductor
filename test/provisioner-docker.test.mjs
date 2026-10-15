@@ -270,6 +270,36 @@ test('teardown and sweep reject when docker can\'t remove a container or network
   assert.deepEqual(await teardownSession({ provisioner: gone.provisioner }), { ok: true, failed: [] })
 })
 
+// On a clean start, and after any teardown, both pane networks are already
+// gone. Podman says so in its own words, through its CLI or its compat API.
+// Taking that for a failure would fail every startup sweep, and enrolment
+// would never open.
+test('on Podman, sweep and teardown take containers and networks already gone for gone', async () => {
+  const fail = stderr => Object.assign(new Error(`docker: Command failed\n${stderr}`), { stderr })
+  // the podman-docker shim writes its banner first, on every call
+  const banner = 'Emulate Docker CLI using podman. Create /etc/containers/nodocker to quiet msg.\n'
+  const podman = {
+    cli: { first: '', missing: name => `Error: unable to find network with name or ID ${name}: network not found\n` },
+    shim: { first: banner, missing: name => `Error: unable to find network with name or ID ${name}: network not found\n` },
+    compat: { first: '', missing: () => 'Error response from daemon: network not found\n' },
+  }
+  for (const [via, { first, missing }] of Object.entries(podman)) {
+    const answer = args => {
+      if (args[0] === 'ps') return 'c0ffee\n'
+      if (args[0] === 'rm') return fail(`${first}Error: no container with name or ID "${args.at(-1)}" found: no such container\n`)
+      if (args[0] === 'network' && args[1] === 'rm') return fail(`${first}${missing(args[2])}`)
+      if (args[0] === 'network' && args[1] === 'ls') return ''
+      return null
+    }
+    const exec = recordingExec({ answer })
+    await createDockerProvisioner({ docker: makeDocker(exec), fsx: recordingFs(), workDir: WORK }).sweep()
+    assert.deepEqual(docker(exec).filter(c => c.args[1] === 'rm').map(c => c.args.join(' ')), ['network rm qa-session-base', 'network rm qa-session-pr'], via)
+
+    const s = makeSession({ answer })
+    assert.deepEqual(await teardownSession({ provisioner: s.provisioner }), { ok: true, failed: [] }, via)
+  }
+})
+
 test('network as a prefix or as { base, pr }; two panes on one network are refused', async () => {
   const prefixed = makeSession({ provisionerOptions: { network: 'widget-qa' } })
   await bootSession(prefixed.deps, 7)
