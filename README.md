@@ -454,7 +454,7 @@ For each pane:
 - `launchServices` pulls each image that's missing (three tries), then runs it as `qa-app-<role>` on the pane's network, with its port `3000` published on `127.0.0.1:<hostPorts[role]>`.
 - `waitHealthy` polls `http://127.0.0.1:<port>/api/health` until it answers `200`, for up to a minute.
 - `logs` tails the app container at `starting`, else the postgres one.
-- `teardown` removes the pane's containers (a migrate run still in flight among them) and their volumes, then its network and its env file. A name already gone is fine, but when docker fails otherwise (no daemon, a container it can't kill, a network still in use), `teardown` rejects with that error once it has tried every step. So does `sweep`.
+- `teardown` removes the pane's containers (a migrate run still in flight among them) and their volumes, then its network and its env file. A name already gone is fine, in Docker Engine's words or Podman's (through its own CLI or its Docker-compatible API), but when docker fails otherwise (no daemon, a container it can't kill, a network still in use), `teardown` rejects with that error once it has tried every step. So does `sweep`.
 - `sweep` removes both env files, which hold an earlier run's env and passwords, then every container with `createDocker`'s `label` and both panes' networks. When `network` is a prefix, it also removes the network of that very name, which both panes shared in 0.3.1 and earlier, but only if it carries the label, as that network did. It leaves the name alone when it is one of Docker's or Podman's own, or lowercase hex digits alone.
 
 The provisioner also has `networks`, `{ base, pr }` (frozen): the two network names.

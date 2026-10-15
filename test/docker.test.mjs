@@ -455,6 +455,8 @@ test('rmForce removes all names in one call, and tolerates only names already go
     new Error('No such container'),
     dockerFailure('Error response from daemon: No such container: qa-migrate-base\n'),
     dockerFailure('Error: No such container: a\nError: No such container: b\n'),
+    // Podman's wording
+    dockerFailure('Error: no container with name or ID "a" found: no such container\n'),
   ]) {
     await createDocker({ execFileFn: recordingExec([err]) }).rmForce(['a', 'b'])
   }
@@ -489,12 +491,20 @@ test('createNetwork and rmNetwork build exact argv; rmNetwork tolerates only a n
     new Error('network not found'),
     dockerFailure('Error response from daemon: network qa-session-base not found\n'),
     dockerFailure('Error: No such network: qa-session-base\n'),
+    // Podman: its own CLI (or the podman-docker shim), then the docker CLI
+    // against Podman's compat API, bare and wrapped
+    dockerFailure('Error: unable to find network with name or ID qa-session-base: network not found\n'),
+    dockerFailure('Error response from daemon: network not found\n'),
+    dockerFailure('Error response from daemon: unable to find network with name or ID qa-session-base: network not found\n'),
   ]) {
     await createDocker({ execFileFn: recordingExec([err]) }).rmNetwork('gone')
   }
-  // still in use (a container that didn't come down), or no daemon
+  // still in use (a container that didn't come down), or no daemon, or
+  // anything that merely mentions a missing network on the way
   for (const err of [
     dockerFailure('Error response from daemon: error while removing network: network qa-session-pr id 3f2 has active endpoints\n'),
+    dockerFailure('Error: "qa-session-pr" has associated containers with it. Use -f to forcibly delete containers and pods: network is being used\n'),
+    dockerFailure('Error: network not found in the cache: removing qa-session-pr: device or resource busy\n'),
     dockerFailure('Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n'),
   ]) {
     await assert.rejects(createDocker({ execFileFn: recordingExec([err]) }).rmNetwork('qa-session-pr'), e => e === err, err.message)
