@@ -3439,6 +3439,12 @@ test('strict mode says so at startup and in /api/state, and logs an error when e
     assert.equal(strict.errorLines.some(l => l.includes('refuses every session')), false)
   } finally { strict.c.stop() }
 
+  // a code-built cfg's truthy value is enforced, so it is reported as on
+  const truthy = makeWorld({ cfg: { requireIsolation: 1 }, provisioner: { isolation: check } })
+  try {
+    assert.equal((await api(await harnessPort(truthy.c), 'GET', '/api/state')).requireIsolation, true)
+  } finally { truthy.c.stop() }
+
   for (const [opts, isolation, reason] of [
     [{}, 'shared-host', 'shared-host: both panes run as one user on this host'],
     [{}, undefined, 'unknown: the Provisioner has no isolation check'],
