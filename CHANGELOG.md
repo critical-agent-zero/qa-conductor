@@ -73,11 +73,11 @@ What changed in each release, newest first. A 0.x minor version may break the in
 
 - **A new entry point, `@critical-labs/qa-conductor/data-diff`:** the pure engine of #8's data checks, with no I/O. README's [Data checks](README.md#data-checks) has the details.
   - **What a snapshot keeps:** each collection's rows, key and true count, at most 10,000 rows a collection and 32 MB in all.
-  - **Masking:** a secret-looking or `secret` field keeps only a digest, and a `pii` one a fingerprint, its type and its length, as HMACs under a key made for the session.
+  - **Masking:** a secret-looking or `secret` field keeps only a digest, and a `pii` one a fingerprint, its type and its length, as HMACs under a key made for the session. JSON keeps no value under a secret-looking key, and that includes JSON held in a string.
   - **Comparing:**
     - what changed between two snapshots of a pane, by key;
     - where the PR pane's changes depart from the base pane's;
-    - which of the PR's changes are destructive: red when only the PR made them, amber when the base did too.
+    - which of the PR's changes are destructive: red unless the base made the same change (the same rows, the same field), then amber.
   - **Advisory unless isolated:** unless the session's isolation verdict is `isolated`, the base's changes excuse nothing.
 
 ### The Docker Provisioner
