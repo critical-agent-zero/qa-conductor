@@ -384,47 +384,50 @@ The data checks compare snapshots of each pane's data. They show what a pane's d
 - **A snapshot** is `{ collections: { name: Collection } }`. A **Collection** is `{ key, rows, count?, truncated?, fields? }`:
   - `rows` are plain JSON objects;
   - `key` names the identity fields from the store's own schema (a primary key, a `KeySchema`), or is `null`, and the rows are then compared as a multiset;
-  - `count` is the true row count, so a truncated collection still shows deletes and emptying. A collection with fewer rows than its `count` is truncated, and one marked `truncated` with no `count` is a problem;
+  - `count` is the true row count. A truncated collection shows only a net change in it: a fall reads as deletes, a rise as inserts, and what happened past the cut can't be seen. A collection with fewer rows than its `count` is truncated, and one marked `truncated` with no `count` is a problem;
   - `fields` are its declared columns, so a dropped column shows. Leave it out for a schemaless store.
 - **Rules** (`validateRules(rules)`) are plain data. Every list is optional, and a collection name in a rule matches exactly or with `*` globs:
   - `exclude: [name]`: never kept or shown, such as migration history or sessions;
   - `volatile: [{collection, fields, mode?}]`: fields such as timestamps that change on their own. `ignore` (the default) drops them; `presence` keeps only whether each is set;
-  - `classify: [{collection, fields, as}]`: `as` is `secret` or `pii`;
+  - `classify: [{collection, fields, as}]`: `as` is `secret` or `pii`. It names top-level fields only. A value inside JSON is masked when its key looks secret, but `classify` doesn't reach it;
   - `softDelete: [{collection, field}]`: a field whose being set counts as a delete. It is never masked, and `null`, `false`, `0` and `''` count as not set;
   - `destructive: [{collection, maxChanged?, allowDeletes?}]`: a collection's own mass-change threshold, or deletes it expects. A rule that names the collection exactly wins over a glob.
 
   An entry with a field no rule has, such as `allowDelete`, is refused.
 - **What a snapshot keeps** (`sanitizeSnapshot(raw, {masker, rules, limits})`, with `createMasker({key, rules})`):
-  - at most `LIMITS.maxRows` (10,000) rows a collection, and `LIMITS.maxBytes` (32 MB) in all. A collection cut short is `truncated`, and only its count is compared;
+  - at most `LIMITS.maxRows` (10,000) rows a collection, `LIMITS.maxBytes` (32 MB) in all and `LIMITS.maxCollections` (1,000) collections. The bytes are shared fairly: the collections with the fewest rows go first, each with at most an equal share of what is left, so one big collection, a PR's padding say, can't starve the others. A collection cut short is `truncated`, and only its count is compared;
   - each value as it is, except:
     - **a secret** is `{t: 'secret', d}`: only whether it changed shows. That is a field whose name matches `SECRET_NAME`, or one `classify` marks `secret`. `SECRET_NAME` matches `pass`, `pwd`, `secret`, `token`, `salt`, `hash`, `otp`, `api_key`, `access_key`, `signing_key`, `client_key`, `private`, `session`, `card`, `cvv`, `cvc`, `ssn`, `iban`, `authorization`, `bearer`, `jwt`, `cookie`, `credential`, `signature`, `dsn`, `database_url` and `pin`. A secret-looking name stays secret whatever `classify` says;
     - **personal data** that `classify` marks `pii` is `{t: 'pii', fp, type, len}`: an 8-hex fingerprint, the type and the length;
     - `d` and `fp` are HMACs under `key`, which the conductor makes for each session and never sends anywhere. So equal values match across the panes, and say nothing past the session. A secret's digest is its field's, so equal secrets in two fields don't match;
     - an object or array is `{t: 'json', s}`, its JSON, and so is a string that holds one;
-    - a value under a secret-looking key inside JSON is masked too, and bytes inside it show only their length;
+    - a value under a secret-looking key inside JSON is masked too, with a digest of its collection's and field's. So is JSON held in a string inside JSON, up to three deep, and NDJSON line by line. Bytes inside JSON show only their length, and a `Set` or `Map` its entries;
+    - text that isn't JSON, or is over 256 KB, but shows a secret-looking key (`"password": …`, `api_key=…`) is masked whole: `[text with a secret-looking key, <length>, <digest>]`;
     - a string or JSON over 200 characters is `{t: 'long', s, len, d}`, cut;
     - bytes are `{t: 'blob', len, d}`;
     - a value that isn't set (`null`, `''`, `[]` or `{}`) is kept as it is, whatever its field, so clearing a secret shows.
   - Anything malformed, or that throws as it is read, is listed in `problems`, never thrown. A key that a row lacks, or that two rows share, is dropped.
   - Collection and field names are the store's, any string: `__proto__` and `constructor` are names like any other.
-- **`diffSnapshots(before, after)`**: per collection, `{status, key, inserted, updated, deleted, fieldsDropped, fieldsAdded, countBefore, countAfter, truncated}`.
+- **`diffSnapshots(before, after)`**: per collection, `{status, key, inserted, updated, deleted, fieldsDropped, fieldsAdded, countBefore, countAfter, truncated, keyLost}`. `keyLost` says the after snapshot no longer bears out the key the before one had, for example because two rows share it.
   - `status` is `same`, `changed`, `added` or `dropped`, or `unknown` for a truncated collection whose count didn't change: it never claims nothing changed.
   - `inserted` and `deleted` are `[{key, row}]`, and `updated` is `[{key, fields: [{field, before, after}]}]`. A `key` is the JSON of the row's key values. The collection's `key` is the one the diff used: `null` when the rows were compared as a multiset, as they are when either snapshot has no key, or a different one.
   - A field that the declared `fields` gained or lost is named once, not as an update to every row, with a key or without.
 - **`divergence(baseDiff, prDiff)`**: per collection, `{status, truncated, changes, counts}`.
   - Each change, by key, is `{kind, key, status, base, pr}`, plus `field` for a schema change. Its `status` is `both`, `pr-only`, `base-only` or `differs`.
   - Without a key both panes share, and for a truncated collection, only the schema's changes and the `counts` of inserted, updated and deleted rows are compared.
-  - The collection's `status` sums its changes up: `same` when there are none, or `unknown` for a truncated collection whose counts show nothing.
+  - The collection's `status` sums its changes up: `same` when there are none, or `unknown` for a truncated collection whose counts show nothing, or one truncated in one pane only, whose count can't be set beside the other's rows.
   - A collection one pane dropped or added while the other changed it `differs`.
-- **`flagChanges(baseDiff, prDiff, rules, {trusted})`**: the PR pane's destructive changes, each `{collection, kind, severity, pr, base, field?}`, where `pr` and `base` are how many each pane made.
+- **`flagChanges(baseDiff, prDiff, rules, {trusted})`**: the PR pane's destructive changes, each `{collection, kind, severity, shared, pr, base, field?}`. `pr` and `base` are how many of that kind each pane made, on any rows. `shared` says the base made the same change.
   - **The kinds:**
     - `delete`: rows gone, or a `softDelete` field newly set;
     - `emptied`: a collection whose count fell to 0;
     - `dropped`: a collection gone;
     - `column-dropped`: a declared field gone, one flag per field;
     - `mass-change`: more than 20 rows updated or deleted, or more than 20% of a collection of at least 5 rows, or past a rule's `maxChanged`;
+    - `key-lost`: a collection whose key the PR's rows no longer bear out, so its rows were compared without one, and updates read as deletes and inserts;
+    - `unverified`: a collection the PR pane's snapshot cut short where the base pane's didn't, or a cut-short one whose count changed. What happened past the cut can't be seen, so it is never taken for nothing;
     - `cleared`: a value set before, now `null`, `''`, `[]` or `{}`.
-  - **Severity:** `amber` when the base made the same change, else `red`. The same change means the same rows (by key, or as a multiset without one), the same field, or, for a truncated collection, no fewer rows. Unless `trusted` is `true`, the base's changes excuse nothing and every flag is `red`. A `cleared` field is `amber` at most. `allowDeletes` turns off a collection's `delete` flags, but not `emptied`.
+  - **Severity:** `amber` when the base made the same change (`shared`) and `trusted` is `true`, else `red`. The same change means the same rows (by key, or as a multiset without one), with the same fields changed, the same field, or for two cut-short collections the same change in count. A count stands for rows only when both panes have only counts. Unless `trusted` is `true`, the base's changes excuse nothing, and every flag but `cleared` is `red`. A `cleared` field is `amber` at most. `allowDeletes` turns off a collection's `delete` flags, but not `emptied` or `key-lost`.
 - **`trustOf(isolation)`**: `trusted` only when the session's [isolation verdict](#isolation-verdicts) is `isolated`, else `advisory`. While the PR pane may reach the base pane, what the base pane did can't excuse what the PR pane did. Pass it on as `flagChanges(…, {trusted: trustOf(isolation) === 'trusted'})`.
 
 ### Built in: `adapters/build-worktree` (git-worktree BuildConvention)
