@@ -107,18 +107,25 @@ test('a pane-entry ticket is single use, bound to its role, and lasts ENTER_TTL_
   for (const bad of [undefined, '', 'garbage', token, cap.paneToken(token)]) assert.equal(cap.redeemEnter(bad, 'base'), null, String(bad))
 })
 
-test('rotatePanes gives every browser a new pane token, and the old ones admit nothing; harness tokens and live tickets still work', () => {
-  const cap = createCapability({ ...fakes(), maxBrowsers: 2 })
+test('rotatePanes gives every browser a new pane token, and the old ones admit nothing; harness tokens and invites still work, pane-entry tickets don\'t', () => {
+  const cap = createCapability({ ...fakes(), maxBrowsers: 3 })
   const [a, b] = [cap.enrol(), cap.enrol()]
   const before = [cap.paneToken(a), cap.paneToken(b)]
   const ticket = cap.enter(cap.browser(a), 'base', '/x')
+  const { ticket: invite } = cap.invite()
   cap.rotatePanes()
   const after = [cap.paneToken(a), cap.paneToken(b)]
   for (const old of before) assert.equal(cap.admitsPane(old), false, old)
   for (const fresh of after) assert.equal(cap.admitsPane(fresh), true, fresh)
   assert.equal(new Set([...before, ...after]).size, 4)
   for (const token of [a, b]) assert.ok(cap.browser(token))
-  assert.deepEqual(cap.redeemEnter(ticket, 'base'), { to: '/x', paneToken: after[0] }, 'a ticket sets the pane token of now')
+  // A pane-entry ticket belongs to the session it was asked for in: one
+  // from before the rotation is spent, and the harness asks again.
+  assert.equal(cap.redeemEnter(ticket, 'base'), null)
+  const fresh = cap.enter(cap.browser(a), 'base', '/y')
+  assert.deepEqual(cap.redeemEnter(fresh, 'base'), { to: '/y', paneToken: after[0] })
+  // an invite isn't a pane's: it still enrols one more browser
+  assert.ok(cap.redeemInvite(invite))
   // a browser dropped since takes its new pane token with it
   cap.browser(b)
   cap.enrol()
