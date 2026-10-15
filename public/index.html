@@ -131,6 +131,8 @@
   /* the panes keep at least 30% of the height; open panels share the rest */
   #paneRow { min-height: 30vh }
   .drawer { flex: 0 1 auto; min-height: 0; max-height: 40vh; overflow: auto; background: var(--surface); border-top: 1px solid var(--line); padding: 8px 14px }
+  /* names and values PR code controls: a long one wraps rather than scroll the drawer sideways */
+  #dataBody, #actionsBody, .dataTable td { overflow-wrap: anywhere }
   .drawerHead { display: flex; align-items: center; gap: 10px; position: sticky; top: -8px; background: var(--surface); padding: 2px 0 6px }
   .drawerHead h2 { font-size: 14px; margin: 0 }
   .dataHead, .dataToggles { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px }

@@ -92,13 +92,16 @@ What changed in each release, newest first. A 0.x minor version may break the in
     - `bootSession` takes `deps.capture`;
     - the demo has an inspector, and **#106**, whose *Empty cart* deletes the saved carts too.
   - **The harness shows them:**
-    - **Data** (`d`): the trust chip, Snapshot now and Re-baseline, both spans, divergence and each pane's changes, and a badge counting the PR-only destructive changes;
-    - **Actions** (`a`): each reported action with the requests it set off, read on from its cursor, and from 0 again for another session or a `resync`.
+    - **Data** (`d`): the trust chip, Snapshot now and Re-baseline, both spans, divergence and each pane's changes, and a badge counting the red flags;
+    - **Actions** (`a`): each reported action with the requests it most likely set off, grouped by the documented rule, read on from its cursor while open and in view, and from 0 again for another session.
 
-    Both draw what PR code controls as text only.
+    Both draw what PR code controls as text only, set apart, with its control characters shown as codes, and at most a few hundred items.
   - **What breaks:** `/api/state` has `data: {available}`, so a test that compares it whole must add it.
-- **The harness's Content-Security-Policy is tighter:** `script-src 'self'; object-src 'none'; base-uri 'none'; frame-src <pane origins>`, beside `frame-ancestors 'self'`.
-  - **What breaks:** a harness page changed to load a script from elsewhere, or inline, no longer runs it. A test that compares the harness's `Content-Security-Policy` must expect the new one.
+- **The harness's Content-Security-Policy is tighter:** `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src <pane origins>`, beside `frame-ancestors 'self'`. With a pane origin that can't be named (an IPv6 literal), `frame-src` is `http: https:`.
+  - **What breaks:**
+    - a harness page changed to load a script, or anything else, from elsewhere, or a script inline, no longer gets it;
+    - a pane's navigation to another origin inside its frame (an SSO or OAuth hop, a hosted payment page, a redirect to another host) shows the browser's error page: open the pane in a new tab for such a flow;
+    - a test that compares the harness's `Content-Security-Policy` must expect the new one.
 
 ### The Docker Provisioner
 

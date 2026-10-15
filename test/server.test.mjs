@@ -613,6 +613,9 @@ test('/api/state reports the harness origin', async () => {
   }
 })
 
+// The harness's own policy, before its frame-src (#8).
+const HARNESS_CSP_HEAD = "frame-ancestors 'self'; default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'"
+
 // A `::1` bind derives http://[::1]:<port>, and a CSP source can't name an
 // IPv6 literal: no harness could frame the panes.
 test('an IPv6-literal harness origin is logged as an error naming a localhost origin to use', async () => {
@@ -625,16 +628,16 @@ test('an IPv6-literal harness origin is logged as an error naming a localhost or
       errorLines.join('\n'),
     )
     assert.equal((await raw(base, { path: '/x' })).headers['content-security-policy'], "frame-ancestors 'self'")
-    // nor frame-src: the harness's own policy leaves it out rather than refuse the panes
+    // nor frame-src: the harness's own policy frames any http(s) origin rather than refuse the panes
     const { harness } = await allPorts(c)
-    assert.equal((await raw(harness, { path: '/qa/' })).headers['content-security-policy'], "frame-ancestors 'self'; script-src 'self'; object-src 'none'; base-uri 'none'")
+    assert.equal((await raw(harness, { path: '/qa/' })).headers['content-security-policy'], `${HARNESS_CSP_HEAD}; frame-src http: https:`)
   } finally { c.stop() }
 })
 
 // --- 0.3.0: frame locks ----------------------------------------------------------
 
 // #8: the harness also runs only its own scripts and frames only the panes
-const HARNESS_CSP = "frame-ancestors 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-src https://h.ts.net:8443 https://h.ts.net:10000"
+const HARNESS_CSP = `${HARNESS_CSP_HEAD}; frame-src https://h.ts.net:8443 https://h.ts.net:10000`
 const HARNESS_FRAME = { 'content-security-policy': HARNESS_CSP, 'x-frame-options': 'SAMEORIGIN', 'referrer-policy': 'strict-origin-when-cross-origin' }
 const frameHeaders = res => Object.fromEntries(Object.keys(HARNESS_FRAME).map(k => [k, res.headers[k]]))
 
@@ -858,6 +861,13 @@ test('startConductor refuses a harness origin, explicit or derived from publicHo
       assert.equal((await api(port, 'GET', '/api/state')).status, 'idle', JSON.stringify(paneOrigins))
     } finally { c.stop() }
   }
+  // and the harness, which can't name an unparseable one in frame-src,
+  // frames any http(s) origin rather than none
+  const { c } = makeWorld({ cfg: { publicHost: null, paneOrigins: { base: 'not a url', pr: 'https://h:10000' } } })
+  try {
+    const port = await harnessPort(c)
+    assert.equal((await raw(port, { path: '/qa/' })).headers['content-security-policy'], `${HARNESS_CSP_HEAD}; frame-src http: https:`)
+  } finally { c.stop() }
 })
 
 // --- 0.3.1: the browser's own cookies ----------------------------------------------
@@ -3610,7 +3620,7 @@ test('the action log is the running session\'s: empty before ready, gone at a te
   } finally { w.c.stop() }
 })
 
-test('GET /api/actions reads on from `after`, at most `limit` requests at a time', async () => {
+test('GET /api/actions reads on from `after`, at most `limit` requests and marks at a time', async () => {
   const { w, ports } = await readyWorld()
   const actions = async q => JSON.parse((await raw(ports.harness, { path: `/qa/api/actions${q}` })).body)
   try {
