@@ -42,3 +42,28 @@ test('the rejection\'s cause is execFile\'s error, and maxBuffer bounds the outp
   assert.equal(over.code, 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')
   assert.equal((await small(...write100, { maxBuffer: 1000 })).stdout.length, 100)
 })
+
+// A caller that set a timeout must tell a timed-out child from one that
+// failed: the rejection says it was killed, and by which signal. A child
+// that ignores SIGTERM (as the docker CLI does under sig-proxy) dies of
+// a killSignal of SIGKILL.
+test('a child killed for its timeout rejects with killed and the signal, even one that ignores SIGTERM under SIGKILL', async () => {
+  const exec = makeExecFileFn()
+  const sleeps = [process.execPath, ['-e', 'setTimeout(() => {}, 10000)']]
+  const plain = await exec(...sleeps, { timeout: 100 }).then(() => assert.fail('should reject'), e => e)
+  assert.deepEqual([plain.killed, plain.signal], [true, 'SIGTERM'])
+  const stubborn = [process.execPath, ['-e', "process.on('SIGTERM', () => {}); setTimeout(() => {}, 10000)"]]
+  const began = Date.now()
+  const hard = await exec(...stubborn, { timeout: 100, killSignal: 'SIGKILL' }).then(() => assert.fail('should reject'), e => e)
+  assert.deepEqual([hard.killed, hard.signal], [true, 'SIGKILL'])
+  assert.ok(Date.now() - began < 5000, `${Date.now() - began} ms`)
+  // a failure that isn't a kill says so
+  const failed = await exec(process.execPath, ['-e', 'process.exit(2)']).then(() => assert.fail('should reject'), e => e)
+  assert.deepEqual([failed.killed, failed.signal], [false, null])
+  // and a call its signal aborted rejects as an AbortError, as execFile's own does
+  const ac = new AbortController()
+  const call = exec(...sleeps, { signal: ac.signal })
+  ac.abort()
+  const aborted = await call.then(() => assert.fail('should reject'), e => e)
+  assert.equal(aborted.name, 'AbortError')
+})

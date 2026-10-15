@@ -518,14 +518,17 @@ test('runtime keeps what docker version said when docker info fails, and fails o
   await assert.rejects(createDocker({ execFileFn: recordingExec([down]) }).runtime(), e => e === down)
 })
 
-// A wedged daemon must not hold the boot at the probe for ever.
-test('runProbe gives docker run a timeout, 30 s unless told otherwise', async () => {
+// A wedged daemon must not hold the boot at the probe for ever. The docker
+// CLI passes SIGTERM on to the container, whose bash, as PID 1, ignores it:
+// so SIGKILL. And a teardown's abort stops it too.
+test('runProbe gives docker run a timeout, 30 s unless told otherwise, then SIGKILL, and the boot\'s signal', async () => {
   const opts = []
   const exec = async (file, args, o) => { opts.push(o ?? null); return { stdout: 'probe done\n' } }
   const docker = createDocker({ execFileFn: exec })
+  const { signal } = new AbortController()
   await docker.runProbe('qa-probe-pr', 'qa-session-pr', 'x', [])
-  await docker.runProbe('qa-probe-pr', 'qa-session-pr', 'x', [], { timeoutMs: 50 })
-  assert.deepEqual(opts, [{ timeout: 30_000 }, { timeout: 50 }])
+  await docker.runProbe('qa-probe-pr', 'qa-session-pr', 'x', [], { timeoutMs: 50, signal })
+  assert.deepEqual(opts, [{ timeout: 30_000, killSignal: 'SIGKILL' }, { timeout: 50, killSignal: 'SIGKILL', signal }])
 })
 
 // What docker said, for a reason a person reads: the first line that says

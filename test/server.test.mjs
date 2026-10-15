@@ -3353,6 +3353,19 @@ test('a BuildConvention that runs the PR\'s code on this host makes the verdict 
     assert.deepEqual([st.isolation.verdict, st.isolation.reasons], want)
     assert.ok(loose.calls.some(x => x[0] === 'isolation'), 'the probe still ran')
   } finally { loose.c.stop() }
+
+  // known at the start, so a build that then fails leaves it said
+  const failing = makeWorld()
+  failing.adapters.build.isolation = 'shared-host'
+  failing.adapters.build.ensureBuilt = async () => { throw new Error('pnpm install failed') }
+  failing.adapters.provisioner.isolation = isolatedCheck(failing.calls)
+  try {
+    const port = await harnessPort(failing.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const st = await waitFor(async () => { const s = await api(port, 'GET', '/api/state'); return s.status === 'error' && s })
+    assert.equal(st.error.step, 'ensuring-image')
+    assert.deepEqual([st.isolation.verdict, st.isolation.reasons], want)
+  } finally { failing.c.stop() }
 })
 
 test('a session\'s verdict goes with it: /api/state says null once it is torn down', async () => {

@@ -16,13 +16,13 @@ const WORK = '/work'
 const PASSWORD = /^[0-9a-f]{48}$/
 
 // Every docker CLI call, with the env it was given; image inspect answers, so
-// nothing is pulled. `answer(args)` may return an Error for a call to reject
+// nothing is pulled. `answer(args, opts)` may return (or resolve to) an Error for a call to reject
 // with, or a string for its stdout.
 function recordingExec({ answer = () => null } = {}) {
   const calls = []
   const fn = async (file, args, opts = {}) => {
-    calls.push({ file, args, env: opts.env ?? null, timeout: opts.timeout ?? null })
-    const out = answer(args)
+    calls.push({ file, args, env: opts.env ?? null, timeout: opts.timeout ?? null, killSignal: opts.killSignal ?? null, signal: opts.signal ?? null })
+    const out = await answer(args, opts)
     if (out instanceof Error) throw out
     return { stdout: out ?? '' }
   }
@@ -564,12 +564,12 @@ function probeDocker({
   version = 'Server: Docker Engine - Community\n', os = 'Ubuntu 24.04.1 LTS\n', gateway = '172.20.0.1 \n',
   base = '172.19.0.2 \n', pr = '172.20.0.3 \n', probe = 'self 172.20.0.3:5432\nprobe done\n',
 } = {}) {
-  return args => {
+  return (args, opts) => {
     if (args[0] === 'version') return version
     if (args[0] === 'info') return os
     if (args[0] === 'network' && args[1] === 'inspect') return gateway
     if (args[0] === 'inspect') return args.at(-1) === 'qa-pg-pr' ? pr : base
-    if (args[0] === 'run' && args.includes('qa-probe-pr')) return probe
+    if (args[0] === 'run' && args.includes('qa-probe-pr')) return typeof probe === 'function' ? probe(opts) : probe
     return null
   }
 }
@@ -617,10 +617,10 @@ test('the probe runs on the PR network once both databases exist and before any 
   assert.equal(probeRun(s.exec).timeout, 30_000)
 
   // every address the base database has, on every network it joined
-  const multi = makeSession({ answer: probeDocker({ base: '172.19.0.2 10.9.0.4 \n' }) })
+  const multi = makeSession({ answer: probeDocker({ base: '172.19.0.2 10.9.0.4 \n', pr: '172.20.0.3 10.8.0.5 \n' }) })
   await multi.provisioner.isolation({ canary: CANARY })
   const multiArgs = probeArgs(probeRun(multi.exec))
-  assert.deepEqual(multiArgs.slice(multiArgs.indexOf('--') + 1), ['172.19.0.2:5432', '10.9.0.4:5432', '--', '172.20.0.3:5432'])
+  assert.deepEqual(multiArgs.slice(multiArgs.indexOf('--') + 1), ['172.19.0.2:5432', '10.9.0.4:5432', '--', '172.20.0.3:5432', '10.8.0.5:5432'])
 })
 
 test('the probe\'s verdict: reachable on any hit, unknown when it can\'t tell, isolated otherwise', async () => {
@@ -749,19 +749,26 @@ test('the probe script stops before probing when a tool it needs is missing or d
 
   const gnuTimeout = '#!/bin/sh\nshift\nexec "$@"\n'
   const oldBusyBox = '#!/bin/sh\n[ "$1" = -t ] || { echo "timeout: invalid option" >&2; exit 1; }\nshift 2\nexec "$@"\n'
+  // a tool that is there but does nothing: the listener pipes through cat
+  // into grep, so the preflight does too
+  const silent = '#!/bin/sh\nexit 0\n'
+  const finds = '#!/bin/sh\nexit 1\n'
   const kits = {
     'no timeout': { tools: ['cat', 'grep'] },
-    'an old BusyBox timeout': { tools: ['cat', 'grep'], timeout: oldBusyBox },
-    'no grep': { tools: ['cat'], timeout: gnuTimeout },
-    'no cat': { tools: ['grep'], timeout: gnuTimeout },
+    'an old BusyBox timeout': { tools: ['cat', 'grep'], shims: { timeout: oldBusyBox } },
+    'no grep': { tools: ['cat'], shims: { timeout: gnuTimeout } },
+    'no cat': { tools: ['grep'], shims: { timeout: gnuTimeout } },
+    'a cat that copies nothing': { tools: ['grep'], shims: { timeout: gnuTimeout, cat: silent } },
+    'a grep that finds nothing': { tools: ['cat'], shims: { timeout: gnuTimeout, grep: finds } },
   }
   const dirs = []
   try {
-    for (const [kit, { tools, timeout }] of Object.entries(kits)) {
+    for (const [kit, { tools, shims = {} }] of Object.entries(kits)) {
       const dir = mkdtempSync(join(tmpdir(), 'qa-probe-kit-'))
       dirs.push(dir)
       for (const tool of ['bash', ...tools]) symlinkSync(which(tool), join(dir, tool))
-      if (timeout) { writeFileSync(join(dir, 'timeout'), timeout); chmodSync(join(dir, 'timeout'), 0o755) }
+      for (const [name, body] of Object.entries(shims)) { writeFileSync(join(dir, name), body); chmodSync(join(dir, name), 0o755) }
+      const timeout = shims.timeout
       // what a shim execs to show it works
       if (timeout) symlinkSync(which('true'), join(dir, 'true'))
       const err = await new Promise(resolve => {
@@ -782,12 +789,46 @@ test('the probe script stops before probing when a tool it needs is missing or d
   }
 })
 
-test('a probe that doesn\'t finish within its time is stopped and removed, and the verdict is unknown', async () => {
-  const s = makeSession({ answer: probeDocker({ probe: Object.assign(new Error('docker run: Command failed'), { killed: true, signal: 'SIGTERM' }) }) })
+// The docker CLI under a wedged daemon, or passing SIGTERM on to a bash
+// that ignores it: a real child that ignores SIGTERM, run with the options
+// runProbe gives, through the real exec wrapper.
+test('a probe that doesn\'t finish within its time is killed and its container removed, and the verdict is unknown', async () => {
+  const { makeExecFileFn } = await import('../lib/exec.mjs')
+  const stubborn = opts => makeExecFileFn()(process.execPath, ['-e', "process.on('SIGTERM', () => {}); setTimeout(() => {}, 20000)"], opts).then(r => r.stdout, err => err)
+  const s = makeSession({ answer: probeDocker({ probe: stubborn }), provisionerOptions: { probeTimeoutMs: 300 } })
+  const began = Date.now()
   const out = await s.provisioner.isolation({ canary: CANARY })
-  assert.deepEqual(out, { verdict: 'unknown', reasons: ['the probe didn\'t finish within 30 s, so it can\'t say what the PR pane reaches'] })
+  assert.ok(Date.now() - began < 5_000, `${Date.now() - began} ms`)
+  assert.deepEqual(out, { verdict: 'unknown', reasons: ['the probe didn\'t finish within 300 ms, so it can\'t say what the PR pane reaches'] })
+  assert.deepEqual([probeRun(s.exec).timeout, probeRun(s.exec).killSignal], [300, 'SIGKILL'])
   assert.equal(docker(s.exec).at(-1).args.join(' '), 'rm -f -v qa-probe-pr')
-  const quick = makeSession({ answer: probeDocker(), provisionerOptions: { probeTimeoutMs: 5_000 } })
-  await quick.provisioner.isolation({ canary: CANARY })
-  assert.equal(probeRun(quick.exec).timeout, 5_000)
+
+  // an exec that never settles at all is bounded too
+  const never = makeSession({ answer: probeDocker({ probe: () => new Promise(() => {}) }), provisionerOptions: { probeTimeoutMs: 100 } })
+  const stuck = await never.provisioner.isolation({ canary: CANARY })
+  assert.equal(stuck.verdict, 'unknown')
+  assert.match(stuck.reasons[0], /^the probe didn't finish within 100 ms/)
+  assert.equal(docker(never.exec).at(-1).args.join(' '), 'rm -f -v qa-probe-pr')
+
+  // 30 s unless told otherwise, said in seconds; and the boot's signal goes along
+  const ac = new AbortController()
+  const plain = makeSession({ answer: probeDocker() })
+  await plain.provisioner.isolation({ signal: ac.signal, canary: CANARY })
+  assert.deepEqual([probeRun(plain.exec).timeout, probeRun(plain.exec).signal], [30_000, ac.signal])
+  const late = makeSession({ answer: probeDocker({ probe: Object.assign(new Error('docker run: Command failed'), { killed: true, signal: 'SIGKILL' }) }) })
+  assert.match((await late.provisioner.isolation({ canary: CANARY })).reasons[0], /^the probe didn't finish within 30 s/)
+})
+
+// A teardown or takeover mid-probe aborts it: the run stops, and the boot
+// with it (the PR pane's teardown removes the container).
+test('a probe aborted mid-run rejects as aborted', async () => {
+  const ac = new AbortController()
+  const s = makeSession({
+    answer: probeDocker({
+      probe: opts => new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })))),
+    }),
+  })
+  const running = s.provisioner.isolation({ signal: ac.signal, canary: CANARY })
+  setTimeout(() => ac.abort(), 20)
+  await assert.rejects(running, err => err.name === 'AbortError')
 })
