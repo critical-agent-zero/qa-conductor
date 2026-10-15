@@ -1032,6 +1032,26 @@ test('GET /__qa/enter with a live ticket answers 303 to its path with the pane c
   assert.deepEqual(hits, [])
 })
 
+// The hop after the 303, as Chromium sends it (checked against the demo):
+// Sec-Fetch-Site covers the whole chain from the harness, so it is
+// same-site, and the Referer is the harness page's, the request's referrer,
+// never the /__qa/enter URL. Only that Referer admits the hop: a
+// no-referrer on the 303 would get every pane entry refused.
+test('the hop after /__qa/enter gets in on the harness\'s Referer alone, and the app sees no ticket', async (t) => {
+  const seen = []
+  const { proxyPort } = await setupCap(t, (req, res) => { seen.push([req.url, req.headers.referer ?? null]); res.end('app') })
+  const frame = { ...PANE_HOST, ...FROM_HARNESS, 'sec-fetch-dest': 'iframe' }
+  const entered = await request(proxyPort, '/__qa/enter?t=tick', { headers: frame })
+  const cookie = entered.headers['set-cookie'][0].split(';')[0]
+  const landing = entered.headers.location.split('#')[0]
+  const { referer, ...noReferer } = frame
+  const refused = await request(proxyPort, landing, { headers: { ...noReferer, cookie } })
+  assert.deepEqual([refused.status, refused.body.toString()], [403, '403: cross-site framing refused\n'])
+  const admitted = await request(proxyPort, landing, { headers: { ...frame, cookie } })
+  assert.deepEqual([admitted.status, admitted.body.toString()], [200, 'app'])
+  assert.deepEqual(seen, [['/landing?x=1', referer]])
+})
+
 test('/__qa/enter still sits behind the Host allowlist and the pane request guard', async (t) => {
   const { proxyPort } = await setupCap(t, (req, res) => res.end('app'))
   const misdirected = await request(proxyPort, '/__qa/enter?t=tick', { headers: { host: 'attacker.example', ...FROM_HARNESS } })
