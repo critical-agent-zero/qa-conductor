@@ -443,6 +443,12 @@ test('psql builds the exact docker exec argv and returns stdout', async () => {
 // What makeExecFileFn rejects with: the CLI's stderr in `stderr`, and after
 // a "Command failed" line in the message.
 const dockerFailure = stderr => Object.assign(new Error(`docker rm: Command failed: docker …\n${stderr}`), { stderr })
+// What Podman may write to stderr before its error, which says nothing of
+// it: the podman-docker shim's banner on every call, and rootless Podman's
+// logger warnings, in its pipe format and its TTY one.
+const SHIM_BANNER = 'Emulate Docker CLI using podman. Create /etc/containers/nodocker to quiet msg.'
+const LOGRUS_PIPE = 'time="2026-10-15T10:00:00Z" level=warning msg="The cgroupv2 manager is set to systemd but there is no systemd user session available"'
+const LOGRUS_TTY = 'WARN[0000] Using cgroups-v1 which is deprecated in favor of cgroups-v2 with Podman v5 and will be removed in a future version.'
 
 test('rmForce removes all names in one call, and tolerates only names already gone', async () => {
   const exec = recordingExec()
@@ -455,8 +461,12 @@ test('rmForce removes all names in one call, and tolerates only names already go
     new Error('No such container'),
     dockerFailure('Error response from daemon: No such container: qa-migrate-base\n'),
     dockerFailure('Error: No such container: a\nError: No such container: b\n'),
-    // Podman's wording
+    // Podman's wording, after what it may write first: the podman-docker
+    // shim's banner, and its logger's warnings (as a pipe, then a TTY, gets them)
     dockerFailure('Error: no container with name or ID "a" found: no such container\n'),
+    dockerFailure(`${SHIM_BANNER}\nError: no container with name or ID "a" found: no such container\n`),
+    dockerFailure(`${LOGRUS_PIPE}\nError: no container with name or ID "a" found: no such container\n`),
+    dockerFailure(`${LOGRUS_TTY}\nError: no container with name or ID "a" found: no such container\n`),
   ]) {
     await createDocker({ execFileFn: recordingExec([err]) }).rmForce(['a', 'b'])
   }
@@ -496,8 +506,20 @@ test('createNetwork and rmNetwork build exact argv; rmNetwork tolerates only a n
     dockerFailure('Error: unable to find network with name or ID qa-session-base: network not found\n'),
     dockerFailure('Error response from daemon: network not found\n'),
     dockerFailure('Error response from daemon: unable to find network with name or ID qa-session-base: network not found\n'),
+    dockerFailure(`${SHIM_BANNER}\nError: unable to find network with name or ID qa-session-base: network not found\n`),
+    dockerFailure(`${LOGRUS_PIPE}\n${LOGRUS_TTY}\nError: unable to find network with name or ID qa-session-base: network not found\n`),
   ]) {
     await createDocker({ execFileFn: recordingExec([err]) }).rmNetwork('gone')
+  }
+  // what Podman writes first is no failure, but no answer either: only the
+  // lines after it say whether the network is gone
+  for (const err of [
+    dockerFailure(`${SHIM_BANNER}\n`),
+    dockerFailure(`${LOGRUS_PIPE}\n`),
+    dockerFailure(`${SHIM_BANNER}\n${LOGRUS_TTY}\nError: "qa-session-pr" has associated containers with it. Use -f to forcibly delete containers and pods: network is being used\n`),
+    dockerFailure('time="2026-10-15T10:00:00Z" level=error msg="network not found"\nError: network qa-session-pr is in use\n'),
+  ]) {
+    await assert.rejects(createDocker({ execFileFn: recordingExec([err]) }).rmNetwork('qa-session-pr'), e => e === err, err.stderr)
   }
   // still in use (a container that didn't come down), or no daemon, or
   // anything that merely mentions a missing network on the way

@@ -276,15 +276,18 @@ test('teardown and sweep reject when docker can\'t remove a container or network
 // would never open.
 test('on Podman, sweep and teardown take containers and networks already gone for gone', async () => {
   const fail = stderr => Object.assign(new Error(`docker: Command failed\n${stderr}`), { stderr })
+  // the podman-docker shim writes its banner first, on every call
+  const banner = 'Emulate Docker CLI using podman. Create /etc/containers/nodocker to quiet msg.\n'
   const podman = {
-    cli: name => `Error: unable to find network with name or ID ${name}: network not found\n`,
-    compat: () => 'Error response from daemon: network not found\n',
+    cli: { first: '', missing: name => `Error: unable to find network with name or ID ${name}: network not found\n` },
+    shim: { first: banner, missing: name => `Error: unable to find network with name or ID ${name}: network not found\n` },
+    compat: { first: '', missing: () => 'Error response from daemon: network not found\n' },
   }
-  for (const [via, missing] of Object.entries(podman)) {
+  for (const [via, { first, missing }] of Object.entries(podman)) {
     const answer = args => {
       if (args[0] === 'ps') return 'c0ffee\n'
-      if (args[0] === 'rm') return fail(`Error: no container with name or ID "${args.at(-1)}" found: no such container\n`)
-      if (args[0] === 'network' && args[1] === 'rm') return fail(missing(args[2]))
+      if (args[0] === 'rm') return fail(`${first}Error: no container with name or ID "${args.at(-1)}" found: no such container\n`)
+      if (args[0] === 'network' && args[1] === 'rm') return fail(`${first}${missing(args[2])}`)
       if (args[0] === 'network' && args[1] === 'ls') return ''
       return null
     }
