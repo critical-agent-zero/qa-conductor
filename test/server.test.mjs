@@ -2600,6 +2600,91 @@ test('a try to enrol that waits keeps no timer that holds the process', async ()
   } finally { w.c.stop() }
 })
 
+// A try whose client went away stops waiting then: it must not wait on, and
+// enrol a browser nobody holds once the sweep is done.
+test('a try to enrol whose client goes away mid-wait enrols nobody once the sweep is done', async () => {
+  const sweepGate = deferred()
+  const w = makeWorld({ sweepGate, pacing: { enrolWaitMs: 60_000 } })
+  try {
+    const port = await harnessPort(w.c)
+    const enrolled = w.capability.size()
+    let closed
+    const gone = new Promise(resolve => { closed = resolve })
+    const taken = new Promise(resolve => w.c.servers.harness.on('request', (req, res) => {
+      if (req.url.endsWith('/api/enrol')) { res.on('close', closed); setTimeout(resolve, 20) }
+    }))
+    const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/qa/api/enrol', headers: JSON_TYPE, agent: false })
+    req.on('error', () => {})
+    req.end('{}')
+    await taken
+    req.destroy()
+    await gone
+    sweepGate.resolve()
+    await waitFor(() => w.calls.some(x => x[0] === 'sweep-done'))
+    await new Promise(r => setTimeout(r, 50))
+    assert.equal(w.capability.size(), enrolled)
+  } finally { w.c.stop() }
+})
+
+// One wait may follow another: a reviewer's teardown that fails starts a
+// cleanup teardown, and a try that began during the first waits for the
+// second too, within the same three seconds.
+test('a try to enrol made during a failing teardown waits for the cleanup after it, and enrols', async () => {
+  let pr = 0
+  const first = deferred()
+  const second = deferred()
+  const w = makeWorld({
+    provisioner: {
+      teardown: async ({ paneRef }) => {
+        if (paneRef.role !== 'pr') return
+        pr++
+        if (pr === 1) { await first.promise; throw new Error('docker is down') }
+        if (pr === 2) await second.promise
+      },
+    },
+    pacing: {},
+  })
+  try {
+    const port = await harnessPort(w.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    const torn = api(port, 'POST', '/api/teardown')
+    await waitFor(() => pr === 1)
+    const trying = enrolment(port)
+    await new Promise(r => setTimeout(r, 50))
+    first.resolve() // the teardown fails; its cleanup starts and holds
+    await waitFor(() => pr === 2)
+    await new Promise(r => setTimeout(r, 50))
+    second.resolve()
+    assert.equal(await trying, 'open')
+    await torn
+  } finally { w.c.stop() }
+})
+
+// The gap runs from when a retried run settles too: a sweep that takes
+// longer than the gap to fail isn't run again the moment it has.
+test('a slow retried sweep that fails isn\'t run again until the gap has passed since it failed', async () => {
+  let t = 1_000_000
+  let sweeps = 0
+  const w = makeWorld({
+    // the time passes while it runs, after it started
+    provisioner: { sweep: async () => { sweeps++; await null; if (sweeps > 1) t += 6_000; throw new Error('docker unavailable') } },
+    pacing: { now: () => t, enrolWaitMs: 0 },
+  })
+  const failures = () => w.errorLines.filter(l => l.includes('startup sweep failed')).length
+  try {
+    const port = await harnessPort(w.c)
+    await waitFor(() => failures() === 1)
+    assert.equal(await enrolment(port), SWEEPING)
+    await waitFor(() => failures() === 2)
+    assert.equal(await enrolment(port), SWEEP_FAILED, 'it took 6 s to fail, but failed just now')
+    assert.equal(sweeps, 2)
+    t += 5_000
+    assert.equal(await enrolment(port), SWEEPING)
+    assert.equal(sweeps, 3)
+  } finally { w.c.stop() }
+})
+
 // Date.now can stand still or step back (NTP, a laptop's sleep); the
 // spacing must still run out.
 test('retry spacing runs on a clock that only goes forward', async () => {
@@ -2918,9 +3003,13 @@ test('a pane cookie lasts one session: a teardown, a boot and a ready each give 
     assert.equal(await status(base, second), 403)
     const midBoot = await enter('base')
     assert.equal(await status(base, midBoot), 503, 'admitted, with no app yet')
+    // a ticket asked for mid-boot, not yet spent, is that boot's too
+    const unspent = new URL(JSON.parse((await raw(harness, { method: 'POST', path: '/qa/api/pane-entry', headers: { ...JSON_TYPE, ...cap }, body: '{"role":"base","to":"/"}' })).body).url)
     hang[8].resolve()
     await ready()
     assert.equal(await status(base, midBoot), 403)
+    const late = await raw(base, { path: unspent.pathname + unspent.search, cap: false, headers: { host: unspent.host, 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'navigate', referer: 'https://h.ts.net:8444/' } })
+    assert.deepEqual([late.status, late.headers['x-qa-refusal'], late.headers['set-cookie']], [403, 'capability', undefined])
     assert.equal(await status(base, await enter('base')), 200)
   } finally { w.c.stop() }
 })

@@ -481,6 +481,9 @@ test('rmForce removes all names in one call, and tolerates only names already go
     dockerFailure('Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n'),
     dockerFailure('Error response from daemon: No such container: a\nError response from daemon: cannot remove container "/b": could not kill: permission denied\n'),
     new Error('spawn docker ENOENT'),
+    // Podman's logger's errors are kept (its warnings aren't)
+    dockerFailure('ERRO[0000] cannot kill container b: permission denied\nError: no container with name or ID "a" found: no such container\n'),
+    dockerFailure('time="2026-10-15T10:00:00Z" level=error msg="cleaning up container b"\nError: no container with name or ID "a" found: no such container\n'),
   ]) {
     await assert.rejects(createDocker({ execFileFn: recordingExec([err]) }).rmForce(['a', 'b']), e => e === err, err.message)
   }
@@ -588,6 +591,10 @@ test('createNetwork and rmNetwork build exact argv; rmNetwork tolerates only a n
     dockerFailure(`${LOGRUS_PIPE}\n`),
     dockerFailure(`${SHIM_BANNER}\n${LOGRUS_TTY}\nError: "qa-session-pr" has associated containers with it. Use -f to forcibly delete containers and pods: network is being used\n`),
     dockerFailure('time="2026-10-15T10:00:00Z" level=error msg="network not found"\nError: network qa-session-pr is in use\n'),
+    // Podman's logger's errors are kept, so they say something went wrong,
+    // however "already gone" the rest reads
+    dockerFailure('time="2026-10-15T10:00:00Z" level=error msg="failed to tear down the network namespace"\nError: No such network: qa-session-pr\n'),
+    dockerFailure('ERRO[0000] failed to tear down the network namespace\nError: unable to find network with name or ID qa-session-pr: network not found\n'),
   ]) {
     await assert.rejects(createDocker({ execFileFn: recordingExec([err]) }).rmNetwork('qa-session-pr'), e => e === err, err.stderr)
   }
