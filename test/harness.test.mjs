@@ -26,6 +26,12 @@ test('isolationLabel: nothing before a verdict, else what it says, its reasons a
   assert.deepEqual(isolationLabel({ verdict: 'unknown', reasons: ['c'] }), { text: 'isolation unknown', warn: true, title: 'c' })
   assert.deepEqual(isolationLabel({ verdict: 'shared-host', reasons: ['d'] }), { text: 'shared host', warn: true, title: 'd' })
   assert.deepEqual(isolationLabel({ verdict: 'bogus', reasons: [] }), { text: 'isolation unknown', warn: true, title: '' })
+  // strict mode, said beside the verdict
+  const STRICT = 'QA_REQUIRE_ISOLATION=1 refuses a session that isn\'t isolated'
+  assert.deepEqual(isolationLabel({ verdict: 'reachable', reasons: ['a'] }, true), { text: 'not isolated · strict', warn: true, title: `a — ${STRICT}` })
+  assert.deepEqual(isolationLabel({ verdict: 'bogus', reasons: [] }, true), { text: 'isolation unknown · strict', warn: true, title: STRICT })
+  assert.equal(isolationLabel({ verdict: 'isolated', reasons: [] }, true).text, 'isolated · strict')
+  assert.equal(isolationLabel(null, true), null)
 })
 
 test('isCapabilityRefusal: a 403 marked by its header or, the header dropped, by its body', () => {
@@ -350,6 +356,18 @@ test('the header chip shows the session\'s isolation verdict, with its reasons a
   })
   await idle.settle()
   assert.equal(chip(idle).hidden, true)
+
+  // strict mode, as /api/state says it, beside the verdict
+  const strict = fakeBrowser({
+    hash: '#/pr/7',
+    stored: 'tok-1',
+    routes: {
+      'GET /qa/api/state': { body: { status: 'ready', pr: 7, panes: PANES, requireIsolation: true, isolation: { verdict: 'isolated', reasons: [] } } },
+      'POST /qa/api/pane-entry': entryRoute,
+    },
+  })
+  await strict.settle()
+  assert.equal(chip(strict).textContent, 'isolated · strict')
 })
 
 // #prList as the DOM has it, so far as the picker uses it: setting its text

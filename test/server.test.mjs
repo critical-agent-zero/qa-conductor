@@ -3394,3 +3394,60 @@ test('shared-host on macOS gives the declaration\'s reason alone', async () => {
     assert.deepEqual([st.isolation.verdict, st.isolation.reasons], ['shared-host', ['both panes run as one user on this host']])
   } finally { w.c.stop() }
 })
+
+// A check that ignores its signal can finish after a takeover: its verdict
+// is the cancelled session's, never the new one's.
+test('a superseded check\'s late verdict is never recorded for the session that replaced it', async () => {
+  const late = deferred()
+  let checks = 0
+  const w = makeWorld()
+  w.adapters.provisioner.isolation = async () => {
+    if (++checks === 1) { await late.promise; return { verdict: 'isolated', reasons: [] } }
+    return { verdict: 'reachable', reasons: ['the PR pane reached the base pane\'s database at 172.19.0.2:5432'] }
+  }
+  try {
+    const port = await harnessPort(w.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(() => checks === 1)
+    await api(port, 'POST', '/api/session', { pr: 8, takeover: true })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    late.resolve()
+    await new Promise(r => setTimeout(r, 50))
+    const st = await api(port, 'GET', '/api/state')
+    assert.deepEqual([st.pr, st.isolation.verdict], [8, 'reachable'])
+  } finally { w.c.stop() }
+})
+
+// Strict mode is set in the env file alone, so it must be seen: at startup,
+// in /api/state, and as an error when nothing could ever pass it here.
+test('strict mode says so at startup and in /api/state, and logs an error when every session would be refused', async () => {
+  const on = '[qa] QA_REQUIRE_ISOLATION on: a session whose PR pane isn\'t isolated from the base pane is refused'
+  const loose = makeWorld()
+  try {
+    const port = await harnessPort(loose.c)
+    assert.equal((await api(port, 'GET', '/api/state')).requireIsolation, false)
+    assert.equal(loose.logLines.includes(on), false)
+  } finally { loose.c.stop() }
+
+  // a check to run, on Linux on 127.0.0.1: it may pass
+  const check = async () => ({ verdict: 'isolated', reasons: [] })
+  const strict = makeWorld({ cfg: { requireIsolation: true }, provisioner: { isolation: check } })
+  try {
+    const port = await harnessPort(strict.c)
+    assert.equal((await api(port, 'GET', '/api/state')).requireIsolation, true)
+    assert.ok(strict.logLines.includes(on), strict.logLines.join('\n'))
+    assert.equal(strict.errorLines.some(l => l.includes('refuses every session')), false)
+  } finally { strict.c.stop() }
+
+  for (const [opts, isolation, reason] of [
+    [{}, 'shared-host', 'shared-host: both panes run as one user on this host'],
+    [{}, undefined, 'unknown: the Provisioner has no isolation check'],
+    [{ platform: 'darwin' }, check, 'reachable: on macOS, containers run in a VM'],
+  ]) {
+    const w = makeWorld({ cfg: { requireIsolation: true }, ...opts, ...(isolation === undefined ? {} : { provisioner: { isolation } }) })
+    try {
+      await harnessPort(w.c)
+      assert.ok(w.errorLines.some(l => l.startsWith(`[qa] QA_REQUIRE_ISOLATION=1 refuses every session here (${reason}`)), `${reason}\n${w.errorLines.join('\n')}`)
+    } finally { w.c.stop() }
+  }
+})
