@@ -317,7 +317,7 @@ The probe doesn't try the node's `tailscale serve` ports: every way through them
 
 ## The seams
 
-A boot runs these five seams in order: `ensureBuilt` → `provisionDatabase` (both panes) → the [isolation check](#isolation-verdicts) → per pane (`seedPane` → `reserveServices`) → `derivePaneEnv` (+ `runMigrate`) → `launchServices` → `waitHealthy` → `establishSession`. A sixth, [Exposure](#exposure-optional), is optional and outside the boot: it publishes the conductor itself. The shapes they pass each other are under [Types](#types).
+A boot runs these five seams in order: `ensureBuilt` → `provisionDatabase` (both panes) → the [isolation check](#isolation-verdicts) → per pane (`seedPane` → `reserveServices`) → `derivePaneEnv` (+ `runMigrate`) → `launchServices` → `waitHealthy` → `establishSession`. A sixth, [Exposure](#exposure-optional), is optional and outside the boot: it publishes the conductor itself. A seventh, the read-only **Inspector** (`adapters.inspector`), is optional too: right after each `seedPane`, and once `establishSession` is done, it lets the [data checks](#data-checks) read each pane's data. The shapes they pass each other are under [Types](#types).
 
 | Seam | Members | Owns |
 |---|---|---|
@@ -326,12 +326,14 @@ A boot runs these five seams in order: `ensureBuilt` → `provisionDatabase` (bo
 | **Seed** | `databases`, `seedPane({paneRef, db, databases, signal})` | Where each pane's data comes from and how it moves |
 | **EnvTransform** | `derivePaneEnv({prodEnv, pane}) → {service: env}` (pure) | Pointing a pane at its own DB and origin, and neutralizing side effects (email, payments, storage) |
 | **AuthBootstrap** | `requiresDb`, `establishSession({pane, operator, db?, signal}) → {landingUrl}`; optional `envContributions() → {service: env}` | Getting the reviewer logged in to each pane |
+| **Inspector** (optional) | `open({paneRef, db, databases, signal}) → {snapshot({limits, signal}) → Snapshot, close?()}`; optional `rules` | Reading each pane's data for the [data checks](#data-checks), and nothing else |
 
 The optional members degrade gracefully when absent:
 - With no `sweep`, nothing is cleaned up at startup, and enrolment trusts that no pane from an earlier run is still up.
 - With no `isolation`, every session's [isolation verdict](#isolation-verdicts) is `unknown`.
 - With no `logs`, failures show no log tail.
 - With no `describePrs`, every PR shows as `none`.
+- With no `inspector`, there are no data checks: `/api/state` says `data: {available: false}`, and the boot is as it was.
 
 The one exception: a build that declares `one-shot-image` migrations with a Provisioner that can't `runMigrate` fails the boot with a clear error.
 
@@ -350,7 +352,13 @@ What the seams pass each other. Any method above may return its result or a prom
 
 ### Contracts between the seams
 
-- **`db` is opaque to the core.** Whatever `provisionDatabase` returns as `db` is passed unchanged to `seedPane` and (when `requiresDb`) to `establishSession`. Its shape is a contract among a consumer's own adapters.
+- **`db` is opaque to the core.** Whatever `provisionDatabase` returns as `db` is passed unchanged to `seedPane`, to `inspector.open` and (when `requiresDb`) to `establishSession`. Its shape is a contract among a consumer's own adapters.
+- **The inspector reads, and never fails a boot.**
+  - **When it runs:** `open` is called right after each pane's `seedPane`, with the same `db`, and the probe it returns takes the `seeded` snapshot there, before anything of the PR's runs on that pane. Both probes take the `ready` snapshot once every pane is signed in, before the boot returns.
+  - **Read only:** a probe must only read. `close()`, if any, frees what the conductor's side holds, and must never touch the store.
+  - **Failures:** an `open` or `snapshot` that throws, returns nothing useful, or takes longer than `limits.timeoutMs` (30 s) fails nothing. Its pane shows why it has no data, and a probe that comes too late is closed unused.
+  - **Cancellation:** an aborted boot calls the inspector no more. Teardown, and the next boot, close the probes before the panes go.
+  - **Rules:** `rules` are the [data checks'](#data-checks) rules, which `startConductor` checks, throwing on bad ones.
 - **Cancellation (`signal`).** Teardown and takeover abort the in-flight boot. An aborted boot never tears anything down, even when the abort lands while its failure log tail is being read: whoever aborted it already did.
   - **Where the core checks it:**
     - between stages;
@@ -380,6 +388,14 @@ What the seams pass each other. Any method above may return its result or a prom
 ### Data checks
 
 The data checks compare snapshots of each pane's data. They show what a pane's data did between two snapshots, and where the PR pane's changes depart from the base pane's. They also flag the destructive ones. Both panes start from one seed and get the same mirrored actions, so a PR-only change is the PR's. The engine is [`@critical-labs/qa-conductor/data-diff`](#entry-points): pure functions with no I/O.
+
+With an [inspector](#the-seams), each session takes these snapshots of each pane, in memory only:
+- **`seeded`:** right after its seed, before anything of the PR's ran on it. `seeded` to `ready` is the **boot** span: what migrations and the sign-in did.
+- **`ready`:** once both panes are signed in, before the reviewer's first request. It is the baseline.
+- **`now`:** on **Snapshot now** (`POST /api/data/snapshot`). The baseline to `now` is the **session** span: what the reviewer's actions did.
+
+**Re-baseline** (`{rebaseline: true}`) makes now the baseline, after a manual sign-in, say. `GET /api/data` gives both spans: each pane's diff, their divergence, and the PR's flags, `trusted` or `advisory` by the session's isolation verdict. It never reaches the event stream, a log or GitHub. The event stream says only `{kind: 'capture', pane, phase, ok}`.
+
 
 - **A snapshot** is `{ collections: { name: Collection } }`. A **Collection** is `{ key, rows, count?, truncated?, fields? }`:
   - `rows` are plain JSON objects;
@@ -818,7 +834,7 @@ It can leave out `operatorEmail`, `publicHost`, `host` (loopback is the default)
 | | |
 |---|---|
 | `GET /` | harness UI |
-| `GET /api/state` | session status, tags, `buildRun: {url, status, conclusion, message}`, pane login URLs + origins, `harnessOrigin`, `isolation: {verdict, reasons, checkedAt}` ([Isolation verdicts](#isolation-verdicts); `null` until known for this session), `requireIsolation` |
+| `GET /api/state` | session status, tags, `buildRun: {url, status, conclusion, message}`, pane login URLs + origins, `harnessOrigin`, `isolation: {verdict, reasons, checkedAt}` ([Isolation verdicts](#isolation-verdicts); `null` until known for this session), `requireIsolation`, `data: {available}` (whether there is an inspector) |
 | `GET /api/prs` | open PRs with build readiness (`imageStatus`, `runUrl`, `reason`) |
 | `GET /api/build-status?pr=N` | `{pr, status, exists, runUrl}`, plus `reason` when `status` is `blocked` |
 | `GET /api/exposure` | the last [exposure](#exposure-optional) reconcile pass: `{mode, managed, ok, checkedAt, drift, added, error}`. Read-only: it never calls the front door. With no adapter, `managed` is `false` and `ok` and `checkedAt` are `null` |
@@ -830,6 +846,8 @@ It can leave out `operatorEmail`, `publicHost`, `host` (loopback is the default)
 | `POST /api/enrol` `{invite?}` | `{token}` for a new browser: while no PR code can be running, or with an invite's ticket at any time. The only `/api/*` route that needs no token |
 | `POST /api/invite` `{}` | `{url, expiresAt}`: a link to the harness that enrols one more browser, once, within ten minutes. `409` with no harness origin to link to |
 | `GET /api/actions?after=N&limit=M` | the ready session's [action log](#security), after sequence number `N` (default `0`): `{active, log, seq, more, resync, requests, marks, dropped, refused, marksDropped}`. `log` names the log: a new session's starts its `seq` again, so when `log` changes, or `active` is `false`, discard what you have and read from `0`. At most `M` new requests (default and most 2,000); `more` says there are others, and `seq` is where to read on from. A request is `{seq, pane, at, method, path, status, ms, bytes, aborted, mark}`, where `mark` is the `seq` of the mark it most likely came from, or `null` before any: of the marks no more than 300 ms after it started, its own pane's nearest within 300 ms, else the nearest (approximate). It is always a mark this read or an earlier one gave. A request already read whose mark a newer mark changes comes again, regrouped: replace it by its `seq`. At most `M` of those come too, so a read holds at most 2 × `M` requests; past that, `resync` is `true`, with no requests: discard what you have and read from `0`. A mark is `{seq, pane, at, type}`. Each pane keeps its last 5,000 requests, counting those `dropped`, and `refused` counts what its guards refused, by reason. With no session ready, `active` is `false`, `log` is `null` and the lists are empty. Reading it is no activity |
+| `GET /api/data` | the ready session's [data checks](#data-checks): `{available, active, trust, baselineAt, rebaselined, comparedAt, errors, problems, boot, session}`. `available` is `false` with no inspector, and `active` is `false` with no session ready. `boot` and `session` are each `{base, pr, divergence, flags}` (each pane's diff, `null` for a pane with none), or `null` before a snapshot. `errors` says, per pane, why one has no data. Values are masked where they may be secret. `no-store`, and reading it is no activity |
+| `POST /api/data/snapshot` `{rebaseline?}` | Snapshot now, or with `rebaseline: true` make now the baseline; answers as `GET /api/data`. Concurrent calls of one kind share a snapshot; one of the other kind meanwhile is `409`. `400` for a `rebaseline` that isn't `true` or `false`, `409` with no inspector or no session ready, and when the session ends while the snapshot runs. Activity |
 | `POST /api/actions/mark` `{pane, type}` | `{recorded}`: a mark for an action a pane reported, `pane` `base` or `pr`, `type` `click`, `submit`, `change` or `enter` (`400` for anything else). At most one of each kind a pane every 100 ms, from a budget of 2,000 a pane that refills one a second: `recorded` is `false` past them, counted per pane in `marksDropped`. `409` with no session ready. No activity |
 | `POST /api/pane-entry` `{role, to?}` | `{url}`: a one-time link, for one minute, that loads `role`'s pane (`base` or `pr`) at `to`, a path or URL on that pane (default `/`), and sets its pane cookie on the way. `400` for another role, or a `to` that leads off the pane; `409` while the pane has no origin, or one on another hostname than the harness's |
 
@@ -890,7 +908,7 @@ Open it at `127.0.0.1`: the panes trust only the harness origin, so at `localhos
 
 Demo mode runs the real conductor with fixture PRs and fake adapters, so you can try the whole harness with no GitHub, containers or databases. Everything listens on `127.0.0.1`: the harness on `PORT` (default `4100`), and the pane proxies and the two in-process pane apps on free ports. The demo is always ungated (`exposure: 'none'`), whatever its harness origin: it binds loopback, and nested in self-QA it sits behind the outer conductor's gate. It starts idle, so the browser that opens it enrols by itself ([Using the harness](#using-the-harness)), and so does one after a restart. `QA_DEMO_SPEED` scales the fake build and boot delays (default `1`; `0` makes them instant). Ctrl-C (or SIGTERM/SIGHUP) stops it.
 
-- **#101, #102** are built and open in seconds. **#103** is mid-build. **#104** builds, then its app crashes at *starting*, with a log tail. **#105** is refused by the trust gate (its head is in someone else's fork).
+- **#101, #102** are built and open in seconds. **#103** is mid-build. **#104** builds, then its app crashes at *starting*, with a log tail. **#105** is refused by the trust gate (its head is in someone else's fork). **#106**'s *Empty cart* deletes the saved carts too, which the [data checks](#data-checks) flag: add something to the cart in both panes, empty it, and take a snapshot.
 - The PR pane is visibly different from the base: a new heading, a purple accent and an extra sort control on *Products*. Both panes have several pages, forms and long pages, for trying mirroring.
 - Verdicts go to an in-memory GitHub fake and are printed to the console. Nothing leaves the machine.
 
