@@ -84,8 +84,9 @@ What changed in each release, newest first. A 0.x minor version may break the in
 
 - **A new optional seam, `adapters.inspector`, lets the data checks read each pane's data.** Each session snapshots each pane right after its seed (`seeded`), once both panes are signed in (`ready`), and on demand (`now`), in memory only. README's [Data checks](README.md#data-checks) and [The seams](README.md#the-seams) have the details.
   - **What it shows:** the boot span and the session span, each pane's diff, their divergence, and the PR's destructive flags, trusted only when the session's isolation verdict is `isolated`.
-  - **It never fails a boot:** an inspector that throws, hangs past 30 s or returns nonsense leaves its pane without data and says why.
-  - **No values leave the harness:** they reach only `GET /api/data`, behind the capability. The event stream gets `{kind: 'capture', pane, phase, ok}`, and nothing reaches a log or GitHub.
+  - **It never fails a boot:** an inspector that throws, hangs past 30 s or returns nonsense leaves its pane without data and says why, and a call that times out is told to stop. A pane whose ready read failed keeps its seeded snapshot until a later one gives it a baseline.
+  - **No values leave the harness:** they reach only `GET /api/data`, behind the capability. The event stream gets `{kind: 'capture', pane, phase, ok}` for the boot's two phases, and nothing reaches a log or GitHub.
+  - **One answer stays small:** it lists at most 50 rows of each kind a collection and 50 divergence changes, about 4 MB of rows in all, with whole counts, and is built once for each state.
   - **New:**
     - routes: `GET /api/data` and `POST /api/data/snapshot` (`{rebaseline: true}` to re-baseline);
     - `bootSession` takes `deps.capture`;

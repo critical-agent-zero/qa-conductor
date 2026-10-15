@@ -3788,7 +3788,7 @@ test('the data checks: S0 after each seed, S1 at ready, Snapshot now on demand; 
     const ready = await data()
     assert.deepEqual([ready.available, ready.active, ready.trust, ready.session], [true, true, 'advisory', null])
     assert.equal(ready.boot.divergence.collections.saved_carts.status, 'same')
-    assert.deepEqual(ready.errors, { base: null, pr: null })
+    assert.deepEqual(ready.errors, { boot: { base: null, pr: null }, session: { base: null, pr: null } })
 
     // the PR pane's "Empty cart" also deletes the saved carts
     stores.pr.saved_carts.rows = []
@@ -3805,10 +3805,10 @@ test('the data checks: S0 after each seed, S1 at ready, Snapshot now on demand; 
     // pii as a fingerprint
     const updated = after.session.base.collections.saved_carts.updated[0].fields[0]
     assert.deepEqual([updated.field, updated.before.t, updated.after.t], ['owner', 'pii', 'pii'])
-    const events = await sseEvents(ports.harness, evs => evs.filter(e => e.kind === 'capture').length >= 6)
+    const events = await sseEvents(ports.harness, evs => evs.filter(e => e.kind === 'capture').length >= 4)
     const captures = events.filter(e => e.kind === 'capture')
     assert.deepEqual(captures.map(e => [e.pane, e.phase, e.ok]), [
-      ['base', 'seeded', true], ['pr', 'seeded', true], ['base', 'ready', true], ['pr', 'ready', true], ['base', 'now', true], ['pr', 'now', true],
+      ['base', 'seeded', true], ['pr', 'seeded', true], ['base', 'ready', true], ['pr', 'ready', true],
     ])
     for (const e of captures) assert.deepEqual(Object.keys(e).sort(), ['at', 'kind', 'ok', 'pane', 'phase'])
     for (const text of [JSON.stringify(after), JSON.stringify(events), JSON.stringify(await api(ports.harness, 'GET', '/api/state')), w.lines.join('\n')]) {
@@ -3940,4 +3940,48 @@ test('startConductor refuses an inspector with no open(), or with rules that are
     [{ open: () => ({}), rules: { classify: [{ collection: 'x', fields: ['a'], as: 'public' }] } }, /adapters\.inspector\.rules: classify\[0\]\.as must be secret or pii/],
   ]) assert.throws(() => startOnly({}, { inspector }), re, JSON.stringify(inspector))
   assert.doesNotThrow(() => startOnly({}, { inspector: { open: () => ({}) } }))
+})
+
+// A boot taken over while its inspector is still reading: what that read
+// reports later is no session's, and stays out of the next boot's stream.
+test('a superseded boot\'s capture events never reach the next boot\'s stream', async () => {
+  let hold = deferred()
+  let first = true
+  const inspect = storeInspector({ snapshot: async () => { if (first) { first = false; await hold.promise } } })
+  const w = makeWorld({ inspector: inspect.inspector })
+  inspect.attach(w)
+  try {
+    const port = await harnessPort(w.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(() => w.calls.some(c => c[0] === 'inspector.open'))
+    // open the same PR again while its first read hangs: a new boot with no
+    // teardown between, which aborts the old one as it starts
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    hold.resolve() // the old boot's read ends now
+    await new Promise(r => setTimeout(r, 30))
+    const events = await sseEvents(port, evs => evs.some(e => e.kind === 'ready'))
+    assert.deepEqual(events.filter(e => e.kind === 'capture').map(e => [e.pane, e.phase]), [['base', 'seeded'], ['pr', 'seeded'], ['base', 'ready'], ['pr', 'ready']])
+  } finally { w.c.stop() }
+})
+
+// The next boot waits for the last session's probes to close.
+test('a boot of the same PR again waits for the last session\'s probes to close before it builds', async () => {
+  const closing = deferred()
+  const inspect = storeInspector()
+  const original = inspect.inspector.open
+  inspect.inspector.open = async args => {
+    const probe = await original(args)
+    return { ...probe, close: async () => { await closing.promise; return probe.close() } }
+  }
+  const { w, ports } = await dataWorld({ inspect })
+  try {
+    const builds = () => w.calls.filter(c => c[0] === 'ensureBuilt').length
+    const before = builds()
+    await api(ports.harness, 'POST', '/api/session', { pr: 7 })
+    await new Promise(r => setTimeout(r, 50))
+    assert.equal(builds(), before, 'no build while a probe is still closing')
+    closing.resolve()
+    await waitFor(() => builds() === before + 1)
+  } finally { closing.resolve(); w.c.stop() }
 })
