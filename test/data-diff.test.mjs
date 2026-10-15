@@ -87,6 +87,7 @@ test('sanitizeSnapshot masks secret-looking and classified fields, fingerprints 
   assert.equal(row.prefs.t, 'json')
   assert.match(row.prefs.s, /^\{"theme":"dark","api_key":"\[secret [0-9a-f]{8}\]"\}$/)
   assert.equal(row.score, null)
+  assert.equal(snap({ d: { key: null, rows: [{ when: new Date('nope') }] } }).collections.d.rows[0].when, null, 'an invalid date is no date')
   assert.equal(row.big, '12')
   assert.deepEqual([row.blob.t, row.blob.len], ['blob', 9])
   assert.match(row.blob.d, /^[0-9a-f]{16}$/)
@@ -185,7 +186,7 @@ test('diffSnapshots: a truncated collection reports only its count; added and dr
   assert.deepEqual([d.a.status, d.a.fieldsDropped, d.a.fieldsAdded, d.a.updated], ['changed', ['x'], ['y'], []])
   // a key that changed: the rows diff as a multiset
   const rekeyed = diffSnapshots(snap({ k: { key: ['id'], rows: [{ id: 1, n: 'a' }] } }), snap({ k: { key: ['n'], rows: [{ id: 1, n: 'a' }] } })).collections.k
-  assert.equal(rekeyed.status, 'same')
+  assert.deepEqual([rekeyed.status, rekeyed.key], ['same', null], 'and it says no key was used')
 })
 
 // Base and PR start from one seed and get the same mirrored actions: where
@@ -393,11 +394,16 @@ test('masking: JSON kept as text, more secret-looking names, secret over pii, an
 test('clearing a secret or pii value is seen; a soft delete is seen however it is stored, and never masked', () => {
   const rules = { classify: [{ collection: 'u', fields: ['email'], as: 'pii' }], softDelete: [{ collection: 'u', field: 'is_deleted' }, { collection: 'u', field: 'discarded' }, { collection: 'u', field: 'deleted_at' }] }
   const s = rows => snap({ u: { key: ['id'], rows } }, rules)
-  const seed = s([{ id: 1, password_hash: 'h', email: 'a@example.org', is_deleted: 0, discarded: false, deleted_at: null }])
-  const now = s([{ id: 1, password_hash: '', email: '', is_deleted: 1, discarded: true, deleted_at: null }])
+  const seed = s([1, 2, 3].map(id => ({ id, password_hash: 'h', email: 'a@example.org', is_deleted: 0, discarded: false, deleted_at: null })))
+  // one row deleted each way the field can say so
+  const now = s([
+    { id: 1, password_hash: '', email: '', is_deleted: 1, discarded: false, deleted_at: null },
+    { id: 2, password_hash: 'h', email: 'a@example.org', is_deleted: 0, discarded: true, deleted_at: null },
+    { id: 3, password_hash: 'h', email: 'a@example.org', is_deleted: 0, discarded: false, deleted_at: 7 },
+  ])
   const flags = flagChanges(diffSnapshots(seed, seed), diffSnapshots(seed, now), validateRules(rules), { trusted: true })
-  assert.deepEqual(flags.map(f => [f.kind, f.field ?? null, f.pr]), [['delete', null, 1], ['cleared', 'email', 1], ['cleared', 'password_hash', 1]])
-  assert.equal(now.collections.u.rows[0].discarded, true, 'a soft-delete field shows as it is')
+  assert.deepEqual(flags.map(f => [f.kind, f.field ?? null, f.pr]), [['delete', null, 3], ['cleared', 'email', 1], ['cleared', 'password_hash', 1]])
+  assert.equal(now.collections.u.rows[1].discarded, true, 'a soft-delete field shows as it is')
   // undeleting is no clearing
   const undone = s([{ id: 1, password_hash: 'h', email: 'a@example.org', is_deleted: 0, discarded: false, deleted_at: null }])
   const was = s([{ id: 1, password_hash: 'h', email: 'a@example.org', is_deleted: 0, discarded: false, deleted_at: 5 }])
@@ -485,8 +491,10 @@ test('the thresholds\' edges, and volatile fields leave the key and the declared
   const v = snap({ c: { key: ['id', 'updated_at'], fields: ['id', 'updated_at', 'n'], rows: [{ id: 1, updated_at: 1, n: 1 }] } }, { volatile: [{ collection: 'c', fields: ['updated_at'] }] })
   assert.deepEqual([v.collections.c.key, v.collections.c.fields], [['id'], ['id', 'n']])
   // two cleared fields, in field order
-  const two = r => snap({ m: { key: ['id'], rows: [{ id: 1, ...r }] } })
-  const cleared = flagChanges(diffSnapshots(two({ b: 'x', a: 'y' }), two({ b: 'x', a: 'y' })), diffSnapshots(two({ b: 'x', a: 'y' }), two({ b: '', a: '' })), none, { trusted: true })
+  // the first row clears b, the second a: flags in field order all the same
+  const two = (r1, r2) => snap({ m: { key: ['id'], rows: [{ id: 1, ...r1 }, { id: 2, ...r2 }] } })
+  const full = two({ a: 'y', b: 'x' }, { a: 'y', b: 'x' })
+  const cleared = flagChanges(diffSnapshots(full, full), diffSnapshots(full, two({ a: 'y', b: '' }, { a: '', b: 'x' })), none, { trusted: true })
   assert.deepEqual(cleared.map(f => f.field), ['a', 'b'])
   // a presence field that holds a date is set
   const p = snap({ d: { key: ['id'], rows: [{ id: 1, at: new Date(0) }] } }, { volatile: [{ collection: 'd', fields: ['at'], mode: 'presence' }] })
