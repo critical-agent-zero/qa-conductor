@@ -927,3 +927,177 @@ test('a redirect that stays on the pane drops the app\'s Referrer-Policy; a redi
   assert.equal(created.status, 201)
   assert.equal(created.headers['referrer-policy'], 'no-referrer')
 })
+
+// --- #29: the per-browser capability -----------------------------------------
+// The conductor passes each proxy a capability: only a browser holding the pane
+// cookie gets in, and a one-time ticket at /__qa/enter sets that cookie. Here a
+// fake stands in for the conductor's store.
+
+function fakeCapability({ name = '__Host-qa-test' } = {}) {
+  const tickets = new Map([['tick', { to: '/landing?x=1#top', value: 'good-pane' }], ['tick2', { to: '/two', value: 'good-pane' }]])
+  return {
+    cookieName: () => name,
+    admits: value => value === 'good-pane',
+    enter(ticket) {
+      const out = tickets.get(ticket) ?? null
+      tickets.delete(ticket)
+      return out
+    },
+  }
+}
+
+async function setupCap(t, upstreamHandler, { name, ...options } = {}) {
+  const upstream = http.createServer(upstreamHandler)
+  const upstreamPort = await listen(upstream)
+  const dir = await mkdtemp(join(tmpdir(), 'qa-proxy-'))
+  const bridgePath = join(dir, 'bridge.js')
+  await writeFile(bridgePath, 'window.__qaBridge = 1\n')
+  const activity = { count: 0 }
+  const handler = createPaneProxy({
+    upstreamPort, bridgePath, onActivity: () => { activity.count += 1 }, httpMod: http, ...GUARDED, capability: fakeCapability({ name }), ...options,
+  })
+  const proxy = http.createServer(handler)
+  const proxyPort = await listen(proxy)
+  t.after(async () => {
+    await new Promise((r) => upstream.close(r))
+    await new Promise((r) => proxy.close(r))
+    await rm(dir, { recursive: true, force: true })
+  })
+  return { proxyPort, activity }
+}
+
+const OWN = { ...PANE_HOST, 'sec-fetch-site': 'same-origin' }
+
+test('with a capability, a request without the pane cookie gets 403 X-QA-Refusal: capability, before the bridge, the activity clock and the app', async (t) => {
+  const hits = []
+  const { proxyPort, activity } = await setupCap(t, (req, res) => { hits.push(req.url); res.end('app') })
+  for (const cookie of [undefined, '__Host-qa-test=bad', 'qa-test=good-pane', '__Host-qa-other=good-pane', 'x=1; __Host-qa-test=good-pane-not']) {
+    for (const r of [{ path: '/x' }, { path: '/__qa/bridge.js' }, { method: 'POST', path: '/x', body: '{}' }, { method: 'OPTIONS', path: '/x' }, { method: 'HEAD', path: '/x' }]) {
+      const res = await request(proxyPort, r.path, { method: r.method, body: r.body, headers: { ...OWN, ...(cookie ? { cookie } : {}) } })
+      const label = `${r.method ?? 'GET'} ${r.path} ${cookie}`
+      assert.equal(res.status, 403, label)
+      assert.equal(res.headers['x-qa-refusal'], 'capability', label)
+      assert.equal(res.headers['cache-control'], 'no-store', label)
+      assert.equal(res.headers['x-content-type-options'], 'nosniff', label)
+      assert.equal(res.headers['content-security-policy'], FRAME_ANCESTORS, label)
+      assert.match(res.headers['content-type'], /^text\/plain/, label)
+      assert.doesNotMatch(res.body.toString(), /app|__qaBridge/, label)
+    }
+  }
+  assert.deepEqual(hits, [])
+  assert.equal(activity.count, 0)
+})
+
+test('with a capability, the pane cookie admits a request, which reaches the app without it; any one valid value of the name will do', async (t) => {
+  const seen = []
+  const { proxyPort, activity } = await setupCap(t, (req, res) => { seen.push(req.headers.cookie ?? '(none)'); res.end('app') }, { forwardClientCookies: ['locale'] })
+  for (const cookie of ['__Host-qa-test=good-pane', 'locale=fr; __Host-qa-test=planted; __Host-qa-test=good-pane']) {
+    const res = await request(proxyPort, '/x', { headers: { ...OWN, cookie } })
+    assert.deepEqual([res.status, res.body.toString()], [200, 'app'], cookie)
+  }
+  assert.deepEqual(seen, ['(none)', 'locale=fr'])
+  const bridge = await request(proxyPort, '/__qa/bridge.js', { headers: { ...OWN, cookie: '__Host-qa-test=good-pane' } })
+  assert.equal(bridge.status, 200)
+  assert.equal(activity.count, 2, 'the bridge is no pane activity')
+})
+
+test('GET /__qa/enter with a live ticket answers 303 to its path with the pane cookie set, and never reaches the app', async (t) => {
+  const hits = []
+  for (const [name, attrs] of [['__Host-qa-test', '; Path=/; HttpOnly; SameSite=Strict; Secure'], ['qa-test', '; Path=/; HttpOnly; SameSite=Strict']]) {
+    const { proxyPort, activity } = await setupCap(t, (req, res) => { hits.push(req.url); res.end('app') }, { name })
+    // the harness loading the pane in its iframe
+    const frame = { ...PANE_HOST, ...FROM_HARNESS, 'sec-fetch-dest': 'iframe' }
+    const res = await request(proxyPort, '/__qa/enter?t=tick', { headers: frame })
+    assert.equal(res.status, 303, name)
+    assert.equal(res.headers.location, '/landing?x=1#top')
+    assert.deepEqual(res.headers['set-cookie'], [`${name}=good-pane${attrs}`])
+    assert.equal(res.headers['cache-control'], 'no-store')
+    assert.equal(res.headers['referrer-policy'], undefined, 'the harness\'s policy keeps its Referer for the next hop')
+    assert.equal(res.headers['content-security-policy'], FRAME_ANCESTORS)
+    // single use, and only a GET redeems one
+    const again = await request(proxyPort, '/__qa/enter?t=tick', { headers: frame })
+    assert.deepEqual([again.status, again.headers['x-qa-refusal'], again.headers['set-cookie']], [403, 'capability', undefined])
+    // (a POST and a HEAD from the pane's own page, which the request guard admits)
+    for (const r of [
+      { path: '/__qa/enter' }, { path: '/__qa/enter?t=' }, { path: '/__qa/enter?t=nope' }, { path: '/__qa/enter/?t=tick2' },
+      { path: '/__qa/enter?t=tick2', method: 'POST', headers: OWN }, { path: '/__qa/enter?t=tick2', method: 'HEAD', headers: OWN },
+    ]) {
+      const refused = await request(proxyPort, r.path, { method: r.method, headers: r.headers ?? frame })
+      assert.deepEqual([refused.status, refused.headers['x-qa-refusal'], refused.headers['set-cookie']], [403, 'capability', undefined], `${r.method ?? 'GET'} ${r.path}`)
+    }
+    // none of them spent the live one
+    assert.equal((await request(proxyPort, '/__qa/enter?t=tick2', { headers: frame })).headers.location, '/two')
+    assert.equal(activity.count, 0)
+  }
+  assert.deepEqual(hits, [])
+})
+
+// The hop after the 303, as Chromium sends it (checked against the demo):
+// Sec-Fetch-Site covers the whole chain from the harness, so it is
+// same-site, and the Referer is the harness page's, the request's referrer,
+// never the /__qa/enter URL. Only that Referer admits the hop: a
+// no-referrer on the 303 would get every pane entry refused.
+test('the hop after /__qa/enter gets in on the harness\'s Referer alone, and the app sees no ticket', async (t) => {
+  const seen = []
+  const { proxyPort } = await setupCap(t, (req, res) => { seen.push([req.url, req.headers.referer ?? null]); res.end('app') })
+  const frame = { ...PANE_HOST, ...FROM_HARNESS, 'sec-fetch-dest': 'iframe' }
+  const entered = await request(proxyPort, '/__qa/enter?t=tick', { headers: frame })
+  const cookie = entered.headers['set-cookie'][0].split(';')[0]
+  const landing = entered.headers.location.split('#')[0]
+  const { referer, ...noReferer } = frame
+  const refused = await request(proxyPort, landing, { headers: { ...noReferer, cookie } })
+  assert.deepEqual([refused.status, refused.body.toString()], [403, '403: cross-site framing refused\n'])
+  const admitted = await request(proxyPort, landing, { headers: { ...frame, cookie } })
+  assert.deepEqual([admitted.status, admitted.body.toString()], [200, 'app'])
+  assert.deepEqual(seen, [['/landing?x=1', referer]])
+})
+
+test('/__qa/enter still sits behind the Host allowlist and the pane request guard', async (t) => {
+  const { proxyPort } = await setupCap(t, (req, res) => res.end('app'))
+  const misdirected = await request(proxyPort, '/__qa/enter?t=tick', { headers: { host: 'attacker.example', ...FROM_HARNESS } })
+  assert.equal(misdirected.status, 421)
+  // another site's frame, which the harness did not make
+  const framed = await request(proxyPort, '/__qa/enter?t=tick', { headers: { ...PANE_HOST, ...FROM_HARNESS, 'sec-fetch-dest': 'iframe', referer: `${MALLORY}/` } })
+  assert.deepEqual([framed.status, framed.headers['set-cookie']], [403, undefined])
+  assert.match(framed.body.toString(), /cross-site framing refused/)
+  // neither spent the ticket
+  assert.equal((await request(proxyPort, '/__qa/enter?t=tick', { headers: { ...PANE_HOST, ...FROM_HARNESS } })).status, 303)
+})
+
+test('without a capability the proxy serves /__qa/enter from the app as before', async (t) => {
+  const { proxyPort } = await setup(t, (req, res) => res.end(`app ${req.url}`))
+  const res = await request(proxyPort, '/__qa/enter?t=x')
+  assert.deepEqual([res.status, res.body.toString()], [200, 'app /__qa/enter?t=x'])
+})
+
+// The pane app runs PR code: the "cookies" type of a Clear-Site-Data it sends
+// would wipe the browser's cookies for the whole hostname, the pane cookie
+// among them. Its other types touch only the pane's own origin, and pass.
+test('a pane app\'s Clear-Site-Data reaches the browser without its cookie types', async (t) => {
+  const sent = new Map([
+    ['/a', '"cookies", "storage"'],
+    ['/b', '"*"'],
+    ['/c', '"cookies"'],
+    ['/d', '"cache"'],
+    ['/e', ' "Cookies" ,"cache"'],
+  ])
+  const { proxyPort } = await setup(t, (req, res) => {
+    res.setHeader('clear-site-data', sent.get(req.url))
+    res.setHeader('x-other', 'kept')
+    res.end('page')
+  })
+  const got = async path => (await request(proxyPort, path)).headers['clear-site-data']
+  assert.equal(await got('/a'), '"storage"')
+  assert.equal(await got('/b'), '"cache", "storage", "executionContexts"')
+  assert.equal(await got('/c'), undefined)
+  assert.equal(await got('/d'), '"cache"')
+  assert.equal(await got('/e'), '"cache"')
+  assert.equal((await request(proxyPort, '/a')).headers['x-other'], 'kept')
+})
+
+test('forwardClientCookies refuses a reserved qa- name', () => {
+  const make = forwardClientCookies => createPaneProxy({ upstreamPort: () => null, bridgePath: '/nonexistent', httpMod: http, forwardClientCookies })
+  for (const bad of [['qa-1'], ['locale', 'QA-session'], ['__Host-qa-x'], ['__Secure-qa-x']]) {
+    assert.throws(() => make(bad), /^Error: forwardClientCookies can't name "[^"]+": cookie names starting with qa- are the conductor's own/, JSON.stringify(bad))
+  }
+})

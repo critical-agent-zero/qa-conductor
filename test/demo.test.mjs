@@ -18,14 +18,44 @@ function captureLog() {
   return { lines, log: { log: push, info: push, warn: push, error: push } }
 }
 
+// The demo starts idle, so a browser enrols as the harness page does, on its
+// first call: each harness port's token is kept, and taken again when a
+// demo that reused the port refuses it.
+const TOKENS = new Map()
+
+async function enrol(port) {
+  const res = await fetch(`http://127.0.0.1:${port}/api/enrol`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+  assert.equal(res.status, 200, 'the demo starts with enrolment open')
+  TOKENS.set(port, (await res.json()).token)
+  return TOKENS.get(port)
+}
+
+const capHeader = async port => ({ 'x-qa-cap': TOKENS.get(port) ?? await enrol(port) })
+
 async function api(port, method, path, body) {
   const post = method === 'POST'
-  const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+  const call = async () => fetch(`http://127.0.0.1:${port}${path}`, {
     method,
-    headers: post ? { 'content-type': 'application/json' } : {},
+    headers: { ...(post ? { 'content-type': 'application/json' } : {}), ...await capHeader(port) },
     body: post ? JSON.stringify(body ?? {}) : undefined,
   })
+  let res = await call()
+  if (res.status === 403 && res.headers.get('x-qa-refusal') === 'capability') {
+    TOKENS.delete(port)
+    res = await call()
+  }
   return { status: res.status, body: await res.json() }
+}
+
+// The pane cookie, as the harness gets it for its iframes: a pane-entry
+// ticket, redeemed at the pane's /__qa/enter. Both panes take the one cookie.
+async function paneCookie(demo) {
+  const { status, body } = await api(demo.ports.harness, 'POST', '/api/pane-entry', { role: 'base', to: '/' })
+  assert.equal(status, 200, JSON.stringify(body))
+  const url = new URL(body.url)
+  const res = await get(demo.ports.base, url.pathname + url.search)
+  assert.equal(res.status, 303)
+  return res.headers['set-cookie'][0].split(';')[0]
 }
 
 async function waitFor(fn, ms = 5000) {
@@ -51,7 +81,7 @@ async function progressEvent(port, pred, ms = 5000) {
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), ms)
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/progress`, { signal: ac.signal })
+    const res = await fetch(`http://127.0.0.1:${port}/api/progress`, { headers: await capHeader(port), signal: ac.signal })
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buf = ''
@@ -132,8 +162,9 @@ test('a good PR reaches ready, and both pane proxies serve distinguishable pages
     assert.equal(s.panes.base, `http://127.0.0.1:${demo.ports.base}/`)
     assert.equal(s.panes.pr, `http://127.0.0.1:${demo.ports.pr}/`)
 
+    const cookie = await paneCookie(demo)
     const page = async (role, path) => {
-      const res = await fetch(`http://127.0.0.1:${demo.ports[role]}${path}`)
+      const res = await fetch(`http://127.0.0.1:${demo.ports[role]}${path}`, { headers: { cookie } })
       assert.equal(res.status, 200, `${role} ${path}`)
       return res.text()
     }
@@ -162,7 +193,7 @@ test('a good PR reaches ready, and both pane proxies serve distinguishable pages
     // the contact form posts, redirects on the pane origin, and echoes safely
     const posted = await fetch(`http://127.0.0.1:${demo.ports.pr}/contact`, {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
       body: new URLSearchParams({ name: 'Ada <b>', email: 'ada@example.com', topic: 'order', message: 'Where is my gizmo?' }),
       redirect: 'manual',
     })
@@ -195,10 +226,11 @@ test('pane responses let only the demo harness frame them', async () => {
     const page = await get(demo.ports.harness, '/')
     assert.deepEqual([page.headers['content-security-policy'], page.headers['x-frame-options']], ["frame-ancestors 'self'", 'SAMEORIGIN'])
     await bootToReady(demo.ports.harness, 101)
+    const cookie = await paneCookie(demo)
     for (const role of ['base', 'pr']) {
       const port = demo.ports[role]
       const other = demo.ports[role === 'base' ? 'pr' : 'base']
-      const framed = await get(port, '/', iframeFrom(`${harness}/`))
+      const framed = await get(port, '/', { ...iframeFrom(`${harness}/`), cookie })
       assert.equal(framed.status, 200, role)
       assert.equal(framed.headers['content-security-policy'], `frame-ancestors 'self' ${harness}`)
       assert.equal(framed.headers['x-frame-options'], undefined)
@@ -220,11 +252,12 @@ test('startDemo({ harnessOrigin, frameAncestors }) puts both in the pane policy'
   const demo = await startDemo({ port: 0, speed: 0, log, harnessOrigin: harness, frameAncestors: [outer] })
   try {
     assert.equal((await state(demo.ports.harness)).harnessOrigin, harness)
-    const idle = await get(demo.ports.base, '/')
+    const idle = await get(demo.ports.base, '/', { cookie: await paneCookie(demo) })
     assert.equal(idle.status, 503)
     assert.equal(idle.headers['content-security-policy'], `frame-ancestors 'self' ${harness} ${outer}`)
     await bootToReady(demo.ports.harness, 101)
-    const framed = await get(demo.ports.pr, '/', iframeFrom(`${harness}/`))
+    // a pane cookie lasts one session, so the harness enters the panes again
+    const framed = await get(demo.ports.pr, '/', { ...iframeFrom(`${harness}/`), cookie: await paneCookie(demo) })
     assert.equal(framed.status, 200)
     assert.equal(framed.headers['content-security-policy'], `frame-ancestors 'self' ${harness} ${outer}`)
     assert.ok(framed.body.includes(`<script src="/__qa/bridge.js" data-harness="${harness}"></script>`))
@@ -245,8 +278,14 @@ test('a non-loopback harnessOrigin leaves the demo ungated', async () => {
     assert.ok(lines.includes('[qa] identity gate off (QA_EXPOSURE=none)'), lines.join('\n'))
     assert.equal((await get(demo.ports.harness, '/')).status, 200)
     assert.equal((await state(demo.ports.harness)).harnessOrigin, 'https://box.ts.net:8443')
-    // the panes answer too: no session yet
-    assert.equal((await get(demo.ports.base, '/')).status, 503)
+    // Its panes are on loopback, another host than its harness's, so no
+    // frame of that harness gets their cookie: the harness says why, and the
+    // panes answer only a browser that has it.
+    const entry = await api(demo.ports.harness, 'POST', '/api/pane-entry', { role: 'base', to: '/' })
+    assert.equal(entry.status, 409)
+    assert.match(entry.body.error, /^the harness origin https:\/\/box\.ts\.net:8443 and the base pane's origin http:\/\/127\.0\.0\.1:\d+ are on different hosts/)
+    const pane = await get(demo.ports.base, '/')
+    assert.deepEqual([pane.status, pane.headers['x-qa-refusal']], [403, 'capability'])
   } finally { await demo.stop() }
 })
 
@@ -300,7 +339,7 @@ test('stop() closes the servers, SSE streams and pane apps, so the process can e
   try {
     await bootToReady(demo.ports.harness, 101)
     assert.equal(await settledServerHandles(), baseline + 5, 'harness, two proxies, two pane apps')
-    const sse = await fetch(`http://127.0.0.1:${demo.ports.harness}/api/progress`)
+    const sse = await fetch(`http://127.0.0.1:${demo.ports.harness}/api/progress`, { headers: await capHeader(demo.ports.harness) })
     const reader = sse.body.getReader()
     await reader.read()
 

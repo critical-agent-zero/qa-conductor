@@ -44,14 +44,52 @@ function buildFromEvent(e) {
   return { url: e.runUrl, status: e.runStatus, conclusion: e.runConclusion, message: e.message }
 }
 
+// Whether an API answer refused the call for want of the capability: a 403
+// marked X-QA-Refusal: capability, or, where a pane proxy in front dropped
+// that header (self-QA's nested harnesses), so marked in its body.
+function isCapabilityRefusal(status, refusalHeader, body) {
+  return status === 403 && (refusalHeader === 'capability' || (body !== null && typeof body === 'object' && body.refusal === 'capability'))
+}
+
+// The ticket an invite link carries in its fragment (#enrol=<ticket>), else
+// null. The fragment never reaches a server or a Referer.
+function inviteFromHash(hash) {
+  const m = /^#enrol=([A-Za-z0-9_-]+)$/.exec(String(hash ?? ''))
+  return m ? m[1] : null
+}
+
 ;(() => {
   if (typeof window === 'undefined') return
   const $ = id => document.getElementById(id)
-  const api = (path, opts) => fetch(`/qa/api${path}`, opts).then(async r => {
-    const body = await r.json().catch(() => ({}))
-    if (!r.ok) { const e = new Error(body.error || `HTTP ${r.status}`); e.status = r.status; e.body = body; throw e }
-    return body
-  })
+
+  // This browser's capability: the token the conductor gave it at enrolment,
+  // kept at the harness origin (localStorage is per origin, port included, so
+  // no pane can read it) and sent as X-QA-Cap on every API call. Where
+  // storage throws (a private window, say), it lasts until a reload.
+  const CAP_KEY = 'qa-cap'
+  let capMemory = null
+  const cap = {
+    get() { try { return localStorage.getItem(CAP_KEY) ?? capMemory } catch { return capMemory } },
+    set(token) { capMemory = token; try { localStorage.setItem(CAP_KEY, token) } catch { /* memory only */ } },
+    clear() { capMemory = null; try { localStorage.removeItem(CAP_KEY) } catch { /* nothing kept */ } },
+  }
+
+  const api = (path, opts = {}) => {
+    const token = cap.get()
+    const headers = { ...(opts.headers || {}), ...(token ? { 'x-qa-cap': token } : {}) }
+    return fetch(`/qa/api${path}`, { ...opts, headers }).then(async r => {
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        const e = new Error(body.error || `HTTP ${r.status}`); e.status = r.status; e.body = body
+        // a restart revoked the token, or it was never given one
+        e.capability = isCapabilityRefusal(r.status, r.headers.get('x-qa-refusal'), body)
+        // not when the token refused is one already replaced
+        if (e.capability && path !== '/enrol' && cap.get() === token) lostCapability()
+        throw e
+      }
+      return body
+    })
+  }
   // The harness refuses non-JSON POSTs (415), so every write goes through here.
   const postJson = (path, body = {}) => api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const announce = (msg, assertive) => { const el = $(assertive ? 'announcerAssertive' : 'announcer'); el.textContent = ''; el.textContent = msg }
@@ -61,7 +99,7 @@ function buildFromEvent(e) {
   const BOOTING = ['ensuring-image', 'cloning', 'migrating', 'starting']
 
   const S = {
-    pr: null, panes: null, paneOrigins: null, mounted: null,
+    pr: null, panes: null, paneOrigins: null, mounted: null, startedAt: null,
     mirror: true, scrollMirror: true,
     path: { base: '', pr: '' }, lastMsg: { base: 0, pr: 0 }, hasNav: { base: false, pr: false },
     unmatched: { base: 0, pr: 0 },
@@ -80,13 +118,74 @@ function buildFromEvent(e) {
   const setHashSilent = hash => history.replaceState(null, '', hash)
 
   function showView(id) {
-    for (const v of ['picker', 'boot', 'session', 'verdictDone']) $(v).hidden = v !== id
+    for (const v of ['enrol', 'picker', 'boot', 'session', 'verdictDone']) $(v).hidden = v !== id
     $('sessionControls').hidden = id !== 'session'
     $('verdictBar').hidden = id !== 'session'
-    const heading = { picker: '#picker h1', boot: 'bootHeading', session: 'sessionHeading', verdictDone: '#verdictDone h1' }[id]
-    const h = id === 'picker' ? document.querySelector('#picker h1') : id === 'verdictDone' ? document.querySelector('#verdictDone h1') : $(heading)
+    $('inviteBtn').hidden = id === 'enrol'
+    const heading = { boot: 'bootHeading', session: 'sessionHeading' }[id]
+    const h = heading ? $(heading) : document.querySelector(`#${id} h1`)
     if (h) setTimeout(() => h.focus(), 0)
   }
+
+  // --- enrolment -------------------------------------------------------------
+  // The conductor enrols a browser while no PR code can be running, or with an
+  // invite link (#enrol=<ticket>) from a browser it has enrolled.
+  let enrolling = null
+  let enrolledAt = 0
+
+  // Resolves, once the view it then renders is up, to whether this browser
+  // holds the token it got: one refused while that view was drawn is gone.
+  async function enrol(invite = null) {
+    let token
+    try {
+      ({ token } = await postJson('/enrol', invite ? { invite } : {}))
+    } catch (err) {
+      // a browser already enrolled that opens a spent invite stays as it was
+      if (invite && cap.get()) { announce(`Invite link not used: ${err.message}`, true); render(); return false }
+      showEnrol(err)
+      return false
+    }
+    cap.set(token); enrolledAt = Date.now()
+    await render()
+    return cap.get() === token
+  }
+
+  // An API call was refused for want of the capability: drop the token and
+  // enrol again, once at a time. A token refused just after it was given
+  // (while the view after enrolling is drawn, say) shows the enrolment view
+  // instead of trying again.
+  function lostCapability() {
+    cap.clear()
+    if (Date.now() - enrolledAt < 5000) return showEnrol(null)
+    if (enrolling) return
+    enrolling = enrol().finally(() => { enrolling = null })
+  }
+
+  function showEnrol(err) {
+    teardownSessionUi()
+    showView('enrol'); setPill('not enrolled')
+    // the harness origin, for the banner when this isn't it
+    const origin = err && err.body ? err.body.harnessOrigin : null
+    if (origin) showOriginNotice(origin)
+    $('enrolReason').textContent = err && err.body && err.body.reason ? `Enrolment is closed: ${err.body.reason}.`
+      : err && !err.capability && origin ? `Open the harness at ${origin}/qa/ to enrol this browser.`
+        : err ? err.message : 'This browser lost its enrolment.'
+  }
+  $('enrolRetry').onclick = () => { if (!enrolling) enrolling = enrol().finally(() => { enrolling = null }) }
+
+  // An enrolled browser hands out a link that enrols one more, once, within
+  // ten minutes, whatever is running.
+  $('inviteBtn').onclick = async () => {
+    try {
+      const { url, expiresAt } = await postJson('/invite')
+      $('inviteLink').value = url
+      $('inviteExpiry').textContent = `It works once, until ${new Date(expiresAt).toLocaleTimeString()}.`
+      $('inviteCopy').textContent = 'Copy'
+      $('inviteDialog').showModal(); $('inviteLink').select()
+    } catch (err) { if (!err.capability) announce(`Invite failed: ${err.message}`, true) }
+  }
+  $('inviteCopy').onclick = () => { if (navigator.clipboard) navigator.clipboard.writeText($('inviteLink').value).then(() => { $('inviteCopy').textContent = 'Copied' }, () => {}) }
+  $('inviteClose').onclick = () => $('inviteDialog').close()
   function setPill(text) { $('statusPill').textContent = text }
 
   // The banner for a harness opened at another origin. Its text is set as
@@ -111,6 +210,7 @@ function buildFromEvent(e) {
     const route = parseHash()
     let s
     try { s = await api('/state'); showOriginNotice(s.harnessOrigin) } catch (e) {
+      if (e && e.capability) return // enrolment takes over
       // At another host or port than the harness origin's, the API refuses a
       // browser (403 not the harness origin) and names the origin instead.
       showOriginNotice(e && e.body ? e.body.harnessOrigin : null)
@@ -139,7 +239,10 @@ function buildFromEvent(e) {
     try {
       const { prs, session } = await api('/prs')
       patchRows(prs, session)
-    } catch (err) { $('prList').textContent = `Failed to load PRs: ${err.message}` }
+    } catch (err) {
+      if (err && err.capability) return // enrolment takes over, and renders again
+      $('prList').textContent = `Failed to load PRs: ${err.message}`
+    }
   }
 
   function renderConflict(state, opts) {
@@ -167,19 +270,24 @@ function buildFromEvent(e) {
       + `<button class="ghost" data-back="1">Back</button></div>`
     c.querySelector('[data-resume]').onclick = () => go(`#/pr/${state.pr}`)
     c.querySelector('[data-back]').onclick = () => { $('conflictSlot').innerHTML = '' }
-    twoStepConfirm(c.querySelector('[data-takeover]'), 'End & open?', () => openSession(wantPr, { takeover: true }))
+    twoStepConfirm(c.querySelector('[data-takeover]'), 'End & open?', () => openSession(wantPr, { takeover: true }).catch(err => {
+      if (!showConflict(err, wantPr)) announce(`Couldn't open #${wantPr}: ${err.message}`, true)
+    }))
     return c
   }
 
   function patchRows(prs, session) {
     const list = $('prList')
-    if (list.textContent === 'Loading…') list.textContent = ''
-    if (!prs.length && !rows.size) { list.textContent = 'No open PRs.'; return }
+    // Text that stood in for the rows ("Loading…", "No open PRs.", an error)
+    // detached them all: clear it, and each row is appended again below.
+    if (![...rows.values()].some(row => row.parentNode === list)) list.textContent = ''
+    if (!prs.length) { list.textContent = 'No open PRs.'; rows.clear(); return }
     const seen = new Set()
     for (const pr of prs) {
       seen.add(pr.number)
       let row = rows.get(pr.number)
-      if (!row) { row = document.createElement('div'); row.className = 'pr'; row.dataset.pr = pr.number; rows.set(pr.number, row); list.appendChild(row) }
+      if (!row) { row = document.createElement('div'); row.className = 'pr'; row.dataset.pr = pr.number; rows.set(pr.number, row) }
+      if (row.parentNode !== list) list.appendChild(row)
       const holds = session && session.pr === pr.number && session.status !== 'idle'
       const num = esc(pr.number)
       // A blocked PR can still be opened: the build's ensureBuilt is the real gate.
@@ -218,25 +326,40 @@ function buildFromEvent(e) {
     const btn = e.target.closest('button[data-open]'); if (!btn) return
     const num = +btn.dataset.open
     if (btn.dataset.resume) return go(`#/pr/${num}`)
-    const rowButtons = $('prList').querySelectorAll('button[data-open]')
-    for (const b of rowButtons) b.disabled = true
-    btn.textContent = 'Opening…'; btn.closest('.pr').setAttribute('aria-busy', 'true')
+    // one Open QA at a time: rows redrawn meanwhile (a re-enrolment's) are
+    // enabled, but take no click
+    if (picking) return
+    // the row stays while it is re-rendered (a re-enrolment's, say); the
+    // buttons in it don't
+    const row = btn.closest('.pr')
+    for (const b of $('prList').querySelectorAll('button[data-open]')) b.disabled = true
+    btn.textContent = 'Opening…'; row.setAttribute('aria-busy', 'true')
     openSession(num).catch(err => {
-      btn.closest('.pr').removeAttribute('aria-busy')
-      for (const b of rowButtons) b.disabled = false
-      if (err.status === 409 && err.body && err.body.session) {
-        $('conflictSlot').innerHTML = ''; $('conflictSlot').appendChild(conflictCard(err.body.session, num))
-      } else {
-        const slot = btn.closest('.pr').querySelector('.rowErr'); slot.hidden = false; slot.textContent = err.message
-      }
+      row.removeAttribute('aria-busy')
+      for (const b of $('prList').querySelectorAll('button[data-open]')) b.disabled = false
+      if (!showConflict(err, num)) { const slot = row.querySelector('.rowErr'); slot.hidden = false; slot.textContent = err.message }
     })
   })
+
+  // A 409 naming the session that holds the conductor gets its conflict
+  // card. Returns whether it did.
+  function showConflict(err, num) {
+    if (!(err.status === 409 && err.body && err.body.session)) return false
+    $('conflictSlot').innerHTML = ''; $('conflictSlot').appendChild(conflictCard(err.body.session, num))
+    return true
+  }
   $('refreshBtn').onclick = () => renderPicker(null)
 
   async function openSession(num, opts = {}) {
     if (picking) return; picking = true
     try {
-      await postJson('/session', { pr: num, ...opts })
+      await postJson('/session', { pr: num, ...opts }).catch(async err => {
+        // A restart revoked the token, and with it any session: once this
+        // browser has enrolled again, ask once more. Not as a takeover: a
+        // session started since gets its conflict card, not an unseen end.
+        if (!(err.capability && enrolling && await enrolling)) throw err
+        return postJson('/session', { pr: num })
+      })
       go(`#/pr/${num}/boot`)
     } finally { picking = false }
   }
@@ -294,8 +417,11 @@ function buildFromEvent(e) {
 
   function attachSse() {
     if (S.es) return
-    const es = new EventSource('/qa/api/progress'); S.es = es
+    // EventSource can't send a header, so the token goes in the URL
+    const es = new EventSource(`/qa/api/progress?cap=${encodeURIComponent(cap.get() || '')}`); S.es = es
     if (!bootTimer) bootTimer = setInterval(tickBoot, 1000)
+    // It reconnects by itself, but not after a refusal: state says why.
+    es.onerror = () => { if (S.es === es && es.readyState === EventSource.CLOSED) { closeSse(); setTimeout(render, 1000) } }
     es.onmessage = ev => {
       const e = JSON.parse(ev.data)
       if (e.kind === 'step') markStep(e.step, e.at)
@@ -337,11 +463,11 @@ function buildFromEvent(e) {
     showView('session'); setPill(`session: #${pr}`)
     const panes = meta.panes
     if (S.mounted !== pr) {
-      S.mounted = pr; S.pr = pr; S.panes = panes; S.paneOrigins = [panes.baseOrigin, panes.prOrigin]
+      S.mounted = pr; S.startedAt = meta.startedAt ?? null; S.pr = pr; S.panes = panes; S.paneOrigins = [panes.baseOrigin, panes.prOrigin]
       S.path = { base: '', pr: '' }; S.hasNav = { base: false, pr: false }; S.lastMsg = { base: Date.now(), pr: Date.now() }
       S.unmatched = { base: 0, pr: 0 }; renderUnmatched('base'); renderUnmatched('pr')
       // as given: the pane proxy tells each pane's bridge whom to talk to
-      $('baseFrame').src = panes.base; $('prFrame').src = panes.pr
+      enterPane('base', panes.base); enterPane('pr', panes.pr)
       $('baseOpen').href = panes.baseOrigin; $('prOpen').href = panes.prOrigin
       setDot('base', 'amber', 'signing in…'); setDot('pr', 'amber', 'signing in…')
       $('baseUrl').textContent = 'signing in…'; $('prUrl').textContent = 'signing in…'
@@ -354,7 +480,7 @@ function buildFromEvent(e) {
   }
 
   function teardownSessionUi() {
-    S.mounted = null; closeSse()
+    S.mounted = null; S.startedAt = null; closeSse()
     if (S.idlePoll) { clearInterval(S.idlePoll); S.idlePoll = null }
     if (S.dotPoll) { clearInterval(S.dotPoll); S.dotPoll = null }
     $('baseFrame').removeAttribute('src'); $('prFrame').removeAttribute('src')
@@ -363,6 +489,23 @@ function buildFromEvent(e) {
 
   const paneOf = origin => origin === S.paneOrigins[0] ? 'base' : origin === S.paneOrigins[1] ? 'pr' : null
   const frameOf = pane => pane === 'base' ? $('baseFrame') : $('prFrame')
+  // A path a pane's bridge reported, on that pane's origin: as a bare path,
+  // one that starts with // would name another host, which the conductor
+  // refuses. The conductor checks what this gives stays on the pane.
+  const onPane = (pane, path) => `${S.paneOrigins[pane === 'base' ? 0 : 1]}${path}`
+
+  // Loads a pane's frame at `to` (a URL or path on that pane) through a
+  // one-time link, which sets the pane cookie first: the panes answer only a
+  // browser that holds it. A failure shows on the pane's bar.
+  async function enterPane(pane, to) {
+    try {
+      const { url } = await postJson('/pane-entry', { role: pane, to: to || '/' })
+      frameOf(pane).src = url
+    } catch (err) {
+      if (err.capability) return
+      setDot(pane, 'red', err.message); $(pane + 'Url').textContent = err.message
+    }
+  }
   function setDot(pane, cls, title) { const d = $(pane + 'Dot'); d.className = 'dot ' + cls; d.title = title }
   function renderUnmatched(pane) {
     const el = $(pane + 'Unmatched'); const n = S.unmatched[pane]
@@ -414,7 +557,8 @@ function buildFromEvent(e) {
   document.querySelector('#paneRow').addEventListener('click', e => {
     const btn = e.target.closest('button[data-act]'); if (!btn) return
     const pane = btn.dataset.pane
-    if (btn.dataset.act === 'reload') { const f = frameOf(pane); f.src = f.src }
+    // where the pane's bridge last said it was, else its landing page
+    if (btn.dataset.act === 'reload') enterPane(pane, S.path[pane] ? onPane(pane, S.path[pane]) : S.panes[pane])
     else if (btn.dataset.act === 'copy') navigator.clipboard && navigator.clipboard.writeText(S.path[pane] || '/')
   })
   for (const p of ['base', 'pr']) $(p + 'Unmatched').onclick = () => { S.unmatched[p] = 0; renderUnmatched(p) }
@@ -425,8 +569,8 @@ function buildFromEvent(e) {
   menuToggle('mirrorMenuBtn', 'mirrorMenu')
   menuToggle('resyncMenuBtn', 'resyncMenu')
   $('scrollMirror').onchange = e => { S.scrollMirror = e.target.checked }
-  $('resyncBtn').onclick = () => { $('prFrame').src = S.paneOrigins[1] + (S.path.base || '/'); S.path.pr = S.path.base; updateDivergence() }
-  $('resyncLeft').onclick = () => { $('baseFrame').src = S.paneOrigins[0] + (S.path.pr || '/'); S.path.base = S.path.pr; updateDivergence(); $('resyncMenu').hidden = true }
+  $('resyncBtn').onclick = () => { enterPane('pr', onPane('pr', S.path.base || '/')); S.path.pr = S.path.base; updateDivergence() }
+  $('resyncLeft').onclick = () => { enterPane('base', onPane('base', S.path.pr || '/')); S.path.base = S.path.pr; updateDivergence(); $('resyncMenu').hidden = true }
   for (const btn of document.querySelectorAll('button[data-width]')) btn.onclick = () => setWidth(+btn.dataset.width, btn)
   function setWidth(w, btn) {
     for (const f of [$('baseFrame'), $('prFrame')]) f.style.width = w ? `${w}px` : '100%'
@@ -442,7 +586,12 @@ function buildFromEvent(e) {
   function startIdlePoll() { pollIdle(); S.idlePoll = setInterval(pollIdle, 60000) }
   async function pollIdle() {
     let s; try { s = await api('/state') } catch { return }
-    if (s.status !== 'ready') return
+    if (S.mounted === null) return // the view went meanwhile
+    // a view mounted from the ready event learns its session's start here
+    if (S.startedAt === null && s.status === 'ready' && s.pr === S.mounted) S.startedAt = s.startedAt
+    // The session this view shows ended, or was opened again (by another
+    // browser, say), whose panes took new pane cookies: draw it afresh.
+    if (s.status !== 'ready' || s.pr !== S.mounted || s.startedAt !== S.startedAt) { teardownSessionUi(); return render() }
     if (!s.lastActivity || !s.idleMinutes) return
     const left = s.lastActivity + s.idleMinutes * 60000 - Date.now()
     const chip = $('idleChip'); chip.textContent = `auto-end ${mmss(left)}`
@@ -512,6 +661,7 @@ function buildFromEvent(e) {
 
   // --- keyboard ------------------------------------------------------------
   document.addEventListener('keydown', e => {
+    if ($('inviteDialog').open) return // its own keys; Escape closes it
     if ($('shortcuts').open && e.key === 'Escape') return $('shortcuts').close()
     if (e.key === '?') { e.preventDefault(); return $('shortcuts').showModal() }
     const t = e.target
@@ -546,12 +696,29 @@ function buildFromEvent(e) {
   mq.addEventListener('change', applyCompact); applyCompact()
 
   // --- boot ----------------------------------------------------------------
-  window.addEventListener('hashchange', () => { if (!maybeVerdictDone()) render() })
-  render()
+  window.addEventListener('hashchange', () => {
+    if (inviteFromHash(location.hash)) start() // an invite link opened in this tab
+    else if (!maybeVerdictDone()) render()
+  })
+
+  // An invite link's ticket leaves the URL before it is used, so neither a
+  // reload nor the history holds it. Without a token, enrol now.
+  function start() {
+    const invite = inviteFromHash(location.hash)
+    if (invite) {
+      history.replaceState(null, '', `${location.pathname}${location.search}#/`)
+      enrolling = enrol(invite).finally(() => { enrolling = null })
+    } else if (!cap.get()) {
+      enrolling = enrol().finally(() => { enrolling = null })
+    } else {
+      render()
+    }
+  }
+  start()
 })()
 
 // --- test exports (node --test evaluates this file through a CJS wrapper) ---
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { esc, isHttpsUrl, LABELS, harnessOriginNotice, buildSummary, buildFromEvent }
+  module.exports = { esc, isHttpsUrl, LABELS, harnessOriginNotice, buildSummary, buildFromEvent, inviteFromHash, isCapabilityRefusal }
 }
