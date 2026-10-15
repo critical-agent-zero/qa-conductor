@@ -73,7 +73,7 @@ What changed in each release, newest first. A 0.x minor version may break the in
   - **Still reachable** ([Known limits](README.md#known-limits) lists these, and what the process Provisioner and a shared env leave open):
     - where containers reach the host's loopback: the base pane's app, the base pane's proxy and the harness;
     - where the conductor binds off loopback: the harness and the base pane's proxy;
-    - without Docker Engine's default iptables rules: the base pane's containers, by address.
+    - without Docker Engine's default iptables rules: the base pane's containers, by address. On a dual-stack network with `"ip6tables": false` (the default before Docker Engine 27), the same over IPv6.
 - **A stale boot stops at its next step.**
   - **The Docker Provisioner** checks `signal` before each step that creates or changes something: the network, a pull, a container, an env file.
   - **The postgres image** is pulled before its container is created (`createDocker` gains `ensurePgImage`).
