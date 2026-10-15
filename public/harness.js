@@ -68,6 +68,15 @@ function isolationLabel(isolation, strict = false) {
   return { text: `${label.text} · strict`, warn: label.warn, title: label.title ? `${label.title} — ${rule}` : rule }
 }
 
+// The kind of action a bridge event is, as the action log marks it (#8), or
+// null for one it doesn't: a click, a submit, a change, or Enter.
+function markType(event) {
+  const type = event && event.type
+  if (type === 'click' || type === 'submit' || type === 'change') return type
+  if (type === 'keydown' && event.key === 'Enter') return 'enter'
+  return null
+}
+
 // The ticket an invite link carries in its fragment (#enrol=<ticket>), else
 // null. The fragment never reaches a server or a Referer.
 function inviteFromHash(hash) {
@@ -553,6 +562,7 @@ function inviteFromHash(hash) {
     const pane = paneOf(ev.origin); if (!pane) return
     S.lastMsg[pane] = Date.now()
     if (d.kind === 'event') {
+      markAction(pane, d)
       if (!S.mirror) return
       if (d.type === 'scroll' && !S.scrollMirror) return
       const other = pane === 'base' ? 'pr' : 'base'
@@ -569,6 +579,24 @@ function inviteFromHash(hash) {
       announce(`Interaction not mirrored to ${pane === 'pr' ? 'PR' : 'base'} pane`)
     }
   })
+
+  // #8: each action a pane's bridge reports, mirrored or not, becomes a mark
+  // in the session's action log: the pane and the kind of action, never the
+  // element or a value. At most one of each kind a pane every 100 ms, as the
+  // conductor keeps: a click and the submit it sets off are two. The pane's
+  // own page can post such messages, so the log labels a mark as reported
+  // by that pane. A monotonic clock: a step back of the system clock must
+  // not hold marks back.
+  const lastMark = new Map()
+  function markAction(pane, d) {
+    const type = markType(d)
+    if (type === null) return
+    const now = performance.now()
+    const kind = `${pane} ${type}`
+    if (now - (lastMark.get(kind) ?? -Infinity) < 100) return
+    lastMark.set(kind, now)
+    postJson('/actions/mark', { pane, type }).catch(() => {})
+  }
 
   function startDotPoll() {
     S.dotPoll = setInterval(() => {
