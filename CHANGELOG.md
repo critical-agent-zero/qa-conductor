@@ -69,6 +69,17 @@ What changed in each release, newest first. A 0.x minor version may break the in
     - the harness posts a mark for the clicks, submits, changes and Enters a pane reports, mirrored or not, at most one of each kind a pane every 100 ms;
     - `createPaneProxy` takes `recorder` and `onRefused`.
 
+### The data checks' engine
+
+- **A new entry point, `@critical-labs/qa-conductor/data-diff`:** the pure engine of #8's data checks, with no I/O. README's [Data checks](README.md#data-checks) has the details.
+  - **What a snapshot keeps:** each collection's rows, key and true count, at most 10,000 rows a collection and 32 MB in all.
+  - **Masking:** a secret-looking or `secret` field keeps only a digest, and a `pii` one a fingerprint, its type and its length, as HMACs under a key made for the session.
+  - **Comparing:**
+    - what changed between two snapshots of a pane, by key;
+    - where the PR pane's changes depart from the base pane's;
+    - which of the PR's changes are destructive: red when only the PR made them, amber when the base did too.
+  - **Advisory unless isolated:** unless the session's isolation verdict is `isolated`, the base's changes excuse nothing.
+
 ### The Docker Provisioner
 
 - **The PR pane can no longer reach the base pane's database.** Both panes' containers joined one network, and both databases had the same superuser and password, which the PR pane's own `dsn` carried. So PR code, by mistake or on purpose, could change the base pane's data, or call the base app directly, and skew the comparison.
