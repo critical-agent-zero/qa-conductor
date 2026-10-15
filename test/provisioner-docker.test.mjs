@@ -562,11 +562,12 @@ const CANARY = { port: 3100, path: '/__qa/canary/n0nce', expect: 'qa-canary n0nc
 // positive control.
 function probeDocker({
   version = 'Server: Docker Engine - Community\n', os = 'Ubuntu 24.04.1 LTS\n', gateway = '172.20.0.1 \n',
-  base = '172.19.0.2 \n', pr = '172.20.0.3 \n', probe = 'self 172.20.0.3:5432\nprobe done\n',
+  base = '172.19.0.2 \n', pr = '172.20.0.3 \n', probe = 'self 172.20.0.3:5432\nprobe done\n', endpoint = 'unix:///var/run/docker.sock\n',
 } = {}) {
   return (args, opts) => {
     if (args[0] === 'version') return version
     if (args[0] === 'info') return os
+    if (args[0] === 'context' && args[1] === 'inspect') return endpoint
     if (args[0] === 'network' && args[1] === 'inspect') return gateway
     if (args[0] === 'inspect') return args.at(-1) === 'qa-pg-pr' ? pr : base
     if (args[0] === 'run' && args.includes('qa-probe-pr')) return typeof probe === 'function' ? probe(opts) : probe
@@ -621,6 +622,12 @@ test('the probe runs on the PR network once both databases exist and before any 
   await multi.provisioner.isolation({ canary: CANARY })
   const multiArgs = probeArgs(probeRun(multi.exec))
   assert.deepEqual(multiArgs.slice(multiArgs.indexOf('--') + 1), ['172.19.0.2:5432', '10.9.0.4:5432', '--', '172.20.0.3:5432', '10.8.0.5:5432'])
+
+  // a dual-stack network: the IPv6 addresses too, as targets and as the control
+  const dual = makeSession({ answer: probeDocker({ base: '172.19.0.2 fd00:19::2 \n', pr: '172.20.0.3 fd00:20::3 \n' }) })
+  await dual.provisioner.isolation({ canary: CANARY })
+  const dualArgs = probeArgs(probeRun(dual.exec))
+  assert.deepEqual(dualArgs.slice(dualArgs.indexOf('--') + 1), ['172.19.0.2:5432', 'fd00:19::2:5432', '--', '172.20.0.3:5432', 'fd00:20::3:5432'])
 })
 
 test('the probe\'s verdict: reachable on any hit, unknown when it can\'t tell, isolated otherwise', async () => {
@@ -655,6 +662,18 @@ test('the probe\'s verdict: reachable on any hit, unknown when it can\'t tell, i
     [{ os: new Error('Cannot connect to the Docker daemon') }, 'unknown', [/^could not tell the container runtime: Cannot connect/]],
     [{ gateway: new Error('No such network') }, 'unknown', [/^could not find the panes' addresses: No such network/]],
     [{ base: '\n' }, 'unknown', [/^could not find the panes' addresses: qa-pg-base has none/]],
+    // no daemon to ask at all
+    [{ version: new Error('Cannot connect to the Docker daemon') }, 'unknown', [/^could not tell the container runtime: Cannot connect/]],
+    // A daemon on another host publishes the pane apps there, not on this
+    // conductor's loopback: the probe can't speak for them. Only the scheme
+    // and host are shown.
+    [{ endpoint: 'tcp://10.0.0.5:2376\n' }, 'unknown', [/^the Docker daemon is at tcp:\/\/10\.0\.0\.5, not on this host, so the probe can't speak for this host's loopback$/]],
+    [{ endpoint: 'ssh://me@build-box\n' }, 'unknown', [/^the Docker daemon is at ssh:\/\/build-box, not on this host/]],
+    [{ endpoint: 'npipe:////./pipe/docker_engine\n' }, 'isolated', []],
+    [{ endpoint: new Error('unknown command "context"') }, 'unknown', [/^could not tell where the Docker daemon runs: unknown command/]],
+    // a hit in a run that then failed or was killed still counts
+    [{ probe: Object.assign(new Error('docker run: Command failed'), { killed: true, signal: 'SIGKILL', stdout: 'listener 10.0.2.2\n' }) }, 'reachable', [/10\.0\.2\.2:3100/, /^the probe didn't finish within 30 s/]],
+    [{ probe: Object.assign(new Error('docker run: Command failed'), { code: 1, stdout: 'open 172.19.0.2:5432\n', stderr: 'boom\n' }) }, 'reachable', [/172\.19\.0\.2:5432/, /^the probe couldn't run: boom/]],
   ]
   for (const [docker, verdict, reasons] of cases) {
     const s = makeSession({ answer: probeDocker(docker) })
@@ -726,6 +745,18 @@ test('the probe script reports the listener that answers the canary and the addr
     assert.deepEqual(await runScript(otherPort, []), ['probe done', `self 127.0.0.1:${openPort}`], 'another server on the port is no hit')
     assert.deepEqual(await runScript(closedPort, [`127.0.0.1:${closedPort}`]), ['probe done', `self 127.0.0.1:${openPort}`])
     assert.deepEqual(await runScript(closedPort, [], [`127.0.0.1:${closedPort}`]), ['probe done'], 'its own database not reached: no self line')
+    // An IPv6 address goes bare, as `docker inspect` gives it: the script
+    // splits the port off at the last colon. Where this host has ::1.
+    const open6 = net.createServer(socket => socket.end())
+    const v6 = await new Promise(resolve => {
+      open6.once('error', () => resolve(null))
+      open6.listen(0, '::1', () => resolve(open6.address().port))
+    })
+    if (v6 !== null) {
+      try {
+        assert.deepEqual(await runScript(closedPort, [`::1:${v6}`], [`::1:${v6}`]), [`open ::1:${v6}`, 'probe done', `self ::1:${v6}`])
+      } finally { open6.close() }
+    }
   } finally {
     for (const server of [canary, other, open]) server.close()
     rmSync(shim, { recursive: true, force: true })

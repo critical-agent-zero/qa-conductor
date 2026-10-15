@@ -54,13 +54,16 @@ function isCapabilityRefusal(status, refusalHeader, body) {
 // What the header's isolation chip says for a verdict (/api/state's
 // `isolation`): its text, whether it warns, and its reasons as the title;
 // null before there is one.
-function isolationLabel(isolation) {
+function isolationLabel(isolation, strict = false) {
   if (!isolation || typeof isolation !== 'object') return null
-  const title = Array.isArray(isolation.reasons) ? isolation.reasons.join('; ') : ''
-  if (isolation.verdict === 'isolated') return { text: 'isolated', warn: false, title: 'The PR pane can\'t reach the base pane, so the base pane shows what the base did' }
-  if (isolation.verdict === 'reachable') return { text: 'not isolated', warn: true, title }
-  if (isolation.verdict === 'shared-host') return { text: 'shared host', warn: true, title }
-  return { text: 'isolation unknown', warn: true, title }
+  const reasons = Array.isArray(isolation.reasons) ? isolation.reasons.join('; ') : ''
+  const label = isolation.verdict === 'isolated'
+    ? { text: 'isolated', warn: false, title: 'The PR pane can\'t reach the base pane, so the base pane shows what the base did' }
+    : { text: { reachable: 'not isolated', 'shared-host': 'shared host' }[isolation.verdict] || 'isolation unknown', warn: true, title: reasons }
+  if (!strict) return label
+  // strict mode (QA_REQUIRE_ISOLATION=1), said beside the verdict
+  const rule = 'QA_REQUIRE_ISOLATION=1 refuses a session that isn\'t isolated'
+  return { text: `${label.text} · strict`, warn: label.warn, title: label.title ? `${label.title} — ${rule}` : rule }
 }
 
 // The kind of action a bridge event is, as the action log marks it (#8), or
@@ -124,7 +127,7 @@ function inviteFromHash(hash) {
     mirror: true, scrollMirror: true,
     path: { base: '', pr: '' }, lastMsg: { base: 0, pr: 0 }, hasNav: { base: false, pr: false },
     unmatched: { base: 0, pr: 0 },
-    es: null, idlePoll: null, dotPoll: null, notesTimer: null, confirmTimer: null, pendingVerdict: null,
+    es: null, idlePoll: null, dotPoll: null, notesTimer: null, confirmTimer: null, pendingVerdict: null, strict: false,
   }
 
   // --- router --------------------------------------------------------------
@@ -211,7 +214,7 @@ function inviteFromHash(hash) {
 
   // The session's isolation verdict, in the header; none while idle.
   function showIsolation(isolation) {
-    const el = $('isolationChip'); const label = isolationLabel(isolation)
+    const el = $('isolationChip'); const label = isolationLabel(isolation, S.strict)
     el.hidden = !label
     if (!label) return
     el.textContent = label.text; el.title = label.title; el.classList.toggle('warn', label.warn)
@@ -239,7 +242,7 @@ function inviteFromHash(hash) {
   async function render() {
     const route = parseHash()
     let s
-    try { s = await api('/state'); showOriginNotice(s.harnessOrigin); showIsolation(s.status === 'idle' ? null : s.isolation) } catch (e) {
+    try { s = await api('/state'); showOriginNotice(s.harnessOrigin); S.strict = s.requireIsolation === true; showIsolation(s.status === 'idle' ? null : s.isolation) } catch (e) {
       if (e && e.capability) return // enrolment takes over
       // At another host or port than the harness origin's, the API refuses a
       // browser (403 not the harness origin) and names the origin instead.

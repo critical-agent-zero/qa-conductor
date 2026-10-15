@@ -488,18 +488,24 @@ test('rmForce removes all names in one call, and tolerates only names already go
 
 // The isolation probe's calls: what the runtime is, where things are on the
 // panes' networks, and the probe container itself.
-test('runtime, networkGateways, containerAddresses and runProbe build exact argv', async () => {
-  const exec = recordingExec(['Client: Docker Engine - Community\nServer: Docker Engine - Community\n', 'Ubuntu 24.04.1 LTS\n', '172.20.0.1 \n', '172.19.0.2 \n', 'listener 10.0.2.2\nprobe done\n'])
+test('runtime, endpoint, networkGateways, containerAddresses and runProbe build exact argv', async () => {
+  const exec = recordingExec([
+    'Client: Docker Engine - Community\nServer: Docker Engine - Community\n', 'Ubuntu 24.04.1 LTS\n', 'unix:///var/run/docker.sock\n',
+    '172.20.0.1 fd00:20::1 \n', '172.19.0.2 fd00:19::2 \n', 'listener 10.0.2.2\nprobe done\n',
+  ])
   const docker = createDocker({ execFileFn: exec, postgres: { image: 'postgres:15' } })
   assert.deepEqual(await docker.runtime(), { version: 'Client: Docker Engine - Community\nServer: Docker Engine - Community\n', os: 'Ubuntu 24.04.1 LTS', osError: null })
-  assert.deepEqual(await docker.networkGateways('qa-session-pr'), ['172.20.0.1'])
-  assert.deepEqual(await docker.containerAddresses('qa-pg-base'), ['172.19.0.2'])
+  assert.equal(await docker.endpoint(), 'unix:///var/run/docker.sock')
+  assert.deepEqual(await docker.networkGateways('qa-session-pr'), ['172.20.0.1', 'fd00:20::1'])
+  // a dual-stack network gives each container an IPv6 address too
+  assert.deepEqual(await docker.containerAddresses('qa-pg-base'), ['172.19.0.2', 'fd00:19::2'])
   assert.equal(await docker.runProbe('qa-probe-pr', 'qa-session-pr', 'echo hi', ['3100', '/x']), 'listener 10.0.2.2\nprobe done\n')
   assert.deepEqual(exec.calls, [
     ['docker', 'version'],
     ['docker', 'info', '--format', '{{.OperatingSystem}}'],
+    ['docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'],
     ['docker', 'network', 'inspect', '--format', '{{range .IPAM.Config}}{{.Gateway}} {{end}}', 'qa-session-pr'],
-    ['docker', 'inspect', '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}', 'qa-pg-base'],
+    ['docker', 'inspect', '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{.GlobalIPv6Address}} {{end}}', 'qa-pg-base'],
     // gone when it ends, labelled for the sweep, no capabilities, no ports and
     // no mounts: it only connects out
     ['docker', 'run', '--rm', '--name', 'qa-probe-pr', '--network', 'qa-session-pr', '--label', 'qa-conductor-session', '--cap-drop', 'ALL', '--entrypoint', 'bash', 'postgres:15', '-c', 'echo hi', 'probe', '3100', '/x'],
