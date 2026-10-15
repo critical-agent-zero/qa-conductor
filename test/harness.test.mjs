@@ -444,6 +444,39 @@ test('after a restart, Open QA enrols the browser again and asks for the session
 })
 
 // Any other refusal is the row's error, as before.
+// After a restart someone else's session already runs, so the window is
+// shut: the browser can't enrol again, and Open QA isn't sent once more.
+test('Open QA after a restart whose re-enrolment is refused shows why, and asks once', async () => {
+  let token = 'tok-1'
+  const sessions = []
+  const prList = fakeList()
+  const enrolled = answer => (_, headers) => (headers['x-qa-cap'] === token ? answer : CAPTURE)
+  const shut = { status: 403, body: { error: 'enrolment is closed: a session is running', reason: 'a session is running', refusal: 'capability' }, headers: { 'x-qa-refusal': 'capability' } }
+  let open = true
+  const b = fakeBrowser({
+    stored: 'tok-1',
+    elements: { prList },
+    routes: {
+      'GET /qa/api/state': enrolled({ body: { status: 'idle' } }),
+      'GET /qa/api/prs': enrolled({ body: { prs: [{ number: 7, title: 'a' }], session: null } }),
+      'POST /qa/api/enrol': () => (open ? { body: { token } } : shut),
+      'POST /qa/api/session': (body, headers) => { sessions.push(headers['x-qa-cap']); return headers['x-qa-cap'] === token ? { status: 202, body: { ok: true } } : CAPTURE },
+    },
+  })
+  await b.settle()
+  token = 'tok-2' // the conductor restarted
+  open = false // and a session started before this browser came back
+  const row = clickOpen(prList, 7)
+  await b.settle()
+  assert.deepEqual(sessions, ['tok-1'], 'not sent again')
+  assert.equal(b.log.filter(e => e[0] === 'fetch' && e[2] === '/qa/api/enrol').length, 1)
+  assert.equal(b.byId('enrol').hidden, false)
+  assert.equal(b.byId('enrolReason').textContent, 'Enrolment is closed: a session is running.')
+  assert.equal(row.err.textContent, 'this browser is not enrolled')
+  assert.equal(row.attrs['aria-busy'], undefined)
+  assert.equal(b.location.hash, '#/')
+})
+
 test('Open QA refused for another reason shows it on the row and asks once', async () => {
   const sessions = []
   const prList = fakeList()
