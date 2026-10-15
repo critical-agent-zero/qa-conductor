@@ -2558,6 +2558,72 @@ test('a try to enrol waits up to three seconds for the sweep or teardown in flig
     const took = Date.now() - began
     assert.ok(took >= 140 && took < 2_000, `${took} ms`)
   } finally { stuck.c.stop() }
+
+  // a teardown the reviewer (or the idle reaper) started
+  const ended = deferred()
+  let tearing = false
+  const own = makeWorld({ provisioner: { teardown: async ({ paneRef }) => { if (paneRef.role === 'pr' && tearing) await ended.promise } }, pacing: {} })
+  try {
+    const port = await harnessPort(own.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    tearing = true
+    const torn = api(port, 'POST', '/api/teardown')
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'tearing-down')
+    const trying = enrolment(port)
+    await new Promise(r => setTimeout(r, 100))
+    ended.resolve()
+    assert.equal(await trying, 'open')
+    await torn
+  } finally { own.c.stop() }
+})
+
+// The wait must not hold the process up: shutdown() or stop() may come
+// while a try to enrol waits.
+test('a try to enrol that waits keeps no timer that holds the process', async () => {
+  const w = makeWorld({ sweepGate: deferred(), pacing: { enrolWaitMs: 60_000 } })
+  try {
+    const port = await harnessPort(w.c)
+    const timers = () => process.getActiveResourcesInfo().filter(r => r === 'Timeout').length
+    const taken = new Promise(resolve => w.c.servers.harness.on('request', req => { if (req.url.endsWith('/api/enrol')) setTimeout(resolve, 20) }))
+    const before = timers()
+    const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/qa/api/enrol', headers: JSON_TYPE, agent: false })
+    req.on('error', () => {})
+    req.end('{}')
+    await taken
+    assert.equal(timers(), before)
+    req.destroy()
+  } finally { w.c.stop() }
+})
+
+// Date.now can stand still or step back (NTP, a laptop's sleep); the
+// spacing must still run out.
+test('retry spacing runs on a clock that only goes forward', async () => {
+  const wall = Date.now
+  // a wall clock that stands still, then steps back an hour; set before the
+  // conductor starts, so whatever it reads as the time is this
+  let wallAt = wall()
+  Date.now = () => wallAt
+  const w = makeWorld({ sweepFails: true, pacing: { retryGapMs: 50, enrolWaitMs: 0 } })
+  const sweeps = () => w.calls.filter(x => x[0] === 'sweep').length
+  const failures = () => w.errorLines.filter(l => l.includes('startup sweep failed')).length
+  try {
+    const port = await harnessPort(w.c)
+    await waitFor(() => failures() === 1)
+    assert.equal(await enrolment(port), SWEEPING)
+    await waitFor(() => failures() === 2)
+    assert.equal(await enrolment(port), SWEEP_FAILED)
+    await new Promise(r => setTimeout(r, 80))
+    assert.equal(await enrolment(port), SWEEPING, 'the gap ran out though the wall clock stood still')
+    await waitFor(() => failures() === 3)
+    wallAt -= 3_600_000
+    await new Promise(r => setTimeout(r, 80))
+    assert.equal(await enrolment(port), SWEEPING, 'and though it stepped back')
+    assert.equal(sweeps(), 4)
+  } finally {
+    Date.now = wall
+    w.c.stop()
+  }
 })
 
 test('a failed boot that tore its panes down leaves enrolment open; one whose teardown failed gets a cleanup first', async () => {
@@ -2739,12 +2805,22 @@ test('the event stream of a browser pushed out of the enrolled ends before the n
     let last
     for (let i = 0; i < 32; i++) last = await enrol()
     assert.equal((await raw(harness, { path: '/qa/api/state', cap: false, headers: { 'x-qa-cap': first } })).status, 403, 'pushed out')
+    // a browser still enrolled, whose stream goes on
+    let kept = ''
+    const keptStream = new Promise((resolve, reject) => {
+      const req = http.get({ host: '127.0.0.1', port: harness, path: `/qa/api/progress?cap=${last}`, agent: false }, res => {
+        res.on('data', c => { kept += c; if (kept.includes('"step"')) { req.destroy(); resolve() } })
+      })
+      req.on('error', err => { if (!kept.includes('"step"')) reject(err) })
+    })
     await raw(harness, { method: 'POST', path: '/qa/api/session', cap: false, headers: { ...JSON_TYPE, 'x-qa-cap': last }, body: '{"pr":7}' })
     let timer
     const outcome = await Promise.race([ended, new Promise(r => { timer = setTimeout(() => r('still open'), 2000) })])
     clearTimeout(timer)
     assert.equal(outcome, 200, 'it was open, and has ended')
     assert.equal(text, '', 'no event reached it')
+    await keptStream
+    assert.match(kept, /"kind":"step"/)
   } finally { w.c.stop() }
 })
 
@@ -2798,7 +2874,8 @@ test('a restart revokes every token and pane cookie', async () => {
 // Security): the value must die with its session, not admit the base pane in
 // every later one.
 test('a pane cookie lasts one session: a teardown, a boot and a ready each give the browser a new one', async () => {
-  const w = makeWorld({ enrolled: false })
+  const hang = {}
+  const w = makeWorld({ enrolled: false, hang })
   try {
     const { harness, base, pr } = await allPorts(w.c)
     const token = JSON.parse((await raw(harness, { method: 'POST', path: '/qa/api/enrol', headers: JSON_TYPE, body: '{}' })).body).token
@@ -2829,10 +2906,17 @@ test('a pane cookie lasts one session: a teardown, a boot and a ready each give 
     assert.notEqual(second, first)
     assert.deepEqual([await status(base, second), await status(base, first)], [200, 403])
 
-    // a session replaced without a teardown (the same PR opened again)
+    // A session replaced without a teardown (the same PR opened again): the
+    // boot's start takes the cookie (403, not the booting pane's 503), and
+    // one taken mid-boot lasts only until that boot is ready.
+    hang[8] = deferred()
     await raw(harness, { method: 'POST', path: '/qa/api/session', headers: { ...JSON_TYPE, ...cap }, body: '{"pr":8}' })
-    await ready()
     assert.equal(await status(base, second), 403)
+    const midBoot = await enter('base')
+    assert.equal(await status(base, midBoot), 503, 'admitted, with no app yet')
+    hang[8].resolve()
+    await ready()
+    assert.equal(await status(base, midBoot), 403)
     assert.equal(await status(base, await enter('base')), 200)
   } finally { w.c.stop() }
 })
