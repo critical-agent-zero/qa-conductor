@@ -15,15 +15,19 @@ import { fileURLToPath } from 'node:url'
 import { blockedAddress, checkTarget, createForwarder, parseAllowlist } from '../lib/forwarder.mjs'
 
 const SOURCE = fileURLToPath(new URL('../lib/forwarder.mjs', import.meta.url))
+// What a test on sockets or a child may take before it fails, rather than
+// hang the run: a broken forwarder can leave a connection, or a child, open.
+const BOUNDED = { timeout: 10_000 }
 
 test('blockedAddress: only public addresses pass; every address a runtime gives the host is refused', () => {
-  for (const ip of ['8.8.8.8', '1.1.1.1', '93.184.216.34', '2606:4700::1111', '2a00:1450:4001::200e', '::ffff:8.8.8.8', '[2606:4700::1111]']) {
+  // just outside the CGNAT block (100.64.0.0/10) on either side: public
+  for (const ip of ['100.63.255.254', '100.128.0.1', '8.8.8.8', '1.1.1.1', '93.184.216.34', '2606:4700::1111', '2a00:1450:4001::200e', '::ffff:8.8.8.8', '[2606:4700::1111]']) {
     assert.equal(blockedAddress(ip), null, ip)
   }
   const refused = [
     ['127.0.0.1', 'loopback'], ['127.255.0.9', 'loopback'], ['::1', 'unspecified, loopback or IPv4-compatible'], ['::', 'unspecified, loopback or IPv4-compatible'],
     ['10.1.2.3', 'private'], ['172.17.0.1', 'private'], ['172.31.255.255', 'private'], ['192.168.65.254', 'private'], ['192.168.127.254', 'private'],
-    ['169.254.169.254', 'link-local (cloud metadata)'], ['100.64.0.1', 'shared (CGNAT, Tailscale)'], ['100.127.255.254', 'shared (CGNAT, Tailscale)'],
+    ['169.254.169.254', 'link-local (cloud metadata)'], ['100.64.0.1', 'shared (CGNAT, Tailscale)'],
     ['0.0.0.0', 'unspecified'], ['224.0.0.1', 'multicast'], ['255.255.255.255', 'reserved'], ['192.0.2.1', 'documentation'],
     ['198.18.0.1', 'benchmarking'], ['fd00:20::3', 'unique local'], ['fe80::1', 'link-local'], ['fe80::1%eth0', 'link-local'],
     ['ff02::1', 'multicast'], ['2001:db8::1', 'documentation'], ['64:ff9b::7f00:1', 'NAT64'], ['2002:7f00:1::', '6to4'],
@@ -149,7 +153,7 @@ function connectVia(proxyPort, target) {
   })
 }
 
-test('the inbound forward pipes each connection to the PR app', async () => {
+test('the inbound forward pipes each connection to the PR app', BOUNDED, async () => {
   const w = await world()
   try {
     const res = await fetch(`http://127.0.0.1:${w.forwardPort}/api/health?x=1`)
@@ -158,7 +162,7 @@ test('the inbound forward pipes each connection to the PR app', async () => {
   } finally { await w.close() }
 })
 
-test('CONNECT goes through to a listed host at the address checked, and nowhere else; refusals say why and are logged', async () => {
+test('CONNECT goes through to a listed host at the address checked, and nowhere else; refusals say why and are logged', BOUNDED, async () => {
   const w = await world({ allow: ['api.example.com'] })
   try {
     const ok = await connectVia(w.proxyPort, 'api.example.com:443')
@@ -180,7 +184,7 @@ test('CONNECT goes through to a listed host at the address checked, and nowhere 
   } finally { await w.close() }
 })
 
-test('plain http goes through for a listed host, without the proxy\'s own headers; anything but an absolute http:// request is refused', async () => {
+test('plain http goes through for a listed host, without the proxy\'s own headers; anything but an absolute http:// request is refused', BOUNDED, async () => {
   const w = await world({ allow: ['api.example.com'] })
   try {
     const via = (path, headers = {}) => new Promise((resolve, reject) => {
@@ -205,7 +209,7 @@ test('plain http goes through for a listed host, without the proxy\'s own header
   } finally { await w.close() }
 })
 
-test('a host that a second DNS answer would turn private is connected to at the address checked', async () => {
+test('a host that a second DNS answer would turn private is connected to at the address checked', BOUNDED, async () => {
   let answers = 0
   const flipping = async () => (answers++ === 0 ? [{ address: '93.184.216.34', family: 4 }] : [{ address: '127.0.0.1', family: 4 }])
   const w = await world({ allow: ['api.example.com'], lookup: flipping })
@@ -217,9 +221,17 @@ test('a host that a second DNS answer would turn private is connected to at the 
   } finally { await w.close() }
 })
 
+// A child's exit code, or a failure once `ms` pass; the child is killed then.
+function exited(child, ms = 5_000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`the child did not exit within ${ms} ms`)) }, ms)
+    child.once('exit', code => { clearTimeout(timer); resolve(code) })
+  })
+}
+
 // As the container runs it: the file as given to node -e, its config in
 // PANE_FORWARDER. A bad config exits 1, so the Provisioner finds no forwarder.
-test('run as the container runs it: ready from its config, and a bad config exits 1', async () => {
+test('run as the container runs it: ready from its config, and a bad config exits 1', BOUNDED, async () => {
   const source = readFileSync(SOURCE, 'utf8')
   const run = env => spawn(process.execPath, ['--input-type=module', '-e', source], { env: { PATH: process.env.PATH, ...env }, stdio: ['ignore', 'pipe', 'pipe'] })
   const app = http.createServer((req, res) => res.end('pr app'))
@@ -235,15 +247,19 @@ test('run as the container runs it: ready from its config, and a bad config exit
     assert.match(out, /qa-forwarder ready/)
     assert.equal(await (await fetch(`http://127.0.0.1:${port}/`)).text(), 'pr app')
   } finally { child.kill(); app.close() }
+  // a free port each bad config would listen on, were it taken as good
+  const spare = net.createServer()
+  const sparePort = await listening(spare)
+  spare.close()
   for (const [env, re] of [
     [{ PANE_FORWARDER: 'not json' }, /PANE_FORWARDER is not JSON/],
-    [{ PANE_FORWARDER: JSON.stringify({ proxy: { listen: 3128, allow: ['127.0.0.1'] } }) }, /127\.0\.0\.1 is loopback, which is always refused/],
-    [{ PANE_FORWARDER: JSON.stringify({ forward: { listen: 3000, to: 'nowhere' } }) }, /forward needs listen/],
+    [{ PANE_FORWARDER: JSON.stringify({ host: '127.0.0.1', proxy: { listen: sparePort, allow: ['127.0.0.1'] } }) }, /127\.0\.0\.1 is loopback, which is always refused/],
+    [{ PANE_FORWARDER: JSON.stringify({ host: '127.0.0.1', forward: { listen: sparePort, to: 'nowhere' } }) }, /forward needs listen/],
   ]) {
     const bad = run(env)
     let err = ''
     bad.stderr.on('data', c => { err += c })
-    const [code] = await once(bad, 'exit')
+    const code = await exited(bad)
     assert.equal(code, 1, err)
     assert.match(err, re)
   }
