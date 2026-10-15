@@ -3441,6 +3441,7 @@ test('marks: a pane and a kind of action, rate-limited, grouping the requests af
     const mark = body => raw(ports.harness, { method: 'POST', path: '/qa/api/actions/mark', headers: JSON_TYPE, body: JSON.stringify(body) })
     const first = await mark({ pane: 'base', type: 'click', selector: '#secret-selector', value: 'SECRET-typed' })
     assert.deepEqual([first.status, JSON.parse(first.body)], [200, { recorded: true }])
+    assert.equal(first.headers['cache-control'], 'no-store')
     assert.deepEqual(JSON.parse((await mark({ pane: 'base', type: 'click' })).body), { recorded: false }, 'within 100 ms')
     for (const bad of [{ pane: 'both', type: 'click' }, { pane: 'base', type: 'keyup' }, {}, { pane: 'base' }]) {
       const res = await mark(bad)
@@ -3455,7 +3456,7 @@ test('marks: a pane and a kind of action, rate-limited, grouping the requests af
     assert.deepEqual(Object.keys(log.marks[0]).sort(), ['at', 'pane', 'seq', 'type'])
     assert.deepEqual(log.requests.map(r => [r.path, r.mark]), [['/cart', log.marks[0].seq]])
     assert.deepEqual(log.refused, { base: {}, pr: { 'cross-site framing refused': 1 } })
-    assert.equal(log.marksDropped, 1)
+    assert.deepEqual(log.marksDropped, { base: 1, pr: 0 })
     assert.doesNotMatch(JSON.stringify(log), /SECRET/)
     // a mark is no activity: PR code can post bridge messages
     const active = (await api(ports.harness, 'GET', '/api/state')).lastActivity
@@ -3497,6 +3498,48 @@ test('the action log is the running session\'s: empty before ready, gone at a te
     assert.deepEqual([booting.active, booting.requests], [false, []])
     hang[8].resolve()
   } finally { w.c.stop() }
+})
+
+test('GET /api/actions reads on from `after`, at most `limit` requests at a time', async () => {
+  const { w, ports } = await readyWorld()
+  const actions = async q => JSON.parse((await raw(ports.harness, { path: `/qa/api/actions${q}` })).body)
+  try {
+    for (const p of ['/a', '/b', '/c']) await raw(ports.base, { path: p })
+    await new Promise(r => setTimeout(r, 30))
+    const page = await actions('?limit=2')
+    assert.deepEqual([page.requests.map(r => r.path), page.more], [['/a', '/b'], true])
+    const rest = await actions(`?after=${page.seq}&limit=2`)
+    assert.deepEqual([rest.requests.map(r => r.path), rest.more], [['/c'], false])
+    assert.deepEqual((await actions(`?after=${rest.seq}`)).requests, [])
+  } finally { w.c.stop() }
+})
+
+// A request binds the log of the session it started in: a late answer from
+// the last session's app never lands in the next session's log.
+test('a request still running when its session ends is never in the next session\'s log', async () => {
+  const hang = {}
+  const { w, ports } = await readyWorld({ hang })
+  const slowApp = http.createServer((req, res) => { if (req.url === '/slow') setTimeout(() => res.end('late'), 300); else res.end('ok') })
+  await new Promise(r => slowApp.listen(0, '127.0.0.1', r))
+  try {
+    // point the base pane at a slow app for this request
+    const slowPort = slowApp.address().port
+    const original = w.adapters.provisioner.reserveServices
+    w.adapters.provisioner.reserveServices = async args => (args.paneRef.role === 'base' ? { app: { url: `http://127.0.0.1:${slowPort}`, port: slowPort } } : original(args))
+    await api(ports.harness, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(ports.harness, 'GET', '/api/state')).status === 'ready')
+    const pending = raw(ports.base, { path: '/slow' })
+    await new Promise(r => setTimeout(r, 50))
+    await api(ports.harness, 'POST', '/api/session', { pr: 7 }) // the same PR again: a new session
+    await waitFor(async () => (await api(ports.harness, 'GET', '/api/state')).status === 'ready')
+    await pending
+    await new Promise(r => setTimeout(r, 30))
+    const log = JSON.parse((await raw(ports.harness, { path: '/qa/api/actions' })).body)
+    assert.deepEqual(log.requests.map(r => r.path), [])
+  } finally {
+    slowApp.close()
+    w.c.stop()
+  }
 })
 
 test('POST /api/actions/mark sits behind the JSON, same-origin and shutdown checks', async () => {
