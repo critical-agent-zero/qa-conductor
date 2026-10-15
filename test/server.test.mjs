@@ -2201,7 +2201,7 @@ function rawHead(port, { method = 'GET', path = '/', headers = {}, body = null }
 const JSON_TYPE = { 'content-type': 'application/json' }
 
 // PR code that reaches the conductor's listeners on loopback (through Docker
-// Desktop's host.docker.internal, Podman machine's gateway, or as a process
+// Desktop's host.docker.internal, Podman machine's host.containers.internal, or as a process
 // pane) can send whatever the harness page would: a loopback Host, an allowed
 // login, Fetch Metadata and the harness Origin. Only the capability, which it
 // can't get, keeps it out.
@@ -3321,4 +3321,63 @@ test('QA_REQUIRE_ISOLATION refuses a session that isn\'t isolated: as it starts 
     const st = await waitFor(async () => { const s = await api(port, 'GET', '/api/state'); return s.status === 'ready' && s })
     assert.equal(st.isolation.verdict, 'isolated')
   } finally { ok.c.stop() }
+})
+
+// build-worktree's install step runs the PR's install scripts on this host,
+// as the reviewer, in ensureBuilt: before the probe, which can't speak for
+// them. A BuildConvention that does so declares it.
+test('a BuildConvention that runs the PR\'s code on this host makes the verdict shared-host, and strict mode refuses before ensureBuilt', async () => {
+  const want = ['shared-host', ['the BuildConvention runs the PR\'s code on this host to build it (an install step)']]
+  const strict = makeWorld({ cfg: { requireIsolation: true } })
+  strict.adapters.build.isolation = 'shared-host'
+  strict.adapters.provisioner.isolation = isolatedCheck(strict.calls)
+  try {
+    const port = await harnessPort(strict.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const st = await waitFor(async () => { const s = await api(port, 'GET', '/api/state'); return s.status === 'error' && s })
+    assert.equal(st.error.step, 'ensuring-image')
+    assert.match(st.error.message, /^QA_REQUIRE_ISOLATION=1 refuses a session whose PR pane isn't isolated from the base pane \(shared-host: the BuildConvention runs the PR's code/)
+    assert.deepEqual([st.isolation.verdict, st.isolation.reasons], want)
+    const seq = strict.calls.map(x => x[0])
+    for (const later of ['ensureBuilt', 'provisionDatabase', 'isolation']) assert.equal(seq.includes(later), false, later)
+  } finally { strict.c.stop() }
+
+  // not strict: the session boots, and the probe can't make it better
+  const loose = makeWorld()
+  loose.adapters.build.isolation = 'shared-host'
+  loose.adapters.provisioner.isolation = isolatedCheck(loose.calls)
+  try {
+    const port = await harnessPort(loose.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const st = await waitFor(async () => { const s = await api(port, 'GET', '/api/state'); return s.status === 'ready' && s })
+    assert.deepEqual([st.isolation.verdict, st.isolation.reasons], want)
+    assert.ok(loose.calls.some(x => x[0] === 'isolation'), 'the probe still ran')
+  } finally { loose.c.stop() }
+})
+
+test('a session\'s verdict goes with it: /api/state says null once it is torn down', async () => {
+  const w = makeWorld()
+  w.adapters.provisioner.isolation = isolatedCheck(w.calls)
+  try {
+    const port = await harnessPort(w.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(port, 'GET', '/api/state')).status === 'ready')
+    assert.equal((await api(port, 'GET', '/api/state')).isolation.verdict, 'isolated')
+    await api(port, 'POST', '/api/teardown')
+    const st = await api(port, 'GET', '/api/state')
+    assert.deepEqual([st.status, st.isolation], ['idle', null])
+  } finally { w.c.stop() }
+})
+
+// On macOS, a Provisioner that runs no container (the process one, the
+// demo's) gets no reason about containers' VMs.
+test('shared-host on macOS gives the declaration\'s reason alone', async () => {
+  const w = makeWorld({ platform: 'darwin' })
+  w.adapters.provisioner.isolation = 'shared-host'
+  try {
+    const port = await harnessPort(w.c)
+    await api(port, 'POST', '/api/session', { pr: 7 })
+    const st = await waitFor(async () => { const s = await api(port, 'GET', '/api/state'); return s.status === 'ready' && s })
+    assert.deepEqual([st.isolation.verdict, st.isolation.reasons], ['shared-host', ['both panes run as one user on this host']])
+  } finally { w.c.stop() }
 })

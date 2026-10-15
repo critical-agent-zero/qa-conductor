@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { inspect } from 'node:util'
-import { createDocker } from '../lib/docker.mjs'
+import { createDocker, errorLine } from '../lib/docker.mjs'
 import { makeExecFileFn } from '../lib/exec.mjs'
 
 function recordingExec(stdoutByIndex = []) {
@@ -491,7 +491,7 @@ test('rmForce removes all names in one call, and tolerates only names already go
 test('runtime, networkGateways, containerAddresses and runProbe build exact argv', async () => {
   const exec = recordingExec(['Client: Docker Engine - Community\nServer: Docker Engine - Community\n', 'Ubuntu 24.04.1 LTS\n', '172.20.0.1 \n', '172.19.0.2 \n', 'listener 10.0.2.2\nprobe done\n'])
   const docker = createDocker({ execFileFn: exec, postgres: { image: 'postgres:15' } })
-  assert.deepEqual(await docker.runtime(), { version: 'Client: Docker Engine - Community\nServer: Docker Engine - Community\n', os: 'Ubuntu 24.04.1 LTS' })
+  assert.deepEqual(await docker.runtime(), { version: 'Client: Docker Engine - Community\nServer: Docker Engine - Community\n', os: 'Ubuntu 24.04.1 LTS', osError: null })
   assert.deepEqual(await docker.networkGateways('qa-session-pr'), ['172.20.0.1'])
   assert.deepEqual(await docker.containerAddresses('qa-pg-base'), ['172.19.0.2'])
   assert.equal(await docker.runProbe('qa-probe-pr', 'qa-session-pr', 'echo hi', ['3100', '/x']), 'listener 10.0.2.2\nprobe done\n')
@@ -505,6 +505,40 @@ test('runtime, networkGateways, containerAddresses and runProbe build exact argv
     ['docker', 'run', '--rm', '--name', 'qa-probe-pr', '--network', 'qa-session-pr', '--label', 'qa-conductor-session', '--cap-drop', 'ALL', '--entrypoint', 'bash', 'postgres:15', '-c', 'echo hi', 'probe', '3100', '/x'],
   ])
   await assert.rejects(docker.runProbe('qa probe', 'qa-session-pr', 'x', []), /unsafe container name/)
+})
+
+// The podman-docker shim's `docker info` has no .OperatingSystem: the
+// runtime is still known from `docker version`.
+test('runtime keeps what docker version said when docker info fails, and fails only when version does', async () => {
+  const infoFails = dockerFailure('Error: template: info:1:2: executing "info" at <.OperatingSystem>: can\'t evaluate field OperatingSystem in type *define.Info\n')
+  const shim = createDocker({ execFileFn: recordingExec(['Client: Podman Engine\nVersion: 5.2.0\n', infoFails]) })
+  const out = await shim.runtime()
+  assert.deepEqual([out.version, out.os, out.osError], ['Client: Podman Engine\nVersion: 5.2.0\n', null, infoFails])
+  const down = dockerFailure('Cannot connect to the Docker daemon\n')
+  await assert.rejects(createDocker({ execFileFn: recordingExec([down]) }).runtime(), e => e === down)
+})
+
+// A wedged daemon must not hold the boot at the probe for ever.
+test('runProbe gives docker run a timeout, 30 s unless told otherwise', async () => {
+  const opts = []
+  const exec = async (file, args, o) => { opts.push(o ?? null); return { stdout: 'probe done\n' } }
+  const docker = createDocker({ execFileFn: exec })
+  await docker.runProbe('qa-probe-pr', 'qa-session-pr', 'x', [])
+  await docker.runProbe('qa-probe-pr', 'qa-session-pr', 'x', [], { timeoutMs: 50 })
+  assert.deepEqual(opts, [{ timeout: 30_000 }, { timeout: 50 }])
+})
+
+// What docker said, for a reason a person reads: the first line that says
+// something, past the shim's banner and the logger's warnings, else the
+// first line there is.
+test('errorLine reads past the lines that say nothing of the failure', () => {
+  assert.equal(errorLine(dockerFailure(`${SHIM_BANNER}\n${LOGRUS_TTY}\nError: cannot connect to Podman\n`)), 'Error: cannot connect to Podman')
+  assert.equal(errorLine(new Error('docker run: Command failed: docker run …\nno bash')), 'no bash')
+  assert.equal(errorLine(new Error('docker run: Command failed: exec: "bash": not found')), 'docker run: Command failed: exec: "bash": not found')
+  assert.equal(errorLine(new Error('plain')), 'plain')
+  assert.equal(errorLine(dockerFailure(`${SHIM_BANNER}\n`)), SHIM_BANNER)
+  assert.equal(errorLine('a string'), 'a string')
+  assert.equal(errorLine(new Error('')), 'no detail')
 })
 
 test('rmForce with no names makes no call', async () => {

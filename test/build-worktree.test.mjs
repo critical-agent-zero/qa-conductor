@@ -905,6 +905,10 @@ test('construction validates the repo, github, servicesFor, baseRef, keep and in
   for (const [over, re] of bad) assert.throws(() => createWorktreeBuild({ ...base, ...over }), re, JSON.stringify(over))
   assert.equal(createWorktreeBuild(base).migrationStrategy, 'on-boot')
   assert.equal(createWorktreeBuild({ ...base, migrationStrategy: 'none' }).migrationStrategy, 'none')
+  // an install step runs the PR's install scripts on this host, as you: the
+  // isolation verdict can't be better than shared-host (#29)
+  assert.equal(createWorktreeBuild({ ...base, install: { cmd: 'pnpm', args: ['install'] } }).isolation, 'shared-host')
+  assert.equal(createWorktreeBuild(base).isolation, undefined, 'a checkout alone runs none of the PR\'s code')
 })
 
 // --- resolve* ---------------------------------------------------------------------

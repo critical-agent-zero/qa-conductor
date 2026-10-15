@@ -21,7 +21,7 @@ const PASSWORD = /^[0-9a-f]{48}$/
 function recordingExec({ answer = () => null } = {}) {
   const calls = []
   const fn = async (file, args, opts = {}) => {
-    calls.push({ file, args, env: opts.env ?? null })
+    calls.push({ file, args, env: opts.env ?? null, timeout: opts.timeout ?? null })
     const out = answer(args)
     if (out instanceof Error) throw out
     return { stdout: out ?? '' }
@@ -558,12 +558,17 @@ function steps(signal) {
 const CANARY = { port: 3100, path: '/__qa/canary/n0nce', expect: 'qa-canary n0nce' }
 
 // The docker CLI the probe meets; each value may be an Error to fail with.
-function probeDocker({ version = 'Server: Docker Engine - Community\n', os = 'Ubuntu 24.04.1 LTS\n', gateway = '172.20.0.1 \n', base = '172.19.0.2 \n', probe = 'probe done\n' } = {}) {
+// By default the probe reaches nothing but the PR pane's own database, its
+// positive control.
+function probeDocker({
+  version = 'Server: Docker Engine - Community\n', os = 'Ubuntu 24.04.1 LTS\n', gateway = '172.20.0.1 \n',
+  base = '172.19.0.2 \n', pr = '172.20.0.3 \n', probe = 'self 172.20.0.3:5432\nprobe done\n',
+} = {}) {
   return args => {
     if (args[0] === 'version') return version
     if (args[0] === 'info') return os
     if (args[0] === 'network' && args[1] === 'inspect') return gateway
-    if (args[0] === 'inspect') return base
+    if (args[0] === 'inspect') return args.at(-1) === 'qa-pg-pr' ? pr : base
     if (args[0] === 'run' && args.includes('qa-probe-pr')) return probe
     return null
   }
@@ -571,7 +576,8 @@ function probeDocker({ version = 'Server: Docker Engine - Community\n', os = 'Ub
 
 const probeRun = exec => runs(exec).find(c => valueOf(c.args, '--name') === 'qa-probe-pr')
 // The probe's own arguments: port, path, expected body, the host addresses,
-// `--`, then the addresses it only connects to.
+// `--`, the addresses it only connects to, `--`, then its own pane's
+// database, which it must reach.
 const probeArgs = call => call.args.slice(call.args.indexOf('probe') + 1)
 
 test('the probe runs on the PR network once both databases exist and before any migrate, gone when done, with no ports, mounts or capabilities', async () => {
@@ -601,16 +607,44 @@ test('the probe runs on the PR network once both databases exist and before any 
   assert.deepEqual(own.slice(0, 3), ['3100', '/__qa/canary/n0nce', 'qa-canary n0nce'])
   const sep = own.indexOf('--')
   const hosts = own.slice(3, sep)
-  for (const host of ['host.docker.internal', 'gateway.docker.internal', 'host.containers.internal', '192.168.65.254', '192.168.127.254', '10.0.2.2', '172.20.0.1']) assert.ok(hosts.includes(host), host)
-  assert.deepEqual(own.slice(sep + 1), ['172.19.0.2:5432'], 'the base pane\'s database, by address')
+  for (const host of [
+    'host.docker.internal', 'gateway.docker.internal', 'host.containers.internal', '192.168.65.254', '192.168.127.254', '10.0.2.2', '172.20.0.1',
+    // Lima (colima, Rancher Desktop on Linux): its name, its fixed host
+    // address, and Rancher Desktop's name
+    'host.lima.internal', '192.168.5.2', 'host.rancher-desktop.internal',
+  ]) assert.ok(hosts.includes(host), host)
+  assert.deepEqual(own.slice(sep + 1), ['172.19.0.2:5432', '--', '172.20.0.3:5432'], 'the base pane\'s database, then the PR pane\'s own, by address')
+  assert.equal(probeRun(s.exec).timeout, 30_000)
+
+  // every address the base database has, on every network it joined
+  const multi = makeSession({ answer: probeDocker({ base: '172.19.0.2 10.9.0.4 \n' }) })
+  await multi.provisioner.isolation({ canary: CANARY })
+  const multiArgs = probeArgs(probeRun(multi.exec))
+  assert.deepEqual(multiArgs.slice(multiArgs.indexOf('--') + 1), ['172.19.0.2:5432', '10.9.0.4:5432', '--', '172.20.0.3:5432'])
 })
 
 test('the probe\'s verdict: reachable on any hit, unknown when it can\'t tell, isolated otherwise', async () => {
+  const podmanInfo = Object.assign(new Error('docker info: Command failed'), {
+    stderr: 'Emulate Docker CLI using podman. Create /etc/containers/nodocker to quiet msg.\nError: template: info:1:2: executing "info" at <.OperatingSystem>: can\'t evaluate field OperatingSystem in type *define.Info\n',
+  })
   const cases = [
     [{}, 'isolated', []],
-    [{ probe: 'listener host.docker.internal\nprobe done\n' }, 'reachable', [/^the PR pane reached this conductor at host\.docker\.internal:3100, so it can reach the host's loopback, where the base app is published/]],
-    [{ probe: 'open 172.19.0.2:5432\nprobe done\n' }, 'reachable', [/^the PR pane reached the base pane's database at 172\.19\.0\.2:5432/]],
-    [{ probe: 'listener 10.0.2.2\nopen 172.19.0.2:5432\nprobe done\n' }, 'reachable', [/10\.0\.2\.2:3100/, /172\.19\.0\.2:5432/]],
+    // The probe must show it could reach something, its own pane's
+    // database: tools missing or broken in the image (no /dev/tcp, say)
+    // print `probe done` and nothing else.
+    [{ probe: 'probe done\n' }, 'unknown', [/^the probe couldn't reach the PR pane's own database at 172\.20\.0\.3:5432, so what it didn't reach proves nothing/]],
+    [{ probe: 'listener 10.0.2.2\nprobe done\n' }, 'reachable', [/10\.0\.2\.2:3100/]],
+    [{ pr: '\n' }, 'unknown', [/^could not find the panes' addresses: qa-pg-pr has none/]],
+    // a preflight that finds a tool missing ends the run before any probing
+    [{ probe: Object.assign(new Error('docker run: Command failed'), { stderr: 'the probe needs timeout, grep and cat, and a timeout that takes its seconds first\n' }) }, 'unknown', [/^the probe couldn't run: the probe needs timeout, grep and cat/]],
+    // a run that didn't end in time
+    [{ probe: Object.assign(new Error('docker run: Command failed'), { killed: true, signal: 'SIGTERM' }) }, 'unknown', [/^the probe didn't finish within 30 s/]],
+    // the podman-docker shim: no OperatingSystem in its info, and a banner
+    [{ version: 'Client: Podman Engine\nVersion: 5.2.0\n', os: podmanInfo }, 'reachable', [/^Podman's networks don't keep one pane's containers from the other's/]],
+    [{ os: podmanInfo }, 'unknown', [/^could not tell the container runtime: Error: template: info/]],
+    [{ probe: 'listener host.docker.internal\nself 172.20.0.3:5432\nprobe done\n' }, 'reachable', [/^the PR pane reached this conductor at host\.docker\.internal:3100, so it can reach the host's loopback, where the base app is published/]],
+    [{ probe: 'open 172.19.0.2:5432\nself 172.20.0.3:5432\nprobe done\n' }, 'reachable', [/^the PR pane reached the base pane's database at 172\.19\.0\.2:5432/]],
+    [{ probe: 'listener 10.0.2.2\nopen 172.19.0.2:5432\nself 172.20.0.3:5432\nprobe done\n' }, 'reachable', [/10\.0\.2\.2:3100/, /172\.19\.0\.2:5432/]],
     // a hit before it stopped still counts
     [{ probe: 'listener 10.0.2.2\n' }, 'reachable', [/10\.0\.2\.2:3100/, /^the probe didn't finish/]],
     [{ os: 'Docker Desktop\n', probe: new Error('no bash') }, 'reachable', [/^Docker Desktop/, /^the probe couldn't run: no bash/]],
@@ -673,8 +707,8 @@ test('the probe script reports the listener that answers the canary and the addr
   const shim = mkdtempSync(join(tmpdir(), 'qa-probe-'))
   writeFileSync(join(shim, 'timeout'), '#!/bin/sh\nshift\nexec "$@"\n')
   chmodSync(join(shim, 'timeout'), 0o755)
-  const runScript = (port, targets) => new Promise((resolve, reject) => {
-    execFile('bash', ['-c', script, 'probe', String(port), CANARY.path, CANARY.expect, '127.0.0.1', '--', ...targets], {
+  const runScript = (port, targets, selves = [`127.0.0.1:${openPort}`]) => new Promise((resolve, reject) => {
+    execFile('bash', ['-c', script, 'probe', String(port), CANARY.path, CANARY.expect, '127.0.0.1', '--', ...targets, '--', ...selves], {
       env: { ...process.env, PATH: `${shim}:${process.env.PATH}` }, timeout: 20_000,
     }, (err, stdout) => {
       if (err) return reject(err)
@@ -687,12 +721,73 @@ test('the probe script reports the listener that answers the canary and the addr
   })
   try {
     assert.deepEqual(await runScript(canaryPort, [`127.0.0.1:${openPort}`, `127.0.0.1:${closedPort}`]), [
-      'listener 127.0.0.1', `open 127.0.0.1:${openPort}`, 'probe done',
+      'listener 127.0.0.1', `open 127.0.0.1:${openPort}`, 'probe done', `self 127.0.0.1:${openPort}`,
     ])
-    assert.deepEqual(await runScript(otherPort, []), ['probe done'], 'another server on the port is no hit')
-    assert.deepEqual(await runScript(closedPort, [`127.0.0.1:${closedPort}`]), ['probe done'])
+    assert.deepEqual(await runScript(otherPort, []), ['probe done', `self 127.0.0.1:${openPort}`], 'another server on the port is no hit')
+    assert.deepEqual(await runScript(closedPort, [`127.0.0.1:${closedPort}`]), ['probe done', `self 127.0.0.1:${openPort}`])
+    assert.deepEqual(await runScript(closedPort, [], [`127.0.0.1:${closedPort}`]), ['probe done'], 'its own database not reached: no self line')
   } finally {
     for (const server of [canary, other, open]) server.close()
     rmSync(shim, { recursive: true, force: true })
   }
+})
+
+// The probe's image may lack a tool, or have one that works otherwise: no
+// `timeout` (macOS has none), an old BusyBox one that wants `-t`, no `grep`.
+// Each failure inside the script would otherwise go unseen: every connect
+// "fails", and the probe ends in `probe done` with nothing found. So it
+// checks its tools first and stops, which the verdict reads as unknown.
+test('the probe script stops before probing when a tool it needs is missing or different, and the verdict is unknown', async () => {
+  const { execFile } = await import('node:child_process')
+  const { mkdtempSync, writeFileSync, chmodSync, rmSync, symlinkSync, existsSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join, delimiter } = await import('node:path')
+  const which = name => process.env.PATH.split(delimiter).map(dir => join(dir, name)).find(p => existsSync(p))
+  const s = makeSession({ answer: probeDocker() })
+  await s.provisioner.isolation({ canary: CANARY })
+  const script = valueOf(probeRun(s.exec).args, '-c')
+
+  const gnuTimeout = '#!/bin/sh\nshift\nexec "$@"\n'
+  const oldBusyBox = '#!/bin/sh\n[ "$1" = -t ] || { echo "timeout: invalid option" >&2; exit 1; }\nshift 2\nexec "$@"\n'
+  const kits = {
+    'no timeout': { tools: ['cat', 'grep'] },
+    'an old BusyBox timeout': { tools: ['cat', 'grep'], timeout: oldBusyBox },
+    'no grep': { tools: ['cat'], timeout: gnuTimeout },
+    'no cat': { tools: ['grep'], timeout: gnuTimeout },
+  }
+  const dirs = []
+  try {
+    for (const [kit, { tools, timeout }] of Object.entries(kits)) {
+      const dir = mkdtempSync(join(tmpdir(), 'qa-probe-kit-'))
+      dirs.push(dir)
+      for (const tool of ['bash', ...tools]) symlinkSync(which(tool), join(dir, tool))
+      if (timeout) { writeFileSync(join(dir, 'timeout'), timeout); chmodSync(join(dir, 'timeout'), 0o755) }
+      // what a shim execs to show it works
+      if (timeout) symlinkSync(which('true'), join(dir, 'true'))
+      const err = await new Promise(resolve => {
+        execFile(join(dir, 'bash'), ['-c', script, 'probe', '3100', CANARY.path, CANARY.expect, '127.0.0.1', '--', '--', '127.0.0.1:1'], {
+          env: { PATH: dir }, timeout: 20_000,
+        }, (error, stdout, stderr) => resolve(Object.assign(error ?? new Error('exited 0'), { stdout, stderr })))
+      })
+      assert.equal(err.code, 3, `${kit}: ${err.message}`)
+      assert.doesNotMatch(err.stdout, /probe done/, kit)
+      assert.match(err.stderr, /^the probe needs timeout, grep and cat, and a timeout that takes its seconds first/, kit)
+      // as docker run reports it, the verdict
+      const t = makeSession({ answer: probeDocker({ probe: Object.assign(new Error('docker run: Command failed'), { stderr: err.stderr }) }) })
+      const out = await t.provisioner.isolation({ canary: CANARY })
+      assert.equal(out.verdict, 'unknown', kit)
+    }
+  } finally {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a probe that doesn\'t finish within its time is stopped and removed, and the verdict is unknown', async () => {
+  const s = makeSession({ answer: probeDocker({ probe: Object.assign(new Error('docker run: Command failed'), { killed: true, signal: 'SIGTERM' }) }) })
+  const out = await s.provisioner.isolation({ canary: CANARY })
+  assert.deepEqual(out, { verdict: 'unknown', reasons: ['the probe didn\'t finish within 30 s, so it can\'t say what the PR pane reaches'] })
+  assert.equal(docker(s.exec).at(-1).args.join(' '), 'rm -f -v qa-probe-pr')
+  const quick = makeSession({ answer: probeDocker(), provisionerOptions: { probeTimeoutMs: 5_000 } })
+  await quick.provisioner.isolation({ canary: CANARY })
+  assert.equal(probeRun(quick.exec).timeout, 5_000)
 })
