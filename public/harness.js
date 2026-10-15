@@ -133,16 +133,20 @@ function inviteFromHash(hash) {
   let enrolling = null
   let enrolledAt = 0
 
+  // Resolves to whether it enrolled, once the view it then renders is up.
   async function enrol(invite = null) {
+    let token
     try {
-      const { token } = await postJson('/enrol', invite ? { invite } : {})
-      cap.set(token); enrolledAt = Date.now()
-      render()
+      ({ token } = await postJson('/enrol', invite ? { invite } : {}))
     } catch (err) {
       // a browser already enrolled that opens a spent invite stays as it was
-      if (invite && cap.get()) { announce(`Invite link not used: ${err.message}`, true); return render() }
+      if (invite && cap.get()) { announce(`Invite link not used: ${err.message}`, true); render(); return false }
       showEnrol(err)
+      return false
     }
+    cap.set(token); enrolledAt = Date.now()
+    await render()
+    return true
   }
 
   // An API call was refused for want of the capability: drop the token and
@@ -318,16 +322,18 @@ function inviteFromHash(hash) {
     const btn = e.target.closest('button[data-open]'); if (!btn) return
     const num = +btn.dataset.open
     if (btn.dataset.resume) return go(`#/pr/${num}`)
-    const rowButtons = $('prList').querySelectorAll('button[data-open]')
-    for (const b of rowButtons) b.disabled = true
-    btn.textContent = 'Opening…'; btn.closest('.pr').setAttribute('aria-busy', 'true')
+    // the row stays while it is re-rendered (a re-enrolment's, say); the
+    // buttons in it don't
+    const row = btn.closest('.pr')
+    for (const b of $('prList').querySelectorAll('button[data-open]')) b.disabled = true
+    btn.textContent = 'Opening…'; row.setAttribute('aria-busy', 'true')
     openSession(num).catch(err => {
-      btn.closest('.pr').removeAttribute('aria-busy')
-      for (const b of rowButtons) b.disabled = false
+      row.removeAttribute('aria-busy')
+      for (const b of $('prList').querySelectorAll('button[data-open]')) b.disabled = false
       if (err.status === 409 && err.body && err.body.session) {
         $('conflictSlot').innerHTML = ''; $('conflictSlot').appendChild(conflictCard(err.body.session, num))
       } else {
-        const slot = btn.closest('.pr').querySelector('.rowErr'); slot.hidden = false; slot.textContent = err.message
+        const slot = row.querySelector('.rowErr'); slot.hidden = false; slot.textContent = err.message
       }
     })
   })
@@ -336,7 +342,12 @@ function inviteFromHash(hash) {
   async function openSession(num, opts = {}) {
     if (picking) return; picking = true
     try {
-      await postJson('/session', { pr: num, ...opts })
+      await postJson('/session', { pr: num, ...opts }).catch(async err => {
+        // A restart revoked the token, and with it any session: once this
+        // browser has enrolled again, ask once more.
+        if (!(err.capability && enrolling && await enrolling)) throw err
+        return postJson('/session', { pr: num, ...opts })
+      })
       go(`#/pr/${num}/boot`)
     } finally { picking = false }
   }

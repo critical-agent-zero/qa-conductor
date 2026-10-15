@@ -383,3 +383,76 @@ test('the picker brings back its rows after an error or an empty list stood in f
   b.byId('refreshBtn').onclick(); await b.settle()
   assert.deepEqual(shown(), ['', [9]])
 })
+
+// Open QA on a picker row: the delegated click, as the picker gets it. Once
+// the click is handled, the button is detached, as a re-render of the row
+// (a re-enrolment's, say) leaves it.
+function clickOpen(prList, num) {
+  const row = { attrs: {}, err: {}, setAttribute(k, v) { row.attrs[k] = v }, removeAttribute(k) { delete row.attrs[k] }, querySelector: () => row.err }
+  let attached = true
+  const btn = { dataset: { open: String(num) }, closest: sel => (sel === '.pr' && attached ? row : null) }
+  const [, onClick] = prList.listeners.find(([type]) => type === 'click')
+  onClick({ target: { closest: () => btn } })
+  attached = false
+  return row
+}
+
+// A restart revoked the token, and with it any session: Open QA's refused
+// POST /api/session enrols the browser again, then is sent once more.
+test('after a restart, Open QA enrols the browser again and asks for the session once more, with the new token', async () => {
+  for (const retryRefused of [false, true]) {
+    let token = 'tok-1'
+    const sessions = []
+    const prList = fakeList()
+    const enrolled = answer => (_, headers) => (headers['x-qa-cap'] === token ? answer : CAPTURE)
+    const b = fakeBrowser({
+      stored: 'tok-1',
+      elements: { prList },
+      routes: {
+        'GET /qa/api/state': enrolled({ body: { status: 'idle' } }),
+        'GET /qa/api/prs': enrolled({ body: { prs: [{ number: 7, title: 'a' }], session: null } }),
+        'POST /qa/api/enrol': () => ({ body: { token } }),
+        'POST /qa/api/session': (body, headers) => {
+          sessions.push([headers['x-qa-cap'], body])
+          return headers['x-qa-cap'] === token && !retryRefused ? { status: 202, body: { ok: true } } : CAPTURE
+        },
+      },
+    })
+    await b.settle()
+    token = 'tok-2' // the conductor restarted
+    const row = clickOpen(prList, 7)
+    await b.settle()
+    assert.deepEqual(sessions, [['tok-1', { pr: 7 }], ['tok-2', { pr: 7 }]], 'once more, and only once')
+    if (!retryRefused) {
+      assert.equal(b.location.hash, '#/pr/7/boot')
+    } else {
+      // a token refused just after it was given: the row says so, and the
+      // enrolment view takes over
+      assert.equal(b.location.hash, '#/')
+      assert.equal(row.err.textContent, 'this browser is not enrolled')
+      assert.equal(row.attrs['aria-busy'], undefined)
+      assert.equal(b.byId('enrol').hidden, false)
+    }
+  }
+})
+
+// Any other refusal is the row's error, as before.
+test('Open QA refused for another reason shows it on the row and asks once', async () => {
+  const sessions = []
+  const prList = fakeList()
+  const b = fakeBrowser({
+    stored: 'tok-1',
+    elements: { prList },
+    routes: {
+      'GET /qa/api/state': { body: { status: 'idle' } },
+      'GET /qa/api/prs': { body: { prs: [{ number: 7, title: 'a' }], session: null } },
+      'POST /qa/api/session': body => { sessions.push(body); return { status: 503, body: { error: 'shutting down' } } },
+    },
+  })
+  await b.settle()
+  const row = clickOpen(prList, 7)
+  await b.settle()
+  assert.equal(sessions.length, 1)
+  assert.equal(row.err.textContent, 'shutting down')
+  assert.equal(b.log.filter(e => e[0] === 'fetch' && e[2] === '/qa/api/enrol').length, 0)
+})
