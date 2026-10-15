@@ -1,12 +1,12 @@
 // The session's action log (lib/action-log.mjs): what each pane's proxy
-// forwarded, and the marks the harness posts for the actions mirrored
-// between the panes. Value-free by construction: no header, cookie, body or
-// query value ever enters it, and paths lose what looks like a token, an
-// email address or a long number.
+// forwarded, and the marks the harness posts for the actions each pane's
+// bridge reports, mirrored or not. Value-free by construction: no header,
+// cookie, body or query value ever enters it, and paths lose what looks like
+// a token, an email address or a long number.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { MARK_TYPES, createActionLog, sanitizeMethod, sanitizePath } from '../lib/action-log.mjs'
+import { MARK_TYPES, createActionLog, monotonicNow, sanitizeMethod, sanitizePath } from '../lib/action-log.mjs'
 
 test('sanitizePath keeps the shape of a path and drops every value in it', () => {
   const cases = [
@@ -45,6 +45,34 @@ test('sanitizePath keeps the shape of a path and drops every value in it', () =>
     ['/orders/123456', '/orders/123456'], // 6: an id, kept
     ['/2026/10/15/post', '/2026/10/15/post'],
     ['/products/widget-classic', '/products/widget-classic'],
+    ['/guide/internationalization-guide', '/guide/internationalization-guide'],
+    // seven digits or more anywhere in a segment, with one separator at most between two
+    ['/u/5551234567.json', '/u/:number'],
+    ['/acct/ACCT9876543210', '/acct/:number'],
+    ['/ssn/ssn-123-45-6789', '/ssn/:number'],
+    ['/patients/MRN1234567', '/patients/:number'],
+    ['/cards/4111_1111_1111_1111', '/cards/:number'],
+    ['/cards/4111+1111+1111+1111', '/cards/:number'],
+    ['/cards/4111%2F1111%2F1111%2F1111', '/cards/:number'],
+    ['/phone/555,123,4567', '/phone/:number'],
+    ['/phone/(555) 123-4567', '/phone/:number'],
+    ['/phone/５５５１２３４５６７', '/phone/:number'], // fullwidth digits
+    ['/v/12-34-56', '/v/12-34-56'], // six
+    // decoded until it stops changing
+    ['/u/bob%2540gmail.com', '/u/:email'],
+    ['/u/a%252540b.co', '/u/:email'],
+    ['/users/bob﹫gmail.com', '/users/:email'], // a small-form @
+    ['/users/bob%EF%B9%ABgmail.com', '/users/:email'],
+    ['/x/token%3Dabc123', '/x/token=…'],
+    ['/x/token%253Dabc', '/x/token=…'], // twice
+    ['/x/token%25253Dabc', '/x/token=…'], // three times
+    ['/users/bob%25EF%25B9%25ABgmail.com', '/users/:email'],
+    // a JWT with no digit, too short for the other rules
+    ['/s/eyJhbGci.eyJz.abc', '/s/:token'],
+    // 24 letters or more in a row: no word is that long
+    ['/reset/xkcdcorrecthorsebatterystaple', '/reset/:token'],
+    ['/api/keys/key_abcdefghijklmnopqrstuvwx', '/api/keys/:token'],
+    ['/k/ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEF', '/k/:token'],
     // a key=value segment keeps the key
     ['/x/token=abc', '/x/token=…'],
     ['/x/apikey=sk_live_short;v=2', '/x/apikey=…'],
@@ -56,7 +84,7 @@ test('sanitizePath keeps the shape of a path and drops every value in it', () =>
   ]
   for (const [url, want] of cases) assert.equal(sanitizePath(url), want, url)
   // at most 200 characters
-  const long = sanitizePath(`/${'x'.repeat(500)}`)
+  const long = sanitizePath(`/${'ab/'.repeat(200)}`)
   assert.equal(long.length, 200)
   assert.ok(long.endsWith('…'))
   // anything not a string is the root
@@ -121,14 +149,27 @@ test('marks are value-free, one of each kind per pane per 100 ms, and at most ma
   assert.throws(() => log.mark('both', 'click'), /pane must be base or pr/)
 })
 
-// PR code can post bridge messages: it can use up the PR pane's marks, never
-// the base pane's.
-test('a pane that uses up its marks leaves the other pane\'s alone', () => {
+// PR code can post bridge messages: it can use up the PR pane's marks for a
+// while, never the base pane's, and never for the rest of the session.
+test('each pane\'s marks come from a budget that refills: using up the PR pane\'s leaves the base pane\'s alone, and lasts a while only', () => {
   const c = clock()
-  const log = createActionLog({ now: c.now })
-  for (let i = 0; i < 2_100; i++) { log.mark('pr', 'click'); c.tick(100) }
-  assert.equal(log.read(0).marksDropped.pr, 100)
-  assert.ok(log.mark('base', 'click'))
+  const log = createActionLog({ now: c.now, maxMarks: 3, markRefillMs: 1_000 })
+  assert.deepEqual(MARK_TYPES.map(type => log.mark('pr', type) !== null), [true, true, true, false])
+  assert.ok(log.mark('base', 'click'), 'the base pane has its own')
+  c.tick(999)
+  assert.equal(log.mark('pr', 'click'), null, 'not quite one mark refilled')
+  c.tick(1)
+  assert.ok(log.mark('pr', 'click'), 'one refilled')
+  assert.equal(log.mark('pr', 'submit'), null)
+  c.tick(10_000)
+  assert.deepEqual(MARK_TYPES.map(type => log.mark('pr', type) !== null), [true, true, true, false], 'never more than maxMarks at once')
+  assert.deepEqual(log.read(0).marksDropped, { base: 0, pr: 4 })
+  // the default: 2,000, and one more a second
+  const d = clock()
+  const dflt = createActionLog({ now: d.now })
+  let made = 0
+  for (let i = 0; i < 2_100; i++) { if (dflt.mark('pr', MARK_TYPES[i % 4])) made++; if (i % 4 === 3) d.tick(100) }
+  assert.equal(made, 2_000 + Math.floor((2_100 / 4 - 1) * 100 / 1_000))
 })
 
 test('refusals count per pane by reason, and nothing else of them is kept', () => {
@@ -247,4 +288,127 @@ test('a page never groups a request under a mark it does not give', () => {
   const rest = log.read(page.seq)
   assert.deepEqual(rest.marks.map(m => m.seq), [click.seq])
   assert.deepEqual(rest.requests.map(r => [r.path, r.mark]), [['/a', click.seq], ['/b', click.seq]])
+})
+
+// A reader keeps a cursor: `log` tells it when the log under the cursor is
+// another session's, whose seq started again.
+test('every read names its log, the same for one log and another for the next', () => {
+  const a = createActionLog({ now: () => 1 })
+  const b = createActionLog({ now: () => 1 })
+  assert.match(a.read(0).log, /^[0-9a-f]{16}$/)
+  assert.equal(a.read(0).log, a.read(5).log)
+  assert.notEqual(a.read(0).log, b.read(0).log)
+})
+
+// Two new marks between reads: the earlier one can claim a request read
+// before either.
+test('a regroup counts from the earliest of the new marks', () => {
+  const c = clock(900)
+  const log = createActionLog({ now: c.now })
+  log.record('base', { at: 900, method: 'POST', path: '/save', status: 303 })
+  const first = log.read(0)
+  c.tick(100)
+  const click = log.mark('base', 'click') // at 1000
+  c.tick(1_000)
+  log.mark('base', 'submit') // at 2000
+  const next = log.read(first.seq)
+  assert.deepEqual(next.requests.map(r => [r.path, r.mark]), [['/save', click.seq]])
+})
+
+// A read is bounded: at most `limit` new requests and `limit` regrouped
+// ones. More regrouped than that, and `resync` says to read again from 0.
+test('a read gives again only the requests whose mark changed, at most `limit` of them, else says to read again from 0', () => {
+  const c = clock(1_000)
+  const log = createActionLog({ now: c.now })
+  const before = log.mark('base', 'click') // at 1000
+  c.tick(1_000)
+  log.record('base', { at: 1_500, method: 'GET', path: '/near-old', status: 200 }) // the click's, and stays so
+  for (let i = 0; i < 6; i++) log.record('pr', { at: 1_900, method: 'GET', path: `/p${i}`, status: 200 })
+  const first = log.read(0)
+  assert.deepEqual(first.requests.map(r => r.mark), Array(7).fill(before.seq))
+  c.tick(0)
+  const submit = log.mark('pr', 'submit') // at 2000: the nearer for the 1900s, and the PR pane's own
+  const small = log.read(first.seq, { limit: 5 })
+  assert.deepEqual([small.resync, small.seq, small.requests, small.marks, small.log], [true, 0, [], [], first.log])
+  const page = log.read(first.seq, { limit: 6 })
+  assert.equal(page.resync, false)
+  assert.deepEqual(page.requests.map(r => [r.path, r.mark]), [0, 1, 2, 3, 4, 5].map(i => [`/p${i}`, submit.seq]), '/near-old is not given again')
+  // from 0, every request comes with its mark as it stands, in pages
+  const again = log.read(0, { limit: 4 })
+  assert.deepEqual([again.requests.length, again.more, again.resync], [4, true, false])
+})
+
+// Marks group both panes' requests: a mirrored action is reported by the
+// pane it happened in only. A pane's own mark wins when it is that close.
+test('grouping prefers a mark from the request\'s own pane within the window', () => {
+  const c = clock(1_000)
+  const log = createActionLog({ now: c.now })
+  const baseClick = log.mark('base', 'click') // at 1000
+  c.tick(10)
+  const prClick = log.mark('pr', 'click') // at 1010
+  log.record('base', { at: 1_020, method: 'GET', path: '/b', status: 200 })
+  log.record('pr', { at: 1_020, method: 'GET', path: '/p', status: 200 })
+  c.tick(1_000)
+  const prLater = log.mark('pr', 'submit') // at 2010
+  log.record('base', { at: 2_000, method: 'GET', path: '/mirrored', status: 200 }) // no base mark near: the PR pane's
+  log.record('base', { at: 1_200, method: 'GET', path: '/tie-own', status: 200 }) // its own pane's, 200 ms back
+  c.tick(990)
+  const early = log.mark('base', 'change') // at 3000
+  c.tick(200)
+  log.mark('base', 'enter') // at 3200
+  log.record('base', { at: 3_100, method: 'GET', path: '/between', status: 200 }) // 100 ms from each: the earlier
+  assert.deepEqual(log.read(0).requests.map(r => [r.path, r.mark]), [
+    ['/b', baseClick.seq], ['/p', prClick.seq], ['/mirrored', prLater.seq], ['/tie-own', baseClick.seq], ['/between', early.seq],
+  ])
+})
+
+// Only a request whose mark changed comes again.
+test('a new mark of the other pane leaves a request under its own pane\'s mark alone', () => {
+  const c = clock(1_700)
+  const log = createActionLog({ now: c.now })
+  const own = log.mark('base', 'click') // at 1700
+  log.record('base', { at: 1_800, method: 'GET', path: '/mine', status: 200 })
+  log.record('pr', { at: 1_900, method: 'GET', path: '/theirs', status: 200 })
+  const first = log.read(0)
+  assert.deepEqual(first.requests.map(r => r.mark), [own.seq, own.seq])
+  c.tick(300)
+  const pr = log.mark('pr', 'submit') // at 2000
+  assert.deepEqual(log.read(first.seq).requests.map(r => [r.path, r.mark]), [['/theirs', pr.seq]])
+})
+
+// The marks no request can belong to go, so a long session's refills don't
+// pile up.
+test('marks before every request in the rings, and before a minute ago, are let go but the last of them', () => {
+  // past 4 × maxMarks (12) marks, a prune: at the 13th (130 s) and the 18th (180 s)
+  const run = requestsAt => {
+    const c = clock(0)
+    const log = createActionLog({ now: c.now, maxEntries: 2, maxMarks: 3, markRefillMs: 1 })
+    for (const at of requestsAt) log.record('base', { at, method: 'GET', path: '/x', status: 200 })
+    for (let i = 0; i < 20; i++) { c.tick(10_000); log.mark('base', 'click') } // at 10 s ... 200 s
+    return log.read(0)
+  }
+  const ats = from => Array.from({ length: (200_000 - from) / 10_000 + 1 }, (_, i) => from + i * 10_000)
+  // the earliest request holds the 60 s mark, the last before its window
+  const early = run([65_000, 66_000])
+  assert.deepEqual(early.marks.map(m => m.at), ats(60_000))
+  assert.deepEqual(early.requests.map(r => r.mark), [early.marks[0].seq, early.marks[0].seq])
+  // later requests: a minute before the last prune (180 s) holds the 110 s mark
+  const late = run([150_000, 151_000])
+  assert.deepEqual(late.marks.map(m => m.at), ats(110_000))
+})
+
+// One clock that only goes forward: a step back of the system clock stops
+// no mark and puts no request before its mark.
+test('the default clock is monotonic: a step back of the wall clock changes nothing', async (t) => {
+  let wall = Date.now()
+  t.mock.method(Date, 'now', () => (wall -= 3_600_000)) // an hour back at every look
+  const log = createActionLog()
+  assert.ok(log.mark('base', 'click'))
+  await new Promise(r => setTimeout(r, 120))
+  assert.ok(log.mark('base', 'click'), 'a mark 120 ms later is recorded')
+  const at = monotonicNow()
+  assert.ok(Math.abs(at - (performance.timeOrigin + performance.now())) < 5)
+  log.record('base', { at, method: 'GET', path: '/x', status: 200 })
+  const out = log.read(0)
+  assert.equal(out.requests[0].mark, out.marks[1].seq)
 })

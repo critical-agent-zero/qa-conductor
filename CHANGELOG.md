@@ -62,11 +62,11 @@ What changed in each release, newest first. A 0.x minor version may break the in
 ### The action log
 
 - **Each session keeps an action log:** what each pane's proxy forwarded to its app, and a mark for each action the panes reported. Requests group under the mark they most likely came from. It is the first part of #8's data checks. README's [Security](README.md#security) and [HTTP API](README.md#http-api-harness-port) have the details.
-  - **No values.** An entry keeps the method, the path, the status, the time and the bytes sent back: never a header, a cookie, a body or a query value. A query keeps its keys. A path segment that looks like a value (an email address, a `key=value` pair, a long number, a token) shows only its kind; that is a heuristic, and a short code can slip through. A request a guard refuses is only counted, by reason. A mark keeps the pane and the kind of action (`click`, `submit`, `change`, `enter`), never the element or what was typed.
+  - **No values.** An entry keeps the method, the path, the status, the time and the bytes sent back: never a header, a cookie, a body or a query value. A query keeps its keys. A path segment that looks like a value (an email address, a `key=value` pair, a run of seven digits or more, a token), even encoded twice, shows only its kind; that is a heuristic, and a short code can slip through. A request a guard refuses is only counted, by reason. A mark keeps the pane and the kind of action (`click`, `submit`, `change`, `enter`), never the element or what was typed.
   - **The running session's only.** It lives in memory from ready to the next boot or teardown, as the cookie jars do, and a request lands in the log of the session it started in. Nothing of it reaches the event stream, the conductor's log or GitHub.
   - **New:**
-    - routes: `GET /api/actions?after=N&limit=M`, read in pages of at most 2,000 requests, and `POST /api/actions/mark`;
-    - the harness posts a mark for the clicks, submits, changes and Enters a pane reports, mirrored or not, at most one of each kind a pane every 100 ms;
+    - routes: `GET /api/actions?after=N&limit=M`, read in pages of at most 2,000 new and 2,000 regrouped requests, each naming its `log`, and `POST /api/actions/mark`;
+    - the harness posts a mark for the clicks, submits, changes and Enters a pane reports, mirrored or not, at most one of each kind a pane every 100 ms, from a budget per pane that refills;
     - `createPaneProxy` takes `recorder` and `onRefused`.
 
 ### The Docker Provisioner

@@ -585,14 +585,15 @@ function inviteFromHash(hash) {
   // element or a value. At most one of each kind a pane every 100 ms, as the
   // conductor keeps: a click and the submit it sets off are two. The pane's
   // own page can post such messages, so the log labels a mark as reported
-  // by that pane.
+  // by that pane. A monotonic clock: a step back of the system clock must
+  // not hold marks back.
   const lastMark = new Map()
   function markAction(pane, d) {
     const type = markType(d)
     if (type === null) return
-    const now = Date.now()
+    const now = performance.now()
     const kind = `${pane} ${type}`
-    if (now - (lastMark.get(kind) ?? 0) < 100) return
+    if (now - (lastMark.get(kind) ?? -Infinity) < 100) return
     lastMark.set(kind, now)
     postJson('/actions/mark', { pane, type }).catch(() => {})
   }
