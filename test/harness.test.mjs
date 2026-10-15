@@ -11,11 +11,21 @@ import { dirname, join } from 'node:path'
 const harnessPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'harness.js')
 const cjsModule = { exports: {} }
 new Function('module', 'exports', readFileSync(harnessPath, 'utf8'))(cjsModule, cjsModule.exports)
-const { esc, isHttpsUrl, LABELS, harnessOriginNotice, buildSummary, buildFromEvent, inviteFromHash, isCapabilityRefusal } = cjsModule.exports
+const { esc, isHttpsUrl, LABELS, harnessOriginNotice, buildSummary, buildFromEvent, inviteFromHash, isCapabilityRefusal, isolationLabel } = cjsModule.exports
 const harnessSrc = readFileSync(harnessPath, 'utf8')
 
 test('the CJS guard exports the pure helpers only', () => {
-  assert.deepEqual(Object.keys(cjsModule.exports).sort(), ['LABELS', 'buildFromEvent', 'buildSummary', 'esc', 'harnessOriginNotice', 'inviteFromHash', 'isCapabilityRefusal', 'isHttpsUrl'])
+  assert.deepEqual(Object.keys(cjsModule.exports).sort(), ['LABELS', 'buildFromEvent', 'buildSummary', 'esc', 'harnessOriginNotice', 'inviteFromHash', 'isCapabilityRefusal', 'isHttpsUrl', 'isolationLabel'])
+})
+
+test('isolationLabel: nothing before a verdict, else what it says, its reasons as the title', () => {
+  assert.equal(isolationLabel(null), null)
+  assert.equal(isolationLabel(undefined), null)
+  assert.deepEqual(isolationLabel({ verdict: 'isolated', reasons: [] }), { text: 'isolated', warn: false, title: 'The PR pane can\'t reach the base pane, so the base pane shows what the base did' })
+  assert.deepEqual(isolationLabel({ verdict: 'reachable', reasons: ['a', 'b'] }), { text: 'not isolated', warn: true, title: 'a; b' })
+  assert.deepEqual(isolationLabel({ verdict: 'unknown', reasons: ['c'] }), { text: 'isolation unknown', warn: true, title: 'c' })
+  assert.deepEqual(isolationLabel({ verdict: 'shared-host', reasons: ['d'] }), { text: 'shared host', warn: true, title: 'd' })
+  assert.deepEqual(isolationLabel({ verdict: 'bogus', reasons: [] }), { text: 'isolation unknown', warn: true, title: '' })
 })
 
 test('isCapabilityRefusal: a 403 marked by its header or, the header dropped, by its body', () => {
@@ -310,4 +320,28 @@ test('reload and re-sync ask for the pane path on the pane origin', async () => 
     { role: 'pr', to: `${PANES.prOrigin}//evil.example/x?y=1` },
     { role: 'base', to: `${PANES.baseOrigin}//evil.example/x?y=1` },
   ])
+})
+
+test('the header chip shows the session\'s isolation verdict, with its reasons as the title, and none while idle', async () => {
+  const chip = b => Object.fromEntries(b.log.filter(e => e[0] === 'set' && e[1] === 'isolationChip').map(e => [e[2], e[3]]))
+  const ready = fakeBrowser({
+    hash: '#/pr/7',
+    stored: 'tok-1',
+    routes: {
+      'GET /qa/api/state': { body: { status: 'ready', pr: 7, panes: PANES, isolation: { verdict: 'reachable', reasons: ['a', 'b'] } } },
+      'POST /qa/api/pane-entry': entryRoute,
+    },
+  })
+  await ready.settle()
+  const shown = chip(ready)
+  assert.deepEqual([shown.hidden, shown.textContent, shown.title], [false, 'not isolated', 'a; b'])
+  const idle = fakeBrowser({
+    stored: 'tok-1',
+    routes: {
+      'GET /qa/api/state': { body: { status: 'idle', isolation: { verdict: 'isolated', reasons: [] } } },
+      'GET /qa/api/prs': { body: { prs: [], session: null } },
+    },
+  })
+  await idle.settle()
+  assert.equal(chip(idle).hidden, true)
 })

@@ -48,6 +48,8 @@ test('runPg builds the exact docker run argv, and passes the password in the CLI
     '--name', 'qa-pg-base',
     '--network', 'qa-session-base',
     '--label', 'qa-conductor-session',
+    // ping-style raw sockets (crafted packets) are no pane's business
+    '--cap-drop', 'NET_RAW',
     '-e', 'POSTGRES_USER=qa',
     // no value: docker takes it from its own environment
     '-e', 'POSTGRES_PASSWORD',
@@ -131,6 +133,7 @@ test('runMigrate names its container when given a name', async () => {
     '--name', 'qa-migrate-pr',
     '--network', 'qa-session-pr',
     '--label', 'qa-conductor-session',
+    '--cap-drop', 'NET_RAW',
     '--env-file', '/compose/.env.qa-pr',
     'ghcr.io/x/app:migrate-pr-7-abc',
   ]])
@@ -149,6 +152,7 @@ test('createDocker threads a custom postgres identity and label through argv', a
     '--name', 'widget-pg',
     '--network', 'widget-qa',
     '--label', 'widget-qa-session',
+    '--cap-drop', 'NET_RAW',
     '-e', 'POSTGRES_USER=widget',
     '-e', 'POSTGRES_PASSWORD',
     '-e', 'POSTGRES_DB=maindb',
@@ -197,6 +201,7 @@ test('runApp builds the exact docker run argv with loopback port mapping', async
     '--name', 'qa-app-pr',
     '--network', 'qa-session',
     '--label', 'qa-conductor-session',
+    '--cap-drop', 'NET_RAW',
     '--env-file', '/compose/.env.qa-pr',
     '-p', '127.0.0.1:3112:3000',
     'ghcr.io/x/app:pr-7-abc',
@@ -211,6 +216,7 @@ test('runMigrate builds the exact docker run argv', async () => {
     'docker', 'run', '--rm',
     '--network', 'qa-session',
     '--label', 'qa-conductor-session',
+    '--cap-drop', 'NET_RAW',
     '--env-file', '/compose/.env.qa-pr',
     'ghcr.io/x/app:migrate-pr-7-abc',
   ]])
@@ -466,6 +472,27 @@ test('rmForce removes all names in one call, and tolerates only names already go
   ]) {
     await assert.rejects(createDocker({ execFileFn: recordingExec([err]) }).rmForce(['a', 'b']), e => e === err, err.message)
   }
+})
+
+// The isolation probe's calls: what the runtime is, where things are on the
+// panes' networks, and the probe container itself.
+test('runtime, networkGateways, containerAddresses and runProbe build exact argv', async () => {
+  const exec = recordingExec(['Client: Docker Engine - Community\nServer: Docker Engine - Community\n', 'Ubuntu 24.04.1 LTS\n', '172.20.0.1 \n', '172.19.0.2 \n', 'listener 10.0.2.2\nprobe done\n'])
+  const docker = createDocker({ execFileFn: exec, postgres: { image: 'postgres:15' } })
+  assert.deepEqual(await docker.runtime(), { version: 'Client: Docker Engine - Community\nServer: Docker Engine - Community\n', os: 'Ubuntu 24.04.1 LTS' })
+  assert.deepEqual(await docker.networkGateways('qa-session-pr'), ['172.20.0.1'])
+  assert.deepEqual(await docker.containerAddresses('qa-pg-base'), ['172.19.0.2'])
+  assert.equal(await docker.runProbe('qa-probe-pr', 'qa-session-pr', 'echo hi', ['3100', '/x']), 'listener 10.0.2.2\nprobe done\n')
+  assert.deepEqual(exec.calls, [
+    ['docker', 'version'],
+    ['docker', 'info', '--format', '{{.OperatingSystem}}'],
+    ['docker', 'network', 'inspect', '--format', '{{range .IPAM.Config}}{{.Gateway}} {{end}}', 'qa-session-pr'],
+    ['docker', 'inspect', '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}', 'qa-pg-base'],
+    // gone when it ends, labelled for the sweep, no capabilities, no ports and
+    // no mounts: it only connects out
+    ['docker', 'run', '--rm', '--name', 'qa-probe-pr', '--network', 'qa-session-pr', '--label', 'qa-conductor-session', '--cap-drop', 'ALL', '--entrypoint', 'bash', 'postgres:15', '-c', 'echo hi', 'probe', '3100', '/x'],
+  ])
+  await assert.rejects(docker.runProbe('qa probe', 'qa-session-pr', 'x', []), /unsafe container name/)
 })
 
 test('rmForce with no names makes no call', async () => {

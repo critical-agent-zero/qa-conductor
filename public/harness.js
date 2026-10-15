@@ -51,6 +51,18 @@ function isCapabilityRefusal(status, refusalHeader, body) {
   return status === 403 && (refusalHeader === 'capability' || (body !== null && typeof body === 'object' && body.refusal === 'capability'))
 }
 
+// What the header's isolation chip says for a verdict (/api/state's
+// `isolation`): its text, whether it warns, and its reasons as the title;
+// null before there is one.
+function isolationLabel(isolation) {
+  if (!isolation || typeof isolation !== 'object') return null
+  const title = Array.isArray(isolation.reasons) ? isolation.reasons.join('; ') : ''
+  if (isolation.verdict === 'isolated') return { text: 'isolated', warn: false, title: 'The PR pane can\'t reach the base pane, so the base pane shows what the base did' }
+  if (isolation.verdict === 'reachable') return { text: 'not isolated', warn: true, title }
+  if (isolation.verdict === 'shared-host') return { text: 'shared host', warn: true, title }
+  return { text: 'isolation unknown', warn: true, title }
+}
+
 // The ticket an invite link carries in its fragment (#enrol=<ticket>), else
 // null. The fragment never reaches a server or a Referer.
 function inviteFromHash(hash) {
@@ -182,6 +194,15 @@ function inviteFromHash(hash) {
   $('inviteClose').onclick = () => $('inviteDialog').close()
   function setPill(text) { $('statusPill').textContent = text }
 
+  // The session's isolation verdict, in the header; none while idle.
+  function showIsolation(isolation) {
+    const el = $('isolationChip'); const label = isolationLabel(isolation)
+    el.hidden = !label
+    if (!label) return
+    el.textContent = label.text; el.title = label.title; el.classList.toggle('warn', label.warn)
+    el.setAttribute('aria-label', `Isolation: ${label.text}. ${label.title}`)
+  }
+
   // The banner for a harness opened at another origin. Its text is set as
   // text, and the link is made only for an http(s) URL.
   function showOriginNotice(configured) {
@@ -203,7 +224,7 @@ function inviteFromHash(hash) {
   async function render() {
     const route = parseHash()
     let s
-    try { s = await api('/state'); showOriginNotice(s.harnessOrigin) } catch (e) {
+    try { s = await api('/state'); showOriginNotice(s.harnessOrigin); showIsolation(s.status === 'idle' ? null : s.isolation) } catch (e) {
       if (e && e.capability) return // enrolment takes over
       // At another host or port than the harness origin's, the API refuses a
       // browser (403 not the harness origin) and names the origin instead.
@@ -397,6 +418,7 @@ function inviteFromHash(hash) {
       const e = JSON.parse(ev.data)
       if (e.kind === 'step') markStep(e.step, e.at)
       else if (e.kind === 'build') setBuildSub(buildFromEvent(e))
+      else if (e.kind === 'isolation') showIsolation(e)
       else if (e.kind === 'ready') { closeSse(); onReady(e) }
       else if (e.kind === 'error') showBootError(e)
       else if (e.kind === 'torn-down') { closeSse(); go('#/') }
@@ -427,7 +449,7 @@ function inviteFromHash(hash) {
   $('cancelBoot').onclick = async () => { await postJson('/teardown').catch(() => {}); go('#/') }
 
   // --- session -------------------------------------------------------------
-  function onReady(meta) { setHashSilent(`#/pr/${meta.pr || bootPr}`); renderSession(meta) }
+  function onReady(meta) { setHashSilent(`#/pr/${meta.pr || bootPr}`); showIsolation(meta.isolation); renderSession(meta) }
 
   function renderSession(meta) {
     const pr = meta.pr || bootPr || parseHash().pr
@@ -686,5 +708,5 @@ function inviteFromHash(hash) {
 // --- test exports (node --test evaluates this file through a CJS wrapper) ---
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { esc, isHttpsUrl, LABELS, harnessOriginNotice, buildSummary, buildFromEvent, inviteFromHash, isCapabilityRefusal }
+  module.exports = { esc, isHttpsUrl, LABELS, harnessOriginNotice, buildSummary, buildFromEvent, inviteFromHash, isCapabilityRefusal, isolationLabel }
 }

@@ -37,6 +37,24 @@ What changed in each release, newest first. A 0.x minor version may break the in
 
     README's Security section and Known limits list these.
 
+### The per-session isolation verdict
+
+- **Each session says whether its PR pane can reach the base pane.** The base pane is what a PR is compared with. Where PR code can reach it, through the host's loopback (where the base app is published), the base pane's containers, or one host shared by both panes, a comparison can't take the base pane's changes for the base's own. The verdict is `isolated`, `unknown`, `reachable` or `shared-host`, with reasons. It is in `/api/state` as `isolation`, sent on the progress stream as an `isolation` event and with `ready`, and shown in a header chip. README's [Isolation verdicts](README.md#isolation-verdicts) has the details, and what a base-vs-PR comparison can promise for each.
+  - **The Docker Provisioner checks**, once both panes' databases exist and before any migrate or app of the PR's runs.
+    - `docker version` naming Podman, or `docker info` naming Docker Desktop, makes the verdict `reachable`.
+    - A probe container on the PR pane's network then tries this conductor's harness port at each address a runtime gives the host. The harness answers a one-time canary there, and only while the check runs. It also connects to the base pane's database by address.
+    - A hit makes the verdict `reachable`, saying where, and a probe that can't run or finish makes it `unknown`.
+  - **The process Provisioner declares `shared-host`**, and so does the demo's.
+  - **A Provisioner without the new optional `isolation` member** gets `unknown`.
+  - **Floors:** macOS is never better than `reachable`, and neither is a non-loopback `QA_BIND_HOST`. A loopback bind other than an IPv4 `127.x` address is at best `unknown`.
+- **`QA_REQUIRE_ISOLATION=1`** (`cfg.requireIsolation`) refuses a session that isn't `isolated`. When that is known as the boot starts, it refuses before the build: the process Provisioner, a Provisioner with no check, or a floor. Otherwise it refuses after the check, before any migrate or app of the PR's runs.
+- **New in the seams:** the Provisioner's optional `isolation`, either `'shared-host'` or `({signal, canary}) → {verdict, reasons}`, and `bootSession`'s optional `deps.checkIsolation({stage, signal})`. `createDocker` gains `runtime()`, `networkGateways(name)`, `containerAddresses(name)` and `runProbe(name, network, script, args)`. `startConductor` takes `platform`, for tests.
+- **The Docker Provisioner runs every pane container with `--cap-drop NET_RAW`**: the database, the migrate run and the app. PR code then can't send crafted packets, which on some setups reach ports published on the host's loopback.
+- **What breaks:**
+  - **`ping`-style tools in a pane container fail without `NET_RAW`.** So does anything else in the image that opens raw sockets.
+  - **Each Docker boot runs a probe container, `qa-probe-pr`, from the postgres image.** It needs `bash`, which the official Debian-based `postgres` images have and the Alpine ones don't. Without `bash` the verdict is `unknown`, and with `QA_REQUIRE_ISOLATION=1` the boot is refused.
+  - **A test that compares `/api/state` or the `ready` event whole** must add `isolation`. A test that compares `runPg`, `runMigrate` or `runApp`'s argv must add `--cap-drop NET_RAW`. A test that compares the PR pane's teardown must add `qa-probe-pr`.
+
 ### The Docker Provisioner
 
 - **The PR pane can no longer reach the base pane's database.** Both panes' containers joined one network, and both databases had the same superuser and password, which the PR pane's own `dsn` carried. So PR code, by mistake or on purpose, could change the base pane's data, or call the base app directly, and skew the comparison.

@@ -479,6 +479,19 @@ test('QA_ALLOWED_LOGINS is split, trimmed and lowercased; unset means nobody', (
 
 // 35791 minutes is the longest setInterval can wait: above 2^31-1 ms, Node
 // fires every 1 ms, and the loop would run the front door's CLI back to back.
+test('QA_REQUIRE_ISOLATION: 1 or true refuses a session that isn\'t isolated; unset, empty, 0 or false don\'t; anything else throws', () => {
+  const load = value => loadConfig(envFile([...REQUIRED, ...(value === undefined ? [] : [`QA_REQUIRE_ISOLATION=${value}`])])).requireIsolation
+  for (const value of [undefined, '', '0', 'false']) assert.equal(load(value), false, String(value))
+  for (const value of ['1', 'true', 'TRUE']) assert.equal(load(value), true, value)
+  for (const value of ['yes', '2', 'on']) {
+    const file = envFile([...REQUIRED, `QA_REQUIRE_ISOLATION=${value}`])
+    assert.throws(() => loadConfig(file), err => {
+      assert.equal(err.message, `QA_REQUIRE_ISOLATION must be 1 or 0 (true or false), got ${JSON.stringify(value)} in ${file}`)
+      return true
+    }, value)
+  }
+})
+
 test('QA_EXPOSURE_INTERVAL_MINUTES: default 5; 35791 and 0.5 are accepted; 0, -1, abc and 35792 throw', () => {
   const minutes = (...lines) => loadConfig(envFile([...REQUIRED, ...lines])).exposureIntervalMinutes
   assert.equal(minutes(), 5)

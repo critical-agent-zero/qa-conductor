@@ -172,6 +172,8 @@ test('createProcessProvisioner requires command and stateDir, and has no runMigr
   for (const m of ['provisionDatabase', 'reserveServices', 'launchServices', 'waitHealthy', 'logs', 'sweep', 'teardown']) {
     assert.equal(typeof p[m], 'function', m)
   }
+  // both panes run as this user on this host: the conductor's verdict says so
+  assert.equal(p.isolation, 'shared-host')
 })
 
 // --- launch: envs, spawning, pidfile ------------------------------------------

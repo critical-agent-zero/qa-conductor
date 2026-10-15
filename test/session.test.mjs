@@ -107,6 +107,32 @@ function makeDeps({ failAt = null, migrationStrategy = 'one-shot-image', require
   return { deps, calls, getSubscribed: () => subscribed }
 }
 
+// The conductor's isolation verdict (#29): checked as the boot starts, before
+// the build, and once both panes' databases exist, before anything of the
+// PR's (a migrate, an app) runs. A throw fails the boot there.
+test('bootSession calls checkIsolation at the start, before the build, and once both databases exist, before any migrate or launch', async () => {
+  const { deps, calls } = makeDeps()
+  deps.checkIsolation = async ({ stage, signal }) => { calls.push(['checkIsolation', stage, signal === deps.signal]) }
+  await bootSession(deps, 7)
+  const seq = calls.map(c => (c[0] === 'checkIsolation' ? `check:${c[1]}` : c[0] === 'progress' ? `progress:${c[1]}` : c[0]))
+  const at = name => seq.indexOf(name)
+  assert.ok(at('progress:ensuring-image') < at('check:start') && at('check:start') < at('ensureBuilt'), seq.join(' '))
+  assert.ok(seq.lastIndexOf('provisionDatabase') < at('check:panes'), seq.join(' '))
+  assert.ok(seq.lastIndexOf('reserveServices') < at('check:panes'), seq.join(' '))
+  assert.ok(at('check:panes') < at('progress:migrating') && at('check:panes') < at('runMigrate'), seq.join(' '))
+  assert.deepEqual(calls.filter(c => c[0] === 'checkIsolation').map(c => c.slice(1)), [['start', true], ['panes', true]])
+
+  for (const stage of ['start', 'panes']) {
+    const failing = makeDeps()
+    failing.deps.checkIsolation = async check => { if (check.stage === stage) throw new Error(`not isolated (${stage})`) }
+    await assert.rejects(() => bootSession(failing.deps, 7), new RegExp(`not isolated \\(${stage}\\)`))
+    const names = failing.calls.map(c => c[0])
+    for (const pr of ['runMigrate', 'launchServices', 'establishSession']) assert.equal(names.includes(pr), false, `${stage}: ${pr}`)
+    if (stage === 'start') assert.equal(names.includes('ensureBuilt'), false, 'refused before the build')
+    assert.deepEqual(failing.calls.filter(c => c[0] === 'teardown').map(c => c[1].paneRef.role), ['base', 'pr'], stage)
+  }
+})
+
 test('bootSession happy path: seam order, tags, loginUrls, upstreams', async () => {
   const { deps, calls } = makeDeps()
   const out = await bootSession(deps, 7)

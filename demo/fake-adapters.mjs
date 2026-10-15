@@ -228,6 +228,8 @@ export function createDemoProvisioner({
 
   return {
     provisionDatabase, reserveServices, launchServices, waitHealthy, logs, teardown,
+    // the pane apps are this process's own servers
+    isolation: 'shared-host',
     // Demo-only: closes every pane app, for a core whose stop() doesn't tear down.
     async close() {
       await Promise.all(Object.keys(panes).map(role => teardown({ paneRef: { role } })))
