@@ -59,6 +59,16 @@ What changed in each release, newest first. A 0.x minor version may break the in
   - **The boot order changed:** `provisionDatabase` now runs for both panes, then the isolation check, then `seedPane` and `reserveServices` for each pane in turn. It was each pane's `provisionDatabase`, `seedPane` and `reserveServices` in turn. A Provisioner or Seed that relied on the base pane being seeded before the PR pane's database existed, or on a pane's reservation following its own database right away, must not. A test that compares the call order must follow the new one.
   - **A test that compares `/api/state` or the `ready` event whole** must add `isolation` and `requireIsolation`. A test that compares `runPg`, `runMigrate` or `runApp`'s argv must add `--cap-drop NET_RAW`. A test that compares the PR pane's teardown must add `qa-probe-pr`.
 
+### The action log
+
+- **Each session keeps an action log:** what each pane's proxy forwarded to its app, and a mark for each action the panes reported, in one sequence, from which a reader groups the requests under the action they most likely came from. It is the first part of #8's data checks. README's [Security](README.md#security) and [HTTP API](README.md#http-api-harness-port) have the details.
+  - **No values.** An entry keeps the method, the path, the status, the time and the bytes sent back: never a header, a cookie, a body or a query value. A query keeps its keys. A path segment that looks like a value (an email address, a `key=value` pair, a run of seven digits or more, a token), even encoded twice, shows only its kind; that is a heuristic, and a short code can slip through. A request a guard refuses is only counted, by reason. A mark keeps the pane and the kind of action (`click`, `submit`, `change`, `enter`), never the element or what was typed.
+  - **The running session's only.** It lives in memory from ready to the next boot or teardown, as the cookie jars do, and a request lands in the log of the session it started in. Nothing of it reaches the event stream, the conductor's log or GitHub.
+  - **New:**
+    - routes: `GET /api/actions?after=N&limit=M`, which reads requests and marks in one sequence, at most 2,000 at a time, each read naming its `log`, and `POST /api/actions/mark`;
+    - the harness posts a mark for the clicks, submits, changes and Enters a pane reports, mirrored or not, at most one of each kind a pane every 100 ms, from a budget per pane that refills;
+    - `createPaneProxy` takes `recorder` and `onRefused`.
+
 ### The PR pane on an internal network
 
 - **The Docker Provisioner can put the PR pane on an internal network** (`internal`, off by default, #32). The PR pane can then reach neither the host's loopback nor the base pane, on Docker Desktop and Podman machine too, so its isolation probe can find it `isolated` there. README's [The PR pane on an internal network](README.md#the-pr-pane-on-an-internal-network) has the details and a check by hand for each runtime.
@@ -84,7 +94,7 @@ What changed in each release, newest first. A 0.x minor version may break the in
   - **Still reachable** ([Known limits](README.md#known-limits) lists these, and what the process Provisioner and a shared env leave open):
     - where containers reach the host's loopback: the base pane's app, the base pane's proxy and the harness;
     - where the conductor binds off loopback: the harness and the base pane's proxy;
-    - without Docker Engine's default iptables rules: the base pane's containers, by address.
+    - without Docker Engine's default iptables rules: the base pane's containers, by address. On a dual-stack network with `"ip6tables": false` (the default before Docker Engine 27), the same over IPv6.
 - **A stale boot stops at its next step.**
   - **The Docker Provisioner** checks `signal` before each step that creates or changes something: the network, a pull, a container, an env file.
   - **The postgres image** is pulled before its container is created (`createDocker` gains `ensurePgImage`).

@@ -133,7 +133,7 @@ test('LABELS names every boot step generically', () => {
 // test reads what the page did: its API calls, EventSource URLs, frame srcs,
 // history edits and stored token.
 
-function fakeBrowser({ hash = '#/', stored = null, routes = {}, elements = {} }) {
+function fakeBrowser({ hash = '#/', stored = null, routes = {}, elements = {}, clock = null }) {
   const log = [] // ['fetch', method, path, headers, body] | ['replace', url] | ['source', url] | ['set', id, prop, value]
   const listeners = []
   const intervals = [] // { fn, ms }, in the order set; none ever runs by itself
@@ -185,6 +185,7 @@ function fakeBrowser({ hash = '#/', stored = null, routes = {}, elements = {} })
     history: { replaceState: (_s, _t, url) => { log.push(['replace', url]); location.hash = `#${String(url).split('#')[1] ?? ''}` } },
     location,
     navigator: {},
+    ...(clock ? { performance: { now: () => clock.perf() }, Date: class extends Date { static now() { return clock.wall() } } } : {}),
     setTimeout: () => 0,
     setInterval: (fn, ms) => intervals.push({ fn, ms }),
     clearInterval: () => {},
@@ -690,4 +691,74 @@ test('a session view whose session ended or was opened again elsewhere notices o
   await poll()
   assert.equal(entries(), 4)
   assert.equal(b.location.hash, '#/', 'ended: back to the picker')
+})
+
+// #8: each action a pane's bridge reports becomes a mark in the session's
+// action log: the pane and the kind of action, never the element or a value.
+test('a click, submit, change or Enter a pane reports is marked, value-free, mirrored or not, at most one of each kind a pane each 100 ms', async () => {
+  const b = fakeBrowser({
+    hash: '#/pr/7',
+    stored: 'tok-1',
+    routes: {
+      'GET /qa/api/state': { body: { status: 'ready', pr: 7, panes: PANES } },
+      'POST /qa/api/pane-entry': entryRoute,
+      'POST /qa/api/actions/mark': { body: { recorded: true } },
+    },
+  })
+  await b.settle()
+  const [, , onMessage] = b.listeners.find(([name, type]) => name === 'window' && type === 'message')
+  const marks = () => b.log.filter(e => e[0] === 'fetch' && e[2] === '/qa/api/actions/mark').map(e => e[4])
+  const event = (origin, data) => onMessage({ origin, data: { qa: 1, kind: 'event', selector: '#card-number', value: '4111 SECRET', ...data } })
+  event(PANES.baseOrigin, { type: 'click' })
+  event(PANES.baseOrigin, { type: 'submit' }) // the submit the click set off: another kind
+  event(PANES.baseOrigin, { type: 'click' }) // the same kind within 100 ms
+  event(PANES.prOrigin, { type: 'submit' })
+  await new Promise(r => setTimeout(r, 110))
+  // after a gap, on its own: not an action
+  event(PANES.baseOrigin, { type: 'keydown', key: 'Escape' })
+  await new Promise(r => setTimeout(r, 110))
+  event(PANES.baseOrigin, { type: 'input' }) // nor this
+  event(PANES.baseOrigin, { type: 'scroll' })
+  event(PANES.baseOrigin, { type: 'keydown', key: 'Enter' })
+  await new Promise(r => setTimeout(r, 110))
+  b.byId('mirrorBtn').onclick() // mirroring off: still marked
+  event(PANES.prOrigin, { type: 'change' })
+  // a message from anywhere else is no pane's
+  event('https://evil.example', { type: 'click' })
+  onMessage({ origin: PANES.prOrigin, data: { qa: 1, kind: 'nav', href: '/x' } })
+  await b.settle()
+  assert.deepEqual(marks(), [
+    { pane: 'base', type: 'click' }, { pane: 'base', type: 'submit' }, { pane: 'pr', type: 'submit' }, { pane: 'base', type: 'enter' }, { pane: 'pr', type: 'change' },
+  ])
+  assert.doesNotMatch(JSON.stringify(b.log.filter(e => e[0] === 'fetch')), /SECRET|card-number/)
+})
+
+// The throttle runs on a monotonic clock: the wall clock stepping back an
+// hour holds no mark back, and the first mark goes at once, however soon
+// after the page loaded.
+test('the mark throttle runs on a monotonic clock', async () => {
+  let perf = 50
+  let wall = 1_000_000_000
+  const b = fakeBrowser({
+    hash: '#/pr/7',
+    stored: 'tok-1',
+    routes: {
+      'GET /qa/api/state': { body: { status: 'ready', pr: 7, panes: PANES } },
+      'POST /qa/api/pane-entry': entryRoute,
+      'POST /qa/api/actions/mark': { body: { recorded: true } },
+    },
+    clock: { perf: () => perf, wall: () => wall },
+  })
+  await b.settle()
+  const [, , onMessage] = b.listeners.find(([name, type]) => name === 'window' && type === 'message')
+  const marks = () => b.log.filter(e => e[0] === 'fetch' && e[2] === '/qa/api/actions/mark')
+  const click = () => onMessage({ origin: PANES.baseOrigin, data: { qa: 1, kind: 'event', type: 'click' } })
+  click() // 50 ms after the page started
+  perf += 150
+  wall -= 3_600_000
+  click() // 150 ms on, the wall clock an hour back
+  perf += 50
+  click() // 50 ms on: held back
+  await b.settle()
+  assert.equal(marks().length, 2)
 })

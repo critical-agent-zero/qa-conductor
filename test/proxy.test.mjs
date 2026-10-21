@@ -4,6 +4,7 @@ import http from 'node:http'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { monotonicNow } from '../lib/action-log.mjs'
 import {
   createPaneProxy, parseSetCookie, requestHostname, isAllowedHost, panePolicy,
 } from '../lib/proxy.mjs'
@@ -1100,4 +1101,142 @@ test('forwardClientCookies refuses a reserved qa- name', () => {
   for (const bad of [['qa-1'], ['locale', 'QA-session'], ['__Host-qa-x'], ['__Secure-qa-x']]) {
     assert.throws(() => make(bad), /^Error: forwardClientCookies can't name "[^"]+": cookie names starting with qa- are the conductor's own/, JSON.stringify(bad))
   }
+})
+
+// --- #8: the action log ---------------------------------------------------------
+// The proxy hands each forwarded request to the session's recorder, value-free,
+// and counts what its guards refuse. A sink records what it is handed.
+function sinks() {
+  const recorded = []
+  const refused = []
+  let current = entry => recorded.push(entry)
+  return {
+    recorded,
+    refused,
+    options: { recorder: () => current, onRefused: reason => refused.push(reason) },
+    swap(next) { current = next },
+  }
+}
+
+test('a forwarded request is recorded once it ends, with no header, cookie, body or query value', async (t) => {
+  const s = sinks()
+  const { proxyPort } = await setupCap(t, (req, res) => {
+    if (req.url.startsWith('/page')) { res.setHeader('content-type', 'text/html'); return res.end('<html><head></head><body>hi</body></html>') }
+    req.resume()
+    req.on('end', () => { res.statusCode = 303; res.end() })
+  }, s.options)
+  const cookie = '__Host-qa-test=good-pane; sid=sess-SECRET'
+  const posted = await request(proxyPort, '/cart/clear?token=abc123SECRET&next=/x', {
+    method: 'POST', headers: { ...OWN, cookie, authorization: 'Bearer SECRET-bearer', 'content-type': 'application/x-www-form-urlencoded' }, body: 'card=4111111111111111',
+  })
+  assert.equal(posted.status, 303)
+  const page = await request(proxyPort, '/page/jane%40example.org', { headers: { ...OWN, cookie } })
+  await new Promise(r => setTimeout(r, 20))
+  assert.equal(s.recorded.length, 2)
+  const [first, second] = s.recorded
+  assert.deepEqual(Object.keys(first).sort(), ['aborted', 'at', 'bytes', 'method', 'ms', 'path', 'status'])
+  assert.deepEqual([first.method, first.path, first.status, first.bytes, first.aborted], ['POST', '/cart/clear?token=…&next=…', 303, 0, false])
+  assert.deepEqual([second.method, second.path, second.status, second.bytes], ['GET', '/page/:email', 200, page.body.length])
+  for (const entry of s.recorded) {
+    assert.ok(Number.isFinite(entry.at) && entry.ms >= 0)
+    assert.doesNotMatch(JSON.stringify(entry), /SECRET|4111|jane|example\.org|Bearer/)
+  }
+})
+
+test('a request\'s recorder is the session\'s at its start: a late response never lands in the next session', async (t) => {
+  const s = sinks()
+  const later = []
+  let release
+  let arrived
+  const atApp = new Promise(resolve => { arrived = resolve })
+  const { proxyPort } = await setupCap(t, (req, res) => { release = () => res.end('slow'); arrived() }, s.options)
+  const pending = request(proxyPort, '/slow', { headers: { ...OWN, cookie: '__Host-qa-test=good-pane' } })
+  // the request has started, and is waiting at the app
+  await atApp
+  s.swap(entry => later.push(entry)) // the next session
+  release()
+  await pending
+  while (s.recorded.length + later.length < 1) await new Promise(r => setTimeout(r, 5))
+  assert.deepEqual([s.recorded.map(e => e.path), later], [['/slow'], []])
+})
+
+test('what the guards refuse is only counted, by reason; the bridge, pane entry and a pane with no session aren\'t recorded', async (t) => {
+  const s = sinks()
+  const { proxyPort } = await setupCap(t, (req, res) => res.end('app'), s.options)
+  const own = { headers: { ...OWN, cookie: '__Host-qa-test=good-pane' } }
+  await request(proxyPort, '/x', { headers: { host: 'attacker.example', 'sec-fetch-site': 'same-origin' } }) // 421
+  await request(proxyPort, '/x', { headers: { ...PANE_HOST, 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe', referer: 'https://evil.example/' } })
+  await request(proxyPort, '/x', { headers: OWN }) // no pane cookie
+  await request(proxyPort, '/__qa/enter?t=nope', { headers: { ...PANE_HOST, ...FROM_HARNESS } }) // a spent ticket
+  await request(proxyPort, '/__qa/bridge.js', own)
+  await request(proxyPort, '/__qa/enter?t=tick', { headers: { ...PANE_HOST, ...FROM_HARNESS } })
+  await new Promise(r => setTimeout(r, 20))
+  assert.deepEqual(s.refused, ['misdirected', 'cross-site framing refused', 'capability', 'capability'])
+  assert.deepEqual(s.recorded, [])
+
+  const none = sinks()
+  const idle = createPaneProxy({ upstreamPort: () => null, bridgePath: '/nonexistent', httpMod: http, ...none.options })
+  const server = http.createServer(idle)
+  const port = await listen(server)
+  t.after(() => new Promise(r => server.close(r)))
+  assert.equal((await request(port, '/x')).status, 503)
+  assert.deepEqual(none.recorded, [])
+})
+
+test('an upstream that fails is recorded as 502, a client that goes away as aborted, and no recorder records nothing', async (t) => {
+  const s = sinks()
+  let respond
+  const { proxyPort } = await setupCap(t, (req, res) => {
+    if (req.url === '/hang') { res.writeHead(200, { 'content-type': 'text/plain' }); res.write('part'); respond = res; return }
+    req.socket.destroy()
+  }, s.options)
+  const own = { headers: { ...OWN, cookie: '__Host-qa-test=good-pane' } }
+  assert.equal((await request(proxyPort, '/broken', own)).status, 502)
+  await new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: proxyPort, path: '/hang', headers: own.headers, agent: false }, res => {
+      res.once('data', () => { req.destroy(); resolve() })
+    })
+    req.on('error', () => {})
+    req.end()
+    setTimeout(() => reject(new Error('no data')), 2_000)
+  })
+  await new Promise(r => setTimeout(r, 50))
+  respond?.end()
+  assert.deepEqual(s.recorded.map(e => [e.path, e.status, e.aborted]), [['/broken', 502, false], ['/hang', 200, true]])
+
+  s.swap(null)
+  const before = s.recorded.length
+  await request(proxyPort, '/broken', own)
+  assert.equal(s.recorded.length, before)
+})
+
+test('an entry counts a piped body\'s bytes, starts when the request did, and has no status when the client left before the app answered', { timeout: 10_000 }, async (t) => {
+  // the log's clock, which a wall clock an hour behind doesn't move
+  const wall = Date.now
+  t.mock.method(Date, 'now', () => wall() - 3_600_000)
+  const s = sinks()
+  let appSawNever
+  const sawNever = new Promise(resolve => { appSawNever = resolve })
+  const { proxyPort } = await setupCap(t, (req, res) => {
+    if (req.url === '/body') { res.setHeader('content-type', 'application/json'); return res.end('x'.repeat(1234)) }
+    if (req.url === '/slow') return setTimeout(() => res.end('late'), 150)
+    if (req.url === '/never') { appSawNever(); return setTimeout(() => { res.setHeader('connection', 'close'); res.end('too late') }, 300) } // after the client left
+  }, s.options)
+  const own = { headers: { ...OWN, cookie: '__Host-qa-test=good-pane' } }
+  await request(proxyPort, '/body', own)
+  const began = monotonicNow()
+  await request(proxyPort, '/slow', own)
+  await new Promise((resolve) => {
+    const req = http.request({ host: '127.0.0.1', port: proxyPort, path: '/never', headers: own.headers, agent: false })
+    req.on('error', () => resolve())
+    req.end()
+    // gone once the app has the request, before it answers
+    sawNever.then(() => { req.destroy(); resolve() })
+  })
+  while (s.recorded.length < 3) await new Promise(r => setTimeout(r, 5))
+  const [body, slow, never] = s.recorded
+  assert.deepEqual([body.path, body.bytes], ['/body', 1234])
+  assert.ok(slow.at >= began && slow.at - began < 100, `taken as the request started (${slow.at - began} ms)`)
+  assert.ok(slow.ms >= 140, `${slow.ms} ms`)
+  assert.deepEqual([never.path, never.status, never.aborted], ['/never', 0, true])
 })
