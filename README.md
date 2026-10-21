@@ -327,9 +327,13 @@ Three more ways to narrow what the PR pane can reach, each opt-in, with what it 
 
 **What it doesn't:**
 - The PR pane still runs as you. It can read and write your files (your browser's profile, which holds the capability, included), signal your processes, and use Unix sockets and every loopback port the profile doesn't name.
+- **Routes around it:**
+  - A BuildConvention's install step runs the PR's code before the PR pane starts, outside the profile.
+  - `tailscale serve`'s ports on the node's tailnet address front the conductor too, and the profile names only loopback ports. The [capability](#security) still turns such a request away, and on a tagged node (below) the identity gate does first.
+  - A file the PR pane writes can change what an unsandboxed process runs later: a script, a config, a shell profile, the profile itself if it can write it.
 - So the verdict stays `shared-host`, and the trust gate is still the boundary.
 
-**The profile** denies each port it is given. `sandbox-exec` checks a deny that names a port, but an allow after a broader deny doesn't reopen anything, so the profile names what to shut rather than what to open:
+**The profile** denies each port it is given, so it names what to shut rather than what to open. On macOS 12, `sandbox-exec` honoured a deny that names a port. An allow for one port after `(deny network-outbound (remote ip "localhost:*"))` didn't reopen it, although after a bare `(deny network-outbound)` it did. A profile that shuts everything and opens a list would depend on which form it used.
 
 ```scheme
 ; pr-pane.sb: no TCP to these loopback ports (IPv4 and IPv6)
@@ -370,7 +374,7 @@ const provisioner = createProcessProvisioner({
     const params = Object.entries({ ...conductorPorts, ...basePorts }).flatMap(([name, value]) => ['-D', `${name}=${value}`])
     return {
       cmd: '/usr/bin/sandbox-exec',
-      args: [...params, '-f', '/var/lib/qa-conductor/pr-pane.sb', server.cmd, ...server.args],
+      args: [...params, '-f', '/usr/local/etc/qa-conductor/pr-pane.sb', server.cmd, ...server.args],
       cwd: ref,
       env: { PORT: String(port) },
     }
@@ -378,11 +382,16 @@ const provisioner = createProcessProvisioner({
 })
 ```
 
-With more than one base service, note each port and add a line per port to the profile.
+- **Keep the profile where PR code can't write it:** the PR pane runs as you, so a profile in a directory you own can be rewritten before the next boot. For example, `sudo mkdir -p /usr/local/etc/qa-conductor`, then `sudo cp pr-pane.sb /usr/local/etc/qa-conductor/`: both stay root's.
+- **Every parameter the profile names must be passed.** One missing, such as `BASE_DB` with no database, makes the profile fail to load: `sandbox-exec` exits 65 (`string-append: argument 2 must be: string`), and the pane doesn't start. Drop that line from the profile instead.
+- With more than one base service, note each port and add a line per port to the profile.
 
 **Checked:**
-- On macOS 12, a process under this profile got `EPERM` for each named port, over `127.0.0.1`, `::1` and `localhost`, and connected to the others.
-- It isn't checked here on macOS 14 or 15, where Apple still ships `sandbox-exec` but calls it deprecated. Check yours while a session runs: `sandbox-exec -D HARNESS=3100 -D BASE_PROXY=3101 -D PR_PROXY=3102 -D BASE_APP=<port> -D BASE_DB=<port> -f pr-pane.sb /usr/bin/curl -sS http://127.0.0.1:3100/qa/` must fail with "Operation not permitted", and the same `curl` without `sandbox-exec` must answer.
+- On macOS 12.7.6, a process under this profile got `EPERM` for each named port, over `127.0.0.1`, `::1` and `localhost`, and connected to the others.
+- Apple already marks `sandbox-exec` deprecated on macOS 12, and still ships it on 14 and 15.
+- It isn't checked here on macOS 14 or 15: that is tracked in [#43](https://github.com/critical-labs/qa-conductor/issues/43), with the steps. Check yours while a session runs, with the ports you use:
+  - `sandbox-exec -D HARNESS=3100 -D BASE_PROXY=3101 -D PR_PROXY=3102 -D BASE_APP=<port> -D BASE_DB=<port> -f /usr/local/etc/qa-conductor/pr-pane.sb "$(command -v node)" -e "require('net').connect(3100, '127.0.0.1').on('connect', function () { console.log('connected'); this.destroy() }).on('error', e => console.log(e.code))"` must print `EPERM`, and the same `node -e` without `sandbox-exec` must print `connected`. A closed port would print `ECONNREFUSED`.
+  - Or with `curl -sv` in place of `node -e`: `Immediate connect fail for 127.0.0.1: Operation not permitted`, where `curl -sS` alone says only that it couldn't connect.
 
 #### Tag the conductor's Tailscale node
 
@@ -401,7 +410,9 @@ With more than one base service, note each port and add a line per port to the p
 - Then tag the node, with `tailscale up --advertise-tags=tag:qa-conductor` or from the admin console.
 - `QA_ALLOWED_LOGINS` stays the reviewers' logins.
 
-**Checked:** not here: nothing in this repository runs `tailscale`. Check it from the conductor's host while it runs: `curl -sS -o /dev/null -w '%{http_code}\n' https://<machine>.<tailnet>.ts.net:8444/qa/api/state` should print `403`, and the response should carry `X-QA-Refusal: identity`. Untagged, it gets past the gate (and is then refused for want of a capability).
+**Checked:** not here: nothing in this repository runs `tailscale`. Check it from the conductor's host while it runs: `curl -sS -o /dev/null -D - https://<machine>.<tailnet>.ts.net:8444/qa/api/state | grep -i '^x-qa-refusal'`. Both a tagged and an untagged node answer `403`, so read the header:
+- `X-QA-Refusal: identity` when the node is tagged: the identity gate refused a request with no login;
+- `X-QA-Refusal: capability` when it isn't: the owner's login got past the gate, and only the capability refused it.
 
 #### Unix-socket listeners (Linux, not yet supported)
 
@@ -409,12 +420,13 @@ With more than one base service, note each port and add a line per port to the p
 
 **Why not yet:**
 - The conductor listens only on TCP (`QA_BIND_HOST` and the three ports), so it can't take this step.
-- `tailscale serve` can proxy to a `unix:` target, but [issue #32](https://github.com/critical-labs/qa-conductor/issues/32) records two catches:
+- `tailscale serve` can proxy to a `unix:` target. [Issue #32](https://github.com/critical-labs/qa-conductor/issues/32) records that this takes Tailscale 1.94 or later, and two catches:
   - since Tailscale v1.100, a socket target needs root or an operator who can use sudo;
   - the backend then gets `Host: localhost`.
 - So supporting it means more than a socket. The conductor would need to take the harness and pane origins from its config, rather than the `Host` header, for its [same-origin](#security) and pane request checks.
+- Tracked in [#42](https://github.com/critical-labs/qa-conductor/issues/42).
 
-**Today:** the Docker Provisioner's [internal network](#the-pr-pane-on-an-internal-network) closes the same path for container panes. The PR pane then can't reach the host's loopback at all.
+**Today:** the Docker Provisioner's [internal network](#the-pr-pane-on-an-internal-network) is meant to close the same path for container panes: it gives the PR pane no route to the host's loopback. Each session's probe checks that it doesn't reach the conductor or the base pane there. Its check by hand on Docker Desktop and Podman machine is tracked in [#43](https://github.com/critical-labs/qa-conductor/issues/43).
 
 ## The seams
 
@@ -699,7 +711,7 @@ const provisioner = createDockerProvisioner({
   - Only HTTP and HTTPS go out, through the proxy. An app reaches a host only if its HTTP client honours the proxy env: a Node.js that supports `NODE_USE_ENV_PROXY` does with it set, and most other clients read `HTTPS_PROXY`. Raw TCP to a database elsewhere, or SMTP, doesn't go out.
   - **DNS.** Docker Engine before 23.0.11, 25.0.0 to 25.0.4, and 26.0.0-rc1 to rc3, with the host's resolver on its loopback (systemd-resolved, dnsmasq), resolves an internal network's outside names through the host, so PR code could carry data out in its queries (CVE-2024-29018). So on Docker the PR pane's containers run with `--dns 192.0.2.1`, the advisory's workaround: names on the network still resolve, through Docker's own DNS, and an outside one gets no answer. The forwarder resolves the hosts it lets through itself. Podman's DNS answers nothing outside an internal network, and a `--dns` would replace it, so there it gets none. A container you start on `qa-session-pr` yourself gets no `--dns`: upgrade an affected Engine anyway.
   - A runtime whose internal networks have no DNS can't resolve `qa-pg-pr` or `qa-egress` there, so the PR pane fails to boot.
-- **Check it by hand, once per runtime.** The tests run no real Docker. Boot a PR, then while it runs:
+- **Check it by hand, once per runtime.** The tests run no real Docker, and Docker Desktop and Podman machine are tracked in [#43](https://github.com/critical-labs/qa-conductor/issues/43). Boot a PR, then while it runs:
   1. The harness chip should say `isolated`.
   2. From the PR pane's network, the host's loopback and the base pane's database must fail:
      - `docker run --rm --network qa-session-pr curlimages/curl -sS -m 3 http://host.docker.internal:<harness port>/qa/` (on Podman, `host.containers.internal`);
