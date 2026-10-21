@@ -59,15 +59,28 @@ What changed in each release, newest first. A 0.x minor version may break the in
   - **The boot order changed:** `provisionDatabase` now runs for both panes, then the isolation check, then `seedPane` and `reserveServices` for each pane in turn. It was each pane's `provisionDatabase`, `seedPane` and `reserveServices` in turn. A Provisioner or Seed that relied on the base pane being seeded before the PR pane's database existed, or on a pane's reservation following its own database right away, must not. A test that compares the call order must follow the new one.
   - **A test that compares `/api/state` or the `ready` event whole** must add `isolation` and `requireIsolation`. A test that compares `runPg`, `runMigrate` or `runApp`'s argv must add `--cap-drop NET_RAW`. A test that compares the PR pane's teardown must add `qa-probe-pr`.
 
+### The action log
+
+- **Each session keeps an action log:** what each pane's proxy forwarded to its app, and a mark for each action the panes reported, in one sequence, from which a reader groups the requests under the action they most likely came from. It is the first part of #8's data checks. README's [Security](README.md#security) and [HTTP API](README.md#http-api-harness-port) have the details.
+  - **No values.** An entry keeps the method, the path, the status, the time and the bytes sent back: never a header, a cookie, a body or a query value. A query keeps its keys. A path segment that looks like a value (an email address, a `key=value` pair, a run of seven digits or more, a token), even encoded twice, shows only its kind; that is a heuristic, and a short code can slip through. A request a guard refuses is only counted, by reason. A mark keeps the pane and the kind of action (`click`, `submit`, `change`, `enter`), never the element or what was typed.
+  - **The running session's only.** It lives in memory from ready to the next boot or teardown, as the cookie jars do, and a request lands in the log of the session it started in. Nothing of it reaches the event stream, the conductor's log or GitHub.
+  - **New:**
+    - routes: `GET /api/actions?after=N&limit=M`, which reads requests and marks in one sequence, at most 2,000 at a time, each read naming its `log`, and `POST /api/actions/mark`;
+    - the harness posts a mark for the clicks, submits, changes and Enters a pane reports, mirrored or not, at most one of each kind a pane every 100 ms, from a budget per pane that refills;
+    - `createPaneProxy` takes `recorder` and `onRefused`.
+
 ### The PR pane on an internal network
 
 - **The Docker Provisioner can put the PR pane on an internal network** (`internal`, off by default, #32). The PR pane can then reach neither the host's loopback nor the base pane, on Docker Desktop and Podman machine too, so its isolation probe can find it `isolated` there. README's [The PR pane on an internal network](README.md#the-pr-pane-on-an-internal-network) has the details and a check by hand for each runtime.
   - **The topology:** `qa-session-pr` is created `--internal`. A forwarder, `qa-fwd-pr`, runs the package's `lib/forwarder.mjs` in `node:22-alpine` with no capabilities, a read-only root and no mounts. It sits on an ordinary network, `qa-session-pr-edge`, and joins the internal one as `qa-egress`. It publishes the PR app on `127.0.0.1:<hostPorts.pr>`, and its HTTP proxy is the PR pane's only way out.
   - **The allowlist, `internal.egress`:** host names, `*.domains` and public addresses, with an optional port (80 and 443 without one), checked as the Provisioner is made. Empty by default: no egress. A request goes out only to a listed host whose every address is public, and to the address checked. HTTPS is never intercepted.
-  - **The verdict:** the check's result says `internal: true` once the topology is up. Then the probe decides, through the forwarder's proxy too, in place of the macOS floor and the Docker Desktop and Podman reasons.
-  - **It fails closed:** if any of it can't be set up, the PR pane runs as it would without `internal`, the floors apply, and a verdict that isn't `isolated` says why.
+  - **No DNS out:** on Docker, the PR pane's containers run with `--dns 192.0.2.1`, which nothing answers, so an Engine with CVE-2024-29018 can't resolve their outside names through the host. Podman's DNS answers none there already.
+  - **The verdict:** the check's result says `internal: true` once the topology is up: the network reads back internal, and the forwarder runs and says it is ready. Then the probe decides, through the forwarder's proxy too, which must answer for every address it tries, in place of the macOS floor and the Docker Desktop and Podman reasons.
+  - **If it can't be set up,** the PR pane runs as it would without `internal`, and its egress isn't restricted. That is logged, the floors apply, and the verdict is never better than `unknown`, saying why, so `QA_REQUIRE_ISOLATION=1` refuses. An undo that can't remove the internal network fails the boot.
+  - **Triage** adds the forwarder's log tail to the PR app's.
 - **New in the seams:** a Provisioner's optional `internal: true`, and a check's result's `internal`. The macOS floor waits for such a Provisioner's check, and is left out only when its result says `internal: true`. `floors` takes `internal`.
-- **New in `createDocker`:** `createNetwork(name, { internal })`, `networkInternal(name)`, `runForwarder(name, image, network, { hostPort, config, source })` and `connectNetwork(network, container, { alias })`. `runApp` publishes nothing when `hostPort` is `null`.
+- **New in `createDocker`:** `createNetwork(name, { internal })`, `networkInternal(name)`, `containerRunning(name)`, `runForwarder(name, image, network, { hostPort, config, source })` and `connectNetwork(network, container, { alias })`. `runApp` publishes nothing when `hostPort` is `null`. `runPg`, `runMigrate`, `runApp` and `runProbe` take `dns`.
+- **New in `createDockerProvisioner`:** `forwarderReadyMs` and `log`.
 - **Nothing changes without `internal`.**
 
 ### Hardening opt-ins
@@ -91,7 +104,7 @@ What changed in each release, newest first. A 0.x minor version may break the in
   - **Still reachable** ([Known limits](README.md#known-limits) lists these, and what the process Provisioner and a shared env leave open):
     - where containers reach the host's loopback: the base pane's app, the base pane's proxy and the harness;
     - where the conductor binds off loopback: the harness and the base pane's proxy;
-    - without Docker Engine's default iptables rules: the base pane's containers, by address.
+    - without Docker Engine's default iptables rules: the base pane's containers, by address. On a dual-stack network with `"ip6tables": false` (the default before Docker Engine 27), the same over IPv6.
 - **A stale boot stops at its next step.**
   - **The Docker Provisioner** checks `signal` before each step that creates or changes something: the network, a pull, a container, an env file.
   - **The postgres image** is pulled before its container is created (`createDocker` gains `ensurePgImage`).
