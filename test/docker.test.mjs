@@ -456,11 +456,11 @@ const SHIM_BANNER = 'Emulate Docker CLI using podman. Create /etc/containers/nod
 const LOGRUS_PIPE = 'time="2026-10-15T10:00:00Z" level=warning msg="The cgroupv2 manager is set to systemd but there is no systemd user session available"'
 const LOGRUS_TTY = 'WARN[0000] Using cgroups-v1 which is deprecated in favor of cgroups-v2 with Podman v5 and will be removed in a future version.'
 
-test('rmForce removes all names in one call, and tolerates only names already gone', async () => {
+test('rmForce removes each name in a call of its own, and tolerates only names already gone', async () => {
   const exec = recordingExec()
   const docker = createDocker({ execFileFn: exec })
   await docker.rmForce(['qa-app-base', 'qa-pg-base'])
-  assert.deepEqual(exec.calls, [['docker', 'rm', '-f', '-v', 'qa-app-base', 'qa-pg-base']])
+  assert.deepEqual(exec.calls, [['docker', 'rm', '-f', '-v', 'qa-app-base'], ['docker', 'rm', '-f', '-v', 'qa-pg-base']])
 
   // docker rm exits 1 when any name is missing, having removed the others
   for (const err of [
@@ -696,7 +696,8 @@ test('sweepQaContainers lists by label then force-removes', async () => {
   const ids = await docker.sweepQaContainers()
   assert.deepEqual(exec.calls, [
     ['docker', 'ps', '-aq', '--filter', 'label=qa-conductor-session'],
-    ['docker', 'rm', '-f', '-v', 'abc123', 'def456'],
+    ['docker', 'rm', '-f', '-v', 'abc123'],
+    ['docker', 'rm', '-f', '-v', 'def456'],
   ])
   assert.deepEqual(ids, ['abc123', 'def456'])
 })
@@ -819,4 +820,65 @@ test('runPg, runMigrate, runApp and runProbe take a DNS server, and all but runP
   for (const bad of ['qa-pg-pr', 'qa pg:1.2.3.4', 'qa-pg-pr:1.2.3.4 --privileged', '--privileged:1.2.3.4']) {
     await assert.rejects(h.runApp('qa-app-pr', 'a:1', 'qa-session-pr', '/e', null, { hosts: [bad] }), /unsafe host entry/, bad)
   }
+})
+
+// --- Round 3 of #40's review ---------------------------------------------------------
+
+// Podman before 5.1 (Ubuntu 24.04's 4.9.3, Debian 12's 4.3.1, as the
+// podman-docker shim drives it): `rm -f a b c` stops at the first name
+// that is gone, removes none of the rest, and exits 0.
+function oldPodmanRm(present) {
+  const calls = []
+  const fn = async (file, args) => {
+    calls.push(args.join(' '))
+    if (args[0] === 'rm') {
+      const names = args.slice(3)
+      if (names.some(n => !present.has(n))) return { stdout: '' }
+      for (const n of names) present.delete(n)
+      return { stdout: `${names.join('\n')}\n` }
+    }
+    if (args[0] === 'ps') return { stdout: `${[...present].join('\n')}\n` }
+    return { stdout: '' }
+  }
+  fn.calls = calls
+  return fn
+}
+
+test('rmForce and the sweep remove every container under Podman before 5.1, whose batched rm stops at a name already gone', async () => {
+  // what the batch did there: nothing removed, exit 0
+  const batch = new Set(['qa-app-pr', 'qa-fwd-pr', 'qa-pg-pr'])
+  await createDocker({ execFileFn: oldPodmanRm(batch) }).run(['rm', '-f', '-v', 'qa-app-pr', 'qa-migrate-pr', 'qa-fwd-pr', 'qa-pg-pr'])
+  assert.equal(batch.size, 3, 'the old batch removed nothing')
+  // one name at a time removes them all
+  const present = new Set(['qa-app-pr', 'qa-fwd-pr', 'qa-pg-pr'])
+  await createDocker({ execFileFn: oldPodmanRm(present) }).rmForce(['qa-app-pr', 'qa-migrate-pr', 'qa-probe-pr', 'qa-fwd-pr', 'qa-pg-pr'])
+  assert.deepEqual([...present], [])
+  // the sweep too, with a container gone between its list and its rm
+  const swept = new Set(['c1', 'c2', 'c3'])
+  const exec = oldPodmanRm(swept)
+  const docker = createDocker({ execFileFn: async (file, args) => { const out = await exec(file, args); if (args[0] === 'ps') swept.delete('c2'); return out } })
+  await docker.sweepQaContainers()
+  assert.deepEqual([...swept], [])
+})
+
+// A real failure whose last line ends in "exit status N" is no noise: only
+// a line that is nothing but that is.
+test('a failure line that only ends in "exit status N" is a failure, never noise', async () => {
+  const err = dockerFailure('Error response from daemon: No such container: a\nError: OCI runtime error: crun: kill: exit status 125\n')
+  await assert.rejects(createDocker({ execFileFn: recordingExec([err]) }).rmForce(['a']), e => e === err)
+  const gone = dockerFailure('Error response from daemon: No such container: a\nexit status 1\n')
+  await createDocker({ execFileFn: recordingExec([gone]) }).rmForce(['a'])
+})
+
+test('createNetwork can isolate an internal network\'s gateway, and networkGatewayIsolated reads it back', async () => {
+  const exec = recordingExec(['', 'isolated\n', '\n'])
+  const docker = createDocker({ execFileFn: exec })
+  await docker.createNetwork('qa-session-pr', { internal: true, isolatedGateway: true })
+  assert.equal(await docker.networkGatewayIsolated('qa-session-pr'), true)
+  assert.equal(await docker.networkGatewayIsolated('qa-session-pr'), false)
+  assert.deepEqual(exec.calls, [
+    ['docker', 'network', 'create', '--label', 'qa-conductor-session', '--internal', '-o', 'com.docker.network.bridge.gateway_mode_ipv4=isolated', '-o', 'com.docker.network.bridge.gateway_mode_ipv6=isolated', 'qa-session-pr'],
+    ['docker', 'network', 'inspect', '--format', '{{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}', 'qa-session-pr'],
+    ['docker', 'network', 'inspect', '--format', '{{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}', 'qa-session-pr'],
+  ])
 })
