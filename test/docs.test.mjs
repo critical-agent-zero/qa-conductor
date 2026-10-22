@@ -192,8 +192,11 @@ async function whyNoSandbox() {
   if (probe.code === 71 && /sandbox_apply: Operation not permitted/.test(probe.stderr)) return 'sandbox-exec can\'t nest, and this process already runs in a sandbox'
   return null
 }
-const noSandbox = await whyNoSandbox()
-test('the README\'s sandbox-exec profile shuts the ports it names, over IPv4, IPv6 and localhost, and no other; a parameter left out keeps it from loading', { skip: (!REQUIRE_SANDBOX && noSandbox) || false, timeout: 30_000 }, async (t) => {
+// Decided in the test, not as the file loads: the probe can take a while,
+// and a test registered late would be cut off by --test-force-exit.
+test('the README\'s sandbox-exec profile shuts the ports it names, over IPv4, IPv6 and localhost, and no other; a parameter left out keeps it from loading', { timeout: 60_000 }, async (t) => {
+  const noSandbox = await whyNoSandbox()
+  if (noSandbox && !REQUIRE_SANDBOX) return t.skip(noSandbox)
   if (noSandbox) assert.fail(`QA_REQUIRE_SANDBOX=1, but ${noSandbox}`)
   const net = await import('node:net')
   const { rmSync } = await import('node:fs')

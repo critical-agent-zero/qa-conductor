@@ -382,14 +382,18 @@ const provisioner = createProcessProvisioner({
 })
 ```
 
-- **Keep the profile where PR code can't write it:** the PR pane runs as you, so a profile in a directory you own can be rewritten before the next boot. For example, `sudo mkdir -p /usr/local/etc/qa-conductor`, then `sudo cp pr-pane.sb /usr/local/etc/qa-conductor/`: both stay root's.
+- **Keep the profile where PR code can't write it:** the PR pane runs as you, so a profile in a directory you own can be rewritten before the next boot. For example:
+  - `sudo mkdir -p /usr/local/etc/qa-conductor`, then `sudo cp pr-pane.sb /usr/local/etc/qa-conductor/`;
+  - then `sudo chown -R root:wheel /usr/local/etc/qa-conductor`, `sudo chmod 755 /usr/local/etc/qa-conductor` and `sudo chmod 644 /usr/local/etc/qa-conductor/pr-pane.sb`, since `mkdir -p` leaves a directory that is already there as it was;
+  - `ls -ld /usr/local/etc/qa-conductor /usr/local/etc/qa-conductor/pr-pane.sb` should then show `root` for both, and no `w` but the owner's.
 - **Every parameter the profile names must be passed.** One missing, such as `BASE_DB` with no database, makes the profile fail to load: `sandbox-exec` exits 65 (`string-append: argument 2 must be: string`), and the pane doesn't start. Drop that line from the profile instead.
+- **`sandbox-exec` can't nest.** A conductor that itself runs under a sandbox (an app's own, say) can't start the PR pane under this profile: `sandbox-exec` exits 71, with `sandbox_apply: Operation not permitted`.
 - With more than one base service, note each port and add a line per port to the profile.
 
 **Checked:**
 - On macOS 12.7.6, a process under this profile got `EPERM` for each named port, over `127.0.0.1`, `::1` and `localhost`, and connected to the others.
 - Apple already marks `sandbox-exec` deprecated on macOS 12, and still ships it on 14 and 15.
-- It isn't checked here on macOS 14 or 15: that is tracked in [#43](https://github.com/critical-labs/qa-conductor/issues/43), with the steps. Check yours while a session runs, with the ports you use:
+- On macOS 14 and 15, CI's `macos-sandbox` job runs the same check on every pull request, on GitHub's macOS 14 and macOS 15 runners: `test/docs.test.mjs` takes this profile from this section and runs it through `sandbox-exec`, and the job fails if the test was skipped. Check yours while a session runs, with the ports you use:
   - `sandbox-exec -D HARNESS=3100 -D BASE_PROXY=3101 -D PR_PROXY=3102 -D BASE_APP=<port> -D BASE_DB=<port> -f /usr/local/etc/qa-conductor/pr-pane.sb "$(command -v node)" -e "require('net').connect(3100, '127.0.0.1').on('connect', function () { console.log('connected'); this.destroy() }).on('error', e => console.log(e.code))"` must print `EPERM`, and the same `node -e` without `sandbox-exec` must print `connected`. A closed port would print `ECONNREFUSED`.
   - Or with `curl -sv` in place of `node -e`: `Immediate connect fail for 127.0.0.1: Operation not permitted`, where `curl -sS` alone says only that it couldn't connect.
 
@@ -410,9 +414,10 @@ const provisioner = createProcessProvisioner({
 - Then tag the node, with `tailscale up --advertise-tags=tag:qa-conductor` or from the admin console.
 - `QA_ALLOWED_LOGINS` stays the reviewers' logins.
 
-**Checked:** not here: nothing in this repository runs `tailscale`. Check it from the conductor's host while it runs: `curl -sS -o /dev/null -D - https://<machine>.<tailnet>.ts.net:8444/qa/api/state | grep -i '^x-qa-refusal'`. Both a tagged and an untagged node answer `403`, so read the header:
-- `X-QA-Refusal: identity` when the node is tagged: the identity gate refused a request with no login;
-- `X-QA-Refusal: capability` when it isn't: the owner's login got past the gate, and only the capability refused it.
+**Checked:** not here: nothing in this repository runs `tailscale`. Check it from the conductor's host while it runs: `curl -sS -D - https://<machine>.<tailnet>.ts.net:8444/qa/api/state`. Every case answers `403`, so read its `X-QA-Refusal` header and its body:
+- `X-QA-Refusal: identity` and `403: no Tailscale identity: …`: the node is tagged, and the identity gate refused a request with no login;
+- `X-QA-Refusal: identity` and `403: <login> is not in QA_ALLOWED_LOGINS`: the node isn't tagged, and its owner isn't an allowed login. The header alone can't tell this from a tagged node;
+- `X-QA-Refusal: capability` and a JSON body with `"refusal":"capability"`: the node isn't tagged, its owner's login got past the gate, and only the capability refused it.
 
 #### Unix-socket listeners (Linux, not yet supported)
 
@@ -426,7 +431,7 @@ const provisioner = createProcessProvisioner({
 - So supporting it means more than a socket. The conductor would need to take the harness and pane origins from its config, rather than the `Host` header, for its [same-origin](#security) and pane request checks.
 - Tracked in [#42](https://github.com/critical-labs/qa-conductor/issues/42).
 
-**Today:** the Docker Provisioner's [internal network](#the-pr-pane-on-an-internal-network) is meant to close the same path for container panes: it gives the PR pane no route to the host's loopback. Each session's probe checks that it doesn't reach the conductor or the base pane there. Its check by hand on Docker Desktop and Podman machine is tracked in [#43](https://github.com/critical-labs/qa-conductor/issues/43).
+**Today:** the Docker Provisioner's [internal network](#the-pr-pane-on-an-internal-network) closes the same path for container panes: it gives the PR pane no route to the host's loopback. Each session's probe checks that it doesn't reach the conductor or the base pane there. CI checks it on Linux, against Docker Engine and Podman, and its check by hand on Docker Desktop and Podman machine is tracked in [#43](https://github.com/critical-labs/qa-conductor/issues/43).
 
 ## The seams
 
