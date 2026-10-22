@@ -92,7 +92,7 @@ What changed in each release, newest first. A 0.x minor version may break the in
     - `bootSession` takes `deps.capture`;
     - the demo has an inspector, and **#106**, whose *Empty cart* deletes the saved carts too.
   - **The harness shows them:**
-    - **Data** (`d`): the trust chip, Snapshot now and Re-baseline, both spans, divergence and each pane's changes, and a badge counting the red flags. A PR pane that couldn't be read is red and counted: its changes are unknown, never "no destructive change";
+    - **Data** (`d`): the trust chip, Snapshot now and Re-baseline, both spans, divergence and each pane's changes, and a badge counting the red flags. A PR pane that couldn't be read is red and counted, and so is a span neither pane could be read for after a snapshot: its changes are unknown, never "no destructive change" or "nothing to compare". Flagged and changed collections are drawn first;
     - **Actions** (`a`): each reported action with the requests it most likely set off, grouped by the documented rule, read on from its cursor while open and in view, and from 0 again for another session.
 
     Both draw what PR code controls as text only, set apart, with its control, format and separator characters shown as codes. Data draws at most 300 collections, 100 flags and 50 rows of each kind; Actions the newest 100 actions, with the requests grouped under them, of the newest 4,000 it keeps.
