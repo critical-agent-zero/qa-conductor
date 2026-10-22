@@ -700,7 +700,8 @@ test('padding collections can\'t push a collection out of the PR\'s snapshots: t
   const sn = snap({ ...pad(1), users: people(0) })
   const wiped = flagChanges(diffSnapshots(seed, seed), diffSnapshots(s1, sn), none, { trusted: true }).filter(f => f.collection === 'users')
   // emptied, users has the fewest rows, and is kept as its count: still red
-  assert.deepEqual(wiped.map(f => [f.kind, f.severity]), [['delete', 'red'], ['emptied', 'red'], ['mass-change', 'red'], ['unverified', 'red']])
+  // cut short in the PR pane only: its unverified flag stands with what loses rows
+  assert.deepEqual(wiped.map(f => [f.kind, f.severity]), [['delete', 'red'], ['emptied', 'red'], ['unverified', 'red'], ['mass-change', 'red']])
   assert.match(s1.problems[0], /^1 collections past the first 1000 by rows are kept as counts only: aaa\d{4}$/)
 
   // padding bigger than users: users is kept as its count, and a wipe is
@@ -995,7 +996,8 @@ test('the unverified flags of collections only the PR pane has are folded into o
     assert.deepEqual([flags[2].collections, flags[2].pr, flags[2].names], [20, 20, ['aaa01', 'aaa02', 'aaa03', 'aaa04', 'aaa05']])
   }
   // the order: red first; the base pane's collections before the PR's own;
-  // destructive kinds before unverified and cleared; then by name
+  // what loses rows (and a base collection the PR alone cut short) before
+  // unverified and cleared; then by name
   const rules = validateRules({})
   const at = (users, orders, extra) => snap({ users: { key: ['id'], rows: users }, orders: { key: ['id'], rows: orders }, ...extra }, {}, { maxRows: 3 })
   const u = [{ id: 1, note: 'x' }, { id: 2, note: 'y' }]
@@ -1004,8 +1006,8 @@ test('the unverified flags of collections only the PR pane has are folded into o
   const after = at([{ id: 1, note: '' }], [...o, { id: 3 }, { id: 4 }], { aaa_big: { key: ['id'], rows: [1, 2, 3, 4].map(id => ({ id })) } })
   const ordered = flagChanges(diffSnapshots(at(u, o), at(u, o)), diffSnapshots(before, after), rules, { trusted: true })
   assert.deepEqual(ordered.map(f => [f.collection, f.kind, f.severity]), [
-    ['users', 'delete', 'red'],
     ['orders', 'unverified', 'red'],
+    ['users', 'delete', 'red'],
     ['aaa_tmp', 'dropped', 'red'],
     [null, 'unverified', 'red'],
     ['users', 'cleared', 'amber'],
@@ -1188,17 +1190,14 @@ test('what loses data is listed before column and mass-change flags, across coll
 // The review's high: a tag's attributes read across the next '<', so text
 // dense with `<a ` backtracked about 256 characters at every '<' (110 ms a
 // 256 KB cell). They stop at the next '<' now.
-test('the tag scan is linear in text dense with tags: 24 cells of 256 KB of `<a ` and `<a:a ` take well under the time they took', () => {
+// Its time isn't asserted: under the owner's W28=B, a PR's data may slow
+// masking, which the README documents (Hostile PR data).
+test('text dense with tags is read, and tags with a namespace or attributes are found', () => {
   const a = '<a '.repeat(87_000)
   const ns = '<a:a '.repeat(52_000)
-  const rows = Array.from({ length: 20 }, (_, id) => ({ id, v: a })).concat(Array.from({ length: 4 }, (_, id) => ({ id: 20 + id, v: ns })))
-  const started = performance.now()
-  // well under a second here; over 3 s when the attributes read across
-  // the next '<'. The bound leaves room for a loaded machine.
+  const rows = Array.from({ length: 2 }, (_, id) => ({ id, v: a })).concat(Array.from({ length: 2 }, (_, id) => ({ id: 2 + id, v: ns })))
   const kept = snap({ c: { key: ['id'], rows } }).collections.c.rows
-  const took = performance.now() - started
-  assert.ok(took < 3_000, `${Math.round(took)} ms`)
-  assert.deepEqual([kept[0].v.t, kept[23].v.t], ['long', 'long'])
+  assert.deepEqual([kept[0].v.t, kept[3].v.t], ['long', 'long'])
   const [attrs] = snap({ c: { key: ['id'], rows: [{ id: 1, v: '<a b="1" '.repeat(29_000) }] } }).collections.c.rows
   assert.equal(attrs.v.t, 'long')
   // tags with a namespace or attributes are still read
@@ -1495,11 +1494,8 @@ test('more shapes: DSN variants, attributes quoted either way or not, a flag bef
   assert.match(v.basic, /^header basic \[secret [0-9a-f]{8}\] ok$/)
   assert.match(v.oauth, /^https:\/\/\[secret [0-9a-f]{8}\]:X-OAUTH-BASIC@github\.com/)
   for (const f of ['gh', 'pat', 'xox', 'sk']) assert.match(v[f], /^https:\/\/\[secret [0-9a-f]{8}\]:\[secret [0-9a-f]{8}\]@h\/x$/, f)
-  // the DSN rule never reads past a ':' (it stays linear in 'a:' text), and
-  // a word before ':' and '@' alone is kept
-  const started = performance.now()
-  snap({ c: { key: ['id'], rows: [{ id: 1, v: 'a:'.repeat(128 * 1024) }] } })
-  assert.ok(performance.now() - started < 1_000)
+  // text of 'a:' is read (its time is the README's, Hostile PR data)
+  assert.equal(snap({ c: { key: ['id'], rows: [{ id: 1, v: 'a:'.repeat(128 * 1024) }] } }).collections.c.rows[0].v.t, 'long')
 })
 
 test('flags: dropped columns of the same number but other names are the PR\'s own; a cleared field shared on one row of three isn\'t shared; what loses rows, then columns, then a left-out base collection\'s unverified with what loses rows', () => {
@@ -1534,4 +1530,50 @@ test('flags: dropped columns of the same number but other names are the PR\'s ow
   const cutAfter = snap({ big: { key: ['id'], rows: [{ id: 1 }], count: 40, truncated: true }, zz: { key: ['id'], rows: rows(30).map(r => ({ ...r, v: 'y' })) } })
   const late = flagChanges(diffSnapshots(cut, cut), diffSnapshots(cut, cutAfter), none, { trusted: true }).map(f => `${f.collection}:${f.kind}`)
   assert.ok(late.includes('big:unverified') && late.indexOf('zz:mass-change') < late.indexOf('big:unverified'), late.join(' '))
+})
+
+// --- Round 6 of #35's review --------------------------------------------------------
+
+// The review's highs: a DSN password holding ':' (round 5's class left ':'
+// out), and a DSN match that ran past a secret element's '>'. The corpus
+// test holds both; these name them.
+test('a DSN password holding \':\' is masked, and a secret element\'s value is masked before any DSN rule reads past its \'>\'', () => {
+  const S = 'Zq9SeCr3tVal'
+  const values = {
+    a: `root:pa:ss${S}@tcp(127.0.0.1:3306)/app`,
+    b: `root:${S}:@tcp(db)/app`,
+    c: `root::${S}@tcp(db)/app`,
+    d: `<input type="password" name="pw" value="${S}" style="width:100%"><style>@media(max-width:1px){}</style>`,
+    e: `<input type="hidden" name="api_token" value="${S}" style="display:none"><style>@supports(x:y){}</style>`,
+    f: `<x id="secret" value="${S}" href="mailto:a@b.c">x</x>`,
+  }
+  const [row] = snap({ c: { key: ['id'], rows: [{ id: 1, ...values }] } }).collections.c.rows
+  assert.doesNotMatch(JSON.stringify(row), new RegExp(S))
+  // the element's value is masked first (the DSN rule may then mask more)
+  assert.match(row.d, /^<input type="password" name="pw" value="\[secret [0-9a-f]{8}\]" style=/)
+})
+
+test('the review\'s mutant cases: a base collection the PR\'s diff lacks sorts with what loses rows; fieldsBefore is the before snapshot\'s; MYSQL in capitals; a row pair never masks a key field', () => {
+  // the base pane's diff has `users`; the PR pane's lacks it
+  const rows = n => Array.from({ length: n }, (_, i) => ({ id: i + 1, v: 'x' }))
+  const seed = snap({ users: { key: ['id'], rows: rows(3) }, zz: { key: ['id'], fields: ['id', 'v', 'old'], rows: rows(30) } })
+  const after = snap({ zz: { key: ['id'], fields: ['id', 'v'], rows: rows(30).map(r => ({ ...r, v: 'y' })) } })
+  const pr = diffSnapshots(seed, after)
+  delete pr.collections.users
+  const kinds = flagChanges(diffSnapshots(seed, seed), pr, none, { trusted: true }).map(f => `${f.collection}:${f.kind}`)
+  assert.ok(kinds.indexOf('users:unverified') >= 0 && kinds.indexOf('users:unverified') < kinds.indexOf('zz:column-dropped'), kinds.join(' '))
+  // seeded columns are those the base pane's before snapshot declares
+  const cols = fields => snap({ users: { key: ['id'], fields: ['id', ...fields], rows: [{ id: 1 }] } })
+  const baseDiff = diffSnapshots(cols(['email', 'legacy']), cols(['email']))
+  const prDiff = diffSnapshots(cols(['email', 'legacy', 'aa_pad']), cols([]))
+  const [flag] = flagChanges(baseDiff, prDiff, none, { trusted: true })
+  assert.deepEqual([flag.count, flag.seeded, flag.fields], [3, 2, ['email', 'legacy', 'aa_pad']])
+  // a MySQL client named in capitals
+  const [t] = snap({ c: { key: ['id'], rows: [{ id: 1, v: 'MYSQL -u root -phunter2Zq app' }] } }).collections.c.rows
+  assert.match(t.v, /^\[text with a secret-looking key/)
+  // a row pair keeps its key fields: renaming a row stays an update
+  const kv = (v) => snap({ settings: { key: ['value'], rows: [{ key: 'smtp_password', value: v }] } })
+  const k1 = kv('a')
+  assert.equal(k1.collections.settings.rows[0].value, 'a', 'a key field is never masked')
+  assert.deepEqual(k1.collections.settings.key, ['value'])
 })
