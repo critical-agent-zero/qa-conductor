@@ -822,19 +822,39 @@ test('a seeded collection\'s flagged rows are listed before the PR\'s own flagge
 // A low: the PR diff's padding no longer starves the divergence's and the
 // base diff's flagged entries: the lists go by rank across all three.
 test('the lists go by rank across the PR diff, the divergence and the base diff, so padding in one can\'t starve another\'s flagged entry', async () => {
-  const key = Array.from({ length: 32 }, (_, i) => `k${i}_${'x'.repeat(150)}`)
+  // round 5's shape: the PR deletes 15 of 20 users while 45 of its own wide
+  // tables (50 rows of 200 characters) are emptied: all red, and their rows
+  // fill the span's budget many times over
   const users = n => ({ key: ['id'], rows: Array.from({ length: n }, (_, i) => ({ id: i + 1 })) })
+  const wide = Array.from({ length: 50 }, (_, i) => ({ id: i + 1, text: 'w'.repeat(200) }))
+  const own = rows => Object.fromEntries(Array.from({ length: 45 }, (_, t) => [`a${String(t).padStart(2, '0')}`, { key: ['id'], rows }]))
   const base = { users: users(20) }
-  const padding = Object.fromEntries(Array.from({ length: 400 }, (_, i) => [`a${String(i).padStart(3, '0')}`, { key, rows: [] }]))
   let pr = base
-  const { capture, signal } = await readyCapture({ snapshot: role => ({ collections: structuredClone(role === 'base' ? base : pr) }), capture: { viewBytes: 1_000_000 } })
-  pr = { ...base, ...padding }
+  const { capture, signal } = await readyCapture({ snapshot: role => ({ collections: structuredClone(role === 'base' ? base : pr) }), capture: { viewBytes: 200_000 } })
+  pr = { ...base, ...own(wide) }
   await capture.ready({ signal })
-  pr = { ...padding, users: users(5) }
+  pr = { ...own([]), users: users(5) }
   await capture.snapshot()
   const s = capture.view({}).session
   for (const list of ['pr', 'divergence', 'base']) assert.ok(Object.hasOwn(s[list].collections, 'users'), `${list} lists users`)
-  assert.equal(s.pr.cut, true, 'the padding is what got cut')
+  assert.equal(s.pr.cut, true, 'the PR\'s own tables are what got cut')
+  assert.equal(Object.keys(s.pr.collections).length < 46, true)
+  // a list that listed everything says no cut, though another was cut
+  assert.equal(s.base.cut, undefined)
+
+  // the same with the wide tables seeded (zNN: after users by name), all
+  // in the first tier: users's entry in each list still comes before any
+  // wide table's, though its first flag isn't the first
+  const seededWide = Object.fromEntries(Array.from({ length: 45 }, (_, t) => [`z${String(t).padStart(2, '0')}`, { key: ['id'], rows: wide }]))
+  const base2 = { users: users(20), ...seededWide }
+  let pr2 = base2
+  const two = await readyCapture({ snapshot: role => ({ collections: structuredClone(role === 'base' ? base2 : pr2) }), capture: { viewBytes: 200_000 } })
+  await two.capture.ready({ signal: two.signal })
+  pr2 = { users: users(5), ...Object.fromEntries(Object.keys(seededWide).map(n => [n, { key: ['id'], rows: [] }])) }
+  await two.capture.snapshot()
+  const s2 = two.capture.view({}).session
+  for (const list of ['pr', 'divergence', 'base']) assert.equal(Object.keys(s2[list].collections)[0], 'users', list)
+  assert.equal(s2.pr.cut, true)
 })
 
 // A low: the budget is in bytes, not characters: text outside ASCII takes
@@ -937,4 +957,217 @@ test('the PR-only summary keeps its count past 20 folded flags; one pane\'s fail
   failPr = true
   await one.capture.ready({ signal: one.signal })
   assert.equal(typeof one.capture.view({}).baselineAt, 'number')
+})
+
+// --- Round 5 of #36's review --------------------------------------------------------
+
+const people = n => ({ key: ['id'], rows: Array.from({ length: n }, (_, i) => ({ id: i + 1, email: `u${i}@example.org` })) })
+const ownTables = (n, rows) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`a${String(i).padStart(4, '0')}`, { key: ['id'], rows: Array.from({ length: rows }, (_, j) => ({ id: j + 1 })) }]))
+
+// The review's second medium: a span with no base diff (the base pane's
+// read failed, or its baseline came late) took every collection for the
+// PR's own, so the PR's 1,000 dropped tables hid users's delete.
+test('without a base diff, a seeded collection is still told from the PR\'s own: its flags, lists and fallback come first', async () => {
+  // which of the base pane's reads fail; whether the PR's tables were there
+  // before its seed (so its boot span doesn't show them added)
+  const shapes = {
+    'base read failed': { boot: false, now: true, older: false },
+    'base read failed, the PR\'s tables older than its seed': { boot: false, now: true, older: true },
+    'base baseline late': { boot: true, now: false, older: false },
+    'base never read': { boot: true, now: true, older: false },
+  }
+  for (const [shape, { boot, now, older }] of Object.entries(shapes)) {
+    const base = { users: people(20) }
+    let pr = { users: people(20), ...(older ? ownTables(1_000, 2) : {}) }
+    let failBase = boot
+    const { capture, signal } = await readyCapture({
+      snapshot: role => {
+        if (role === 'base' && failBase) throw new Error('lock timeout')
+        return { collections: structuredClone(role === 'base' ? base : pr) }
+      },
+      capture: { limits: { maxCollections: 2_000 } },
+    })
+    pr = { users: people(20), ...ownTables(1_000, 2) }
+    await capture.ready({ signal })
+    failBase = now
+    pr = { users: people(5) }
+    await capture.snapshot()
+    const s = capture.view({}).session
+    assert.equal(s.base, null, shape)
+    assert.equal(s.flagsCount.red, 1_002, shape)
+    assert.deepEqual([s.flags[0].collection, s.flags[0].kind], ['users', 'delete'], shape)
+    assert.equal(Object.keys(s.pr.collections)[0], 'users', shape)
+    const fallback = capture.view({}, { lists: false }).session
+    assert.deepEqual([fallback.flags[1].collection, fallback.flags[1].kind], ['users', 'delete'], shape)
+  }
+})
+
+// The review's third medium: an amber-only seeded collection (a cleared
+// field) was pushed out of every list by the PR's own red tables.
+test('an amber-only seeded collection is listed before the PR\'s own red tables, in the flags and every list', async () => {
+  const base = { users: people(20) }
+  let pr = { users: people(20) }
+  const { capture, signal } = await readyCapture({ snapshot: role => ({ collections: structuredClone(role === 'base' ? base : pr) }), capture: { limits: { maxCollections: 2_000 }, viewBytes: 200_000 } })
+  pr = { users: people(20), ...ownTables(1_000, 2) }
+  await capture.ready({ signal })
+  const cleared = people(20)
+  for (const r of cleared.rows.slice(0, 4)) r.email = null
+  pr = { users: cleared }
+  await capture.snapshot()
+  const s = capture.view({}).session
+  assert.deepEqual(s.flagsCount, { red: 1_000, amber: 1 })
+  assert.deepEqual([s.flags[0].collection, s.flags[0].kind, s.flags[0].severity], ['users', 'cleared', 'amber'])
+  assert.equal(Object.keys(s.pr.collections)[0], 'users')
+  assert.equal(Object.keys(s.divergence.collections)[0], 'users')
+  // the base pane's users, unchanged there, still comes before the PR's
+  // own red tables, which overrun the budget
+  assert.deepEqual(Object.keys(s.base.collections), ['users'])
+  assert.equal(s.pr.cut, true)
+})
+
+// A low: key-lost flags on many seeded tables sorted with the deletes.
+test('what loses rows is listed before a lost key, among the seeded collections', async () => {
+  const keyed = key => Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`t${String(i).padStart(3, '0')}`, { key: [key], rows: [{ id: 1, uuid: 'a' }, { id: 2, uuid: 'a' }] }]))
+  const base = { ...keyed('id'), users: people(20) }
+  let pr = base
+  const { capture, signal } = await readyCapture({ snapshot: role => ({ collections: structuredClone(role === 'base' ? base : pr) }) })
+  pr = { ...keyed('uuid'), users: people(5) } // the PR's migration
+  await capture.ready({ signal })
+  const boot = capture.view({}).boot
+  assert.ok(boot.flags.some(f => f.kind === 'key-lost'))
+  assert.deepEqual([boot.flags[0].collection, boot.flags[0].kind], ['users', 'delete'])
+  assert.equal(Object.keys(boot.pr.collections)[0], 'users')
+
+  // a seeded collection the PR's snapshot cut short where the base pane's
+  // isn't stands with what loses rows too: before a lost key
+  const small = { key: ['id'], rows: [{ id: 1, uuid: 'a' }, { id: 2, uuid: 'a' }] }
+  const base2 = { aa: small, zz: small }
+  let pr2 = base2
+  const two = await readyCapture({ snapshot: role => ({ collections: structuredClone(role === 'base' ? base2 : pr2) }), capture: { limits: { maxRows: 5 } } })
+  pr2 = { aa: { ...small, key: ['uuid'] }, zz: { key: ['id'], rows: Array.from({ length: 10 }, (_, i) => ({ id: i + 1, uuid: 'a' })) } }
+  await two.capture.ready({ signal: two.signal })
+  const flags2 = two.capture.view({}).boot.flags.map(f => [f.collection, f.kind])
+  assert.deepEqual(flags2, [['zz', 'unverified'], ['aa', 'key-lost']])
+})
+
+// The review's surviving mutants, M11 and M24.
+test('the fallback lists red flags only; a collection whose key alone was lost ranks with changed rows', async () => {
+  // M11: a span with red and amber flags lists only the red in its fallback
+  const two = rows => ({ orders: { key: ['id'], rows }, carts: { key: ['id'], rows } })
+  let baseState = two([{ id: 1 }, { id: 2 }])
+  let prState = { ...baseState, own: { key: ['id'], rows: [{ id: 1 }, { id: 2 }] } }
+  const mixed = await readyCapture({ snapshot: role => ({ collections: structuredClone(role === 'base' ? baseState : prState) }) })
+  await mixed.capture.ready({ signal: mixed.signal })
+  // the same deletes in both panes (amber, trusted), and one of the PR's own (red)
+  baseState = two([{ id: 1 }])
+  prState = { ...two([{ id: 1 }]), own: { key: ['id'], rows: [{ id: 1 }] } }
+  await mixed.capture.snapshot()
+  const fb = mixed.capture.view({ isolation: { verdict: 'isolated' } }, { lists: false }).session
+  assert.deepEqual(fb.flagsCount, { red: 2, amber: 2 })
+  assert.deepEqual(fb.flags.map(f => [f.collection, f.kind]), [[null, 'unlisted'], ['own', 'delete']])
+
+  // M24: in the base pane, zz lost its key, its rows the same: it moved,
+  // so it ranks before aa, whose only mark is the PR's amber flag
+  const keyed = { zz: { key: ['id'], rows: [{ id: 1, uuid: 'a' }, { id: 2, uuid: 'a' }] }, aa: { key: ['id'], rows: [{ id: 1, email: 'x@example.org' }] } }
+  let b = keyed
+  let p = keyed
+  const lost = await readyCapture({ snapshot: role => ({ collections: structuredClone(role === 'base' ? b : p) }) })
+  await lost.capture.ready({ signal: lost.signal })
+  b = { ...keyed, zz: { ...keyed.zz, key: ['uuid'] } }
+  p = { ...keyed, aa: { key: ['id'], rows: [{ id: 1, email: null }] } }
+  await lost.capture.snapshot()
+  const s = lost.capture.view({}).session
+  assert.equal(s.base.collections.zz.keyLost, true)
+  assert.deepEqual(s.flags.map(f => [f.collection, f.kind]), [['aa', 'cleared']])
+  assert.deepEqual(Object.keys(s.base.collections), ['zz', 'aa'])
+})
+
+// The review's N12, and its N4 and N7 (an entry of the divergence not
+// charged, or skipped where listing should stop): at every budget from
+// small to whole, each list is a prefix of its order, a list that stops
+// short says cut (and one that doesn't, doesn't), and the span stays
+// within its share.
+test('at every budget, each list lists a prefix of its order, says cut exactly when short, and the span stays within its share', async () => {
+  // names long and short in turn; the PR inserts a row in the long ones,
+  // the base pane in the short ones. So the divergence's entry for a long
+  // one (after the PR diff's) is followed by its entry for a short one
+  // (before the base diff's), which is smaller: one that doesn't fit is
+  // followed by one that would
+  const names = Array.from({ length: 30 }, (_, i) => `c${String(i).padStart(2, '0')}${i % 2 ? 'x'.repeat(150) : ''}`)
+  const rows = n => ({ key: ['id'], rows: Array.from({ length: n }, (_, i) => ({ id: i + 1 })) })
+  const before = Object.fromEntries(names.map(n => [n, rows(3)]))
+  const long = names.filter((_, i) => i % 2)
+  const short = names.filter((_, i) => i % 2 === 0)
+  const prAfter = { ...before, ...Object.fromEntries(long.map(n => [n, rows(4)])) }
+  const baseAfter = { ...before, ...Object.fromEntries(short.map(n => [n, rows(4)])) }
+  const at = async viewBytes => {
+    let state = { base: before, pr: before }
+    const { capture, signal } = await readyCapture({ snapshot: role => ({ collections: structuredClone(state[role]) }), capture: { viewBytes } })
+    await capture.ready({ signal })
+    state = { base: baseAfter, pr: prAfter }
+    await capture.snapshot()
+    return capture.view({}).session
+  }
+  const whole = await at(10_000_000)
+  const order = Object.fromEntries(['pr', 'divergence', 'base'].map(l => [l, Object.keys(whole[l].collections)]))
+  // N12: equal ranks go by name
+  assert.deepEqual(order.pr, [...long, ...short])
+  assert.deepEqual(order.divergence, names)
+  assert.deepEqual(order.base, [...short, ...long])
+  const size = span => Buffer.byteLength(JSON.stringify({ flags: span.flags, base: span.base, pr: span.pr, divergence: span.divergence }))
+  let cuts = 0
+  for (let viewBytes = 2_000; viewBytes < 34_000; viewBytes += 71) {
+    const s = await at(viewBytes)
+    for (const l of ['pr', 'divergence', 'base']) {
+      const listed = Object.keys(s[l].collections)
+      assert.deepEqual(listed, order[l].slice(0, listed.length), `${l} at ${viewBytes}`)
+      assert.equal(s[l].cut === true, listed.length < order[l].length, `${l} at ${viewBytes}`)
+      if (s[l].cut) cuts++
+    }
+    assert.ok(size(s) <= Math.floor(viewBytes / 2) + 500, `${size(s)} bytes at ${viewBytes}`)
+  }
+  assert.ok(cuts > 100, String(cuts))
+})
+
+// The nit: the reason when only the PR's read failed is `failed`, whatever
+// happened to the base pane's (case C: its read worked, as its late
+// baseline; case D: both ready reads had failed).
+test('the unreadable flag\'s reason is failed when only the PR\'s read failed, though the base\'s became its late baseline', async () => {
+  for (const both of [false, true]) {
+    let fail = { base: true, pr: both }
+    const { capture, signal } = await readyCapture({ snapshot: (role, _, st) => { if (fail[role]) throw new Error('busy'); return { collections: structuredClone(st[role]) } } })
+    await capture.ready({ signal })
+    fail = { base: false, pr: true }
+    await capture.snapshot()
+    const s = capture.view({}).session
+    assert.deepEqual(s.flags.map(f => [f.kind, f.reason]), [['unreadable', 'failed']], String(both))
+  }
+})
+
+// The review's stall: a PR's data that is slow to mask held the event loop
+// while the base pane's read was still timed, so that read timed out (and
+// the span had no base diff). Every pane's raw read now comes first.
+test('one pane\'s slow masking can\'t time out the other pane\'s read: every raw read settles before any is masked', async () => {
+  const busy = ms => { const end = Date.now() + ms; while (Date.now() < end) { /* masking a PR's hostile data */ } }
+  for (const phase of ['ready', 'snapshot']) {
+    let slow = false
+    const { capture, signal } = await readyCapture({
+      capture: { limits: { timeoutMs: 1_000 } },
+      snapshot: async (role, _, stores) => {
+        if (!slow) return { collections: structuredClone(stores[role]) }
+        if (role === 'pr') return { get collections() { busy(1_500); return structuredClone(stores.pr) } }
+        // the base pane's answer comes as I/O does: after the timers that are due
+        await new Promise(resolve => setTimeout(resolve, 100))
+        await new Promise(resolve => setImmediate(resolve))
+        return { collections: structuredClone(stores.base) }
+      },
+    })
+    slow = phase === 'ready'
+    await capture.ready({ signal })
+    slow = true
+    if (phase === 'snapshot') await capture.snapshot()
+    const view = capture.view({})
+    assert.deepEqual(view.errors, NO_ERRORS, phase)
+    assert.ok(view[phase === 'ready' ? 'boot' : 'session'].base, phase)
+  }
 })

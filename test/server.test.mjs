@@ -3852,7 +3852,10 @@ test('the base-vs-PR comparison is trusted only when the session is isolated', a
 
 test('the data checks are the running session\'s: probes close before the panes go, the next boot starts afresh, and a snapshot racing a teardown answers 409', async () => {
   let hold = null
-  const inspect = storeInspector({ snapshot: async () => { if (hold) await hold.promise } })
+  // `held` resolves once a snapshot is waiting on `hold`: a race that waits
+  // for it, not for a fixed time
+  let held = null
+  const inspect = storeInspector({ snapshot: async () => { if (hold) { held?.resolve(); await hold.promise } } })
   const hang = { 8: deferred() }
   const { w, ports, data, snapshot } = await dataWorld({ inspect, hang })
   try {
@@ -3881,8 +3884,9 @@ test('the data checks are the running session\'s: probes close before the panes 
 
     // a snapshot still running when the session ends
     hold = deferred()
+    held = deferred()
     const racing = snapshot()
-    await new Promise(r => setTimeout(r, 20))
+    await held.promise
     await api(ports.harness, 'POST', '/api/teardown')
     hold.resolve()
     const res = await racing
