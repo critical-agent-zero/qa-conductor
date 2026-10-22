@@ -677,6 +677,17 @@ test('the probe\'s verdict: reachable on any hit, unknown when it can\'t tell, i
     [{ ...dual, probe: 'self fd00:20::3:5432\nprobe done\n' }, 'unknown', [/^the probe couldn't reach the PR pane's own database over IPv4 \(172\.20\.0\.3:5432\), so its IPv4 misses prove nothing$/]],
     [{ ...dual, probe: 'self 172.20.0.3:5432\nself fd00:20::3:5432\nprobe done\n' }, 'isolated', []],
     [{ ...dual, probe: 'open fd00:19::2:5432\nself 172.20.0.3:5432\nprobe done\n' }, 'reachable', [/fd00:19::2:5432/]],
+    // The families to vouch for are the base pane's: a family the PR pane's
+    // own database lacks can't be vouched for, so its misses prove nothing.
+    [{ base: '172.19.0.2 fd00:19::2 \n', pr: '172.20.0.3 \n', probe: 'self 172.20.0.3:5432\nprobe done\n' }, 'unknown', [/^the probe couldn't reach the PR pane's own database over IPv6 \(no address\), so its IPv6 misses prove nothing$/]],
+    [{ base: 'fd00:19::2 \n', pr: '172.20.0.3 \n', probe: 'self 172.20.0.3:5432\nprobe done\n' }, 'unknown', [/^the probe couldn't reach the PR pane's own database over IPv6 \(no address\), so its IPv6 misses prove nothing$/]],
+    // and one the base pane lacks needs no vouching
+    [{ base: '172.19.0.2 \n', pr: '172.20.0.3 fd00:20::3 \n', probe: 'self 172.20.0.3:5432\nprobe done\n' }, 'isolated', []],
+    // neither family vouched for: a reason for each, IPv4 first
+    [{ ...dual, probe: 'probe done\n' }, 'unknown', [
+      /^the probe couldn't reach the PR pane's own database over IPv4 \(172\.20\.0\.3:5432\), so its IPv4 misses prove nothing$/,
+      /^the probe couldn't reach the PR pane's own database over IPv6 \(fd00:20::3:5432\), so its IPv6 misses prove nothing$/,
+    ]],
     [{ endpoint: new Error('unknown command "context"') }, 'unknown', [/^could not tell where the Docker daemon runs: unknown command/]],
     // a hit in a run that then failed or was killed still counts
     [{ probe: Object.assign(new Error('docker run: Command failed'), { killed: true, signal: 'SIGKILL', stdout: 'listener 10.0.2.2\n' }) }, 'reachable', [/10\.0\.2\.2:3100/, /^the probe didn't finish within 30 s/]],
