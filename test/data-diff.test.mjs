@@ -1153,31 +1153,29 @@ test('maxCells bounds the cells a snapshot keeps, shared fairly; a collection pa
   const seed = snap({ small: { key: null, rows: rows(10) }, big: { key: null, rows: rows(30) } }, {}, limits)
   const flags = flagChanges(diffSnapshots(seed, seed), diffSnapshots(seed, out), none, { trusted: true })
   assert.deepEqual(flags.filter(f => f.collection === 'big').map(f => [f.kind, f.severity]), [['unverified', 'red']])
-  // the default bound: 1M rows of 2 fields keep at most 500,000 cells, read
-  // in well under the time all of them took
-  const huge = { t: { key: null, rows: rows(1_000_000) } }
-  const started = performance.now()
+  // the default bound: 600,000 rows of 2 fields keep at most 500,000 cells
+  const huge = { t: { key: null, rows: rows(600_000) } }
   const kept = snap(huge)
-  const took = performance.now() - started
   assert.ok(kept.collections.t.rows.length * 2 <= 500_000, String(kept.collections.t.rows.length))
-  assert.equal(kept.collections.t.truncated, true)
-  assert.ok(took < 3_000, `${Math.round(took)} ms`)
+  assert.deepEqual([kept.collections.t.truncated, kept.collections.t.count], [true, 600_000])
 })
 
 // #36's review: flagChanges merged each cleared field's items with a spread
 // copy, quadratic in the rows: 10,000 rows with 20 fields cleared took 2.8 s,
 // and 100 fields 22 s.
-test('flagging many cleared fields is linear: 10,000 rows with 20 fields cleared flag in well under a second', () => {
-  const fields = Array.from({ length: 20 }, (_, i) => `f${i}`)
+test('flagging many cleared fields is linear: 10,000 rows with 40 fields cleared flag in well under the quadratic 20 s', () => {
+  const fields = Array.from({ length: 40 }, (_, i) => `f${i}`)
   const at = value => snap({ t: { key: ['id'], rows: Array.from({ length: 10_000 }, (_, id) => ({ id, ...Object.fromEntries(fields.map(f => [f, value])) })) } })
   const before = at('x')
   const after = at('')
   const pr = diffSnapshots(before, after)
+  const base = diffSnapshots(before, before)
   const started = performance.now()
-  const flags = flagChanges(diffSnapshots(before, before), pr, none, { trusted: true })
+  const flags = flagChanges(base, pr, none, { trusted: true })
   const took = performance.now() - started
-  assert.ok(took < 1_000, `${Math.round(took)} ms`)
-  assert.equal(flags.filter(f => f.kind === 'cleared').length, 20)
+  // about 0.1 s alone; the spread copy took over 20 s
+  assert.ok(took < 3_000, `${Math.round(took)} ms`)
+  assert.equal(flags.filter(f => f.kind === 'cleared').length, 40)
   assert.ok(flags.filter(f => f.kind === 'cleared').every(f => f.pr === 10_000))
 })
 

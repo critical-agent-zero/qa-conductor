@@ -4010,3 +4010,40 @@ test('a boot after a failed one waits for the failed boot\'s probes to close bef
     await waitFor(() => builds() === before + 1)
   } finally { closing.resolve(); w.c.stop() }
 })
+
+// #36's round 4: the capture's work runs on the event loop that serves the
+// panes. The cells a snapshot keeps bound it: a Snapshot now of a PR store
+// of 6 million cells, and the answer after it, never hold the loop long.
+test('the event loop is never held long while a Snapshot now reads a PR store of 6 million cells, nor while its answer is built', { timeout: 120_000 }, async (t) => {
+  // 300 tables of 10,000 rows, the same rows in each, so the store is cheap
+  const rowsOf = v => Array.from({ length: 10_000 }, (_, i) => ({ i, v }))
+  const tables = rows => Object.fromEntries(Array.from({ length: 300 }, (_, n) => [`t${String(n).padStart(3, '0')}`, { key: ['i'], fields: ['i', 'v'], rows }]))
+  const stores = { 0: tables(rowsOf(0)), 1: tables(rowsOf(1)) }
+  let phase = 'seed'
+  const inspector = {
+    async open({ paneRef }) {
+      return { snapshot: async () => ({ collections: paneRef.role === 'pr' && phase !== 'seed' ? stores[phase] : { users: { key: ['id'], rows: [{ id: 1 }] } } }) }
+    },
+  }
+  const w = makeWorld({ inspector })
+  try {
+    const ports = await allPorts(w.c)
+    phase = 0
+    await api(ports.harness, 'POST', '/api/session', { pr: 7 })
+    await waitFor(async () => (await api(ports.harness, 'GET', '/api/state')).status === 'ready', 60_000)
+    phase = 1
+    // the longest the loop went without running a timer
+    let last = performance.now()
+    let longest = 0
+    const tick = setInterval(() => { const at = performance.now(); longest = Math.max(longest, at - last); last = at }, 1)
+    const res = await raw(ports.harness, { method: 'POST', path: '/qa/api/data/snapshot', headers: JSON_TYPE, body: '{}' })
+    assert.equal((await api(ports.harness, 'GET', '/api/data')).active, true)
+    clearInterval(tick)
+    longest = Math.max(longest, performance.now() - last)
+    assert.equal(res.status, 200)
+    t.diagnostic(`the longest hold: ${Math.round(longest)} ms`)
+    // about 0.5 s alone, 1 to 3 s beside a full suite; without the bound,
+    // the read alone held it about 6.5 s here
+    assert.ok(longest < 4_000, `${Math.round(longest)} ms`)
+  } finally { w.c.stop() }
+})
