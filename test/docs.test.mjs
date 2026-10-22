@@ -275,6 +275,18 @@ test('the README\'s sandbox-exec profile shuts the ports it names, over IPv4, IP
   const { out, odd, oddCount, localhost } = JSON.parse(got.stdout)
   assert.deepEqual(out, Object.fromEntries(tries.map(([name]) => [name, name.startsWith('OTHER') ? 'connected' : 'EPERM'])), JSON.stringify({ rounds, oddCount, odd, localhost, ports }))
   assert.equal(oddCount, 0, JSON.stringify({ rounds, odd, localhost, ports }))
+  // another of the host's addresses, not loopback: a named port is refused
+  // there too, before any connect, so it needs no listener. (An unnamed
+  // port there isn't tried: with nothing listening, a firewall may hold
+  // the connect.)
+  const { networkInterfaces } = await import('node:os')
+  const own = Object.values(networkInterfaces()).flat().find(a => a && a.family === 'IPv4' && !a.internal)
+  if (own) {
+    const away = names.map(name => [`${name} at ${own.address}`, own.address, ports[name]])
+    const there = await runSandbox([...flags, '-f', file, process.execPath, '-e', client, JSON.stringify([away, 1])])
+    assert.equal(there.code, 0, there.stderr)
+    assert.deepEqual(JSON.parse(there.stdout).out, Object.fromEntries(away.map(([name]) => [name, 'EPERM'])))
+  } else t.diagnostic('this host has no address but loopback: the profile\'s other-address case is untried')
   // a parameter left out: the profile doesn't load, and nothing runs
   const missing = await runSandbox([...flags.slice(0, -2), '-f', file, '/usr/bin/true'])
   assert.equal(missing.code, 65, missing.stderr)

@@ -321,7 +321,7 @@ Three more ways to narrow what the PR pane can reach, each opt-in, with what it 
 
 #### A `sandbox-exec` profile for the process Provisioner (macOS)
 
-**What it guarantees:** the PR pane's processes can't open a TCP connection to the port numbers the profile names, on any address: this Mac's loopback over IPv4 and IPv6, an IPv4-mapped IPv6 address (`::ffff:127.0.0.1`), `0.0.0.0` or another of the host's addresses. They are:
+**What it guarantees** (checked on macOS 12 and 15; on 14, see Checked, and #43): the PR pane's processes can't open a TCP connection to the port numbers the profile names, on any address: this Mac's loopback over IPv4 and IPv6, an IPv4-mapped IPv6 address (`::ffff:127.0.0.1`), `0.0.0.0` or another of the host's addresses. They are:
 - the conductor's three (`QA_HARNESS_PORT`, `QA_BASE_PROXY_PORT`, `QA_PR_PROXY_PORT`);
 - the base pane's service and database ports.
 
@@ -395,7 +395,7 @@ const provisioner = createProcessProvisioner({
 - With more than one base service, note each port and add a line per port to the profile.
 
 **Checked:**
-- **On macOS 12.7.6,** by hand and by `test/docs.test.mjs`: a process under this profile got `EPERM` for each named port, over `127.0.0.1`, `::1`, `localhost`, `::ffff:127.0.0.1`, `::ffff:7f00:1`, `127.1` and `0.0.0.0`, and connected to another port over each.
+- **On macOS 12.7.6,** by hand and by `test/docs.test.mjs`: a process under this profile got `EPERM` for each named port, over `127.0.0.1`, `::1`, `localhost`, `::ffff:127.0.0.1`, `::ffff:7f00:1`, `127.1`, `0.0.0.0` and another of the host's addresses, and connected to another port over each loopback form.
 - **On macOS 15,** by CI's `macos-sandbox` job on GitHub's runner, on every pull request: it runs that docs test, 30 rounds of every try, and fails if the test was skipped.
 - **On macOS 14, not yet.** The same job runs there, and with the earlier `localhost:<port>` form it let one named port through, over `localhost`, in 2 of 5 runs, though `127.0.0.1` to the same port got `EPERM` in the same process. Whether the `*:<port>` form holds there is tracked in [#43](https://github.com/critical-labs/qa-conductor/issues/43).
 - **The job is advisory:** it isn't a required check, until it has run reliably on both.
