@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createDocker } from '../lib/docker.mjs'
-import { createDockerProvisioner } from '../lib/adapters/provisioner-docker.mjs'
+import { dockerEngineMajor, createDockerProvisioner } from '../lib/adapters/provisioner-docker.mjs'
 import { bootSession, migrateImageFor, teardownSession } from '../lib/session.mjs'
 
 const BASE_IMG = 'ghcr.io/x/app:1.0.0-rc.38'
@@ -204,9 +204,9 @@ test('teardown removes each pane\'s own network, and sweep removes both and the 
   // and with it the last endpoint that would keep the network alive.
   assert.deepEqual(runs(s.exec).filter(c => c.args.includes('--rm')).map(c => valueOf(c.args, '--name')), ['qa-migrate-base', 'qa-migrate-pr'])
   assert.deepEqual(teardown, [
-    'rm -f -v qa-app-base qa-migrate-base qa-pg-base',
+    'rm -f -v qa-app-base', 'rm -f -v qa-migrate-base', 'rm -f -v qa-pg-base',
     'network rm qa-session-base',
-    'rm -f -v qa-app-pr qa-migrate-pr qa-probe-pr qa-pg-pr',
+    'rm -f -v qa-app-pr', 'rm -f -v qa-migrate-pr', 'rm -f -v qa-probe-pr', 'rm -f -v qa-pg-pr',
     'network rm qa-session-pr',
   ])
   assert.deepEqual(s.fsx.removed, [`${WORK}/.env.qa-base`, `${WORK}/.env.qa-pr`])
@@ -270,8 +270,8 @@ test('teardown and sweep reject when docker can\'t remove a container or network
   assert.match(out.failed[1].message, /could not kill/)
   // every step was still tried: the network, and the env file with its password
   assert.deepEqual(docker(s.exec).map(c => c.args.join(' ')), [
-    'rm -f -v qa-app-base qa-migrate-base qa-pg-base', 'network rm qa-session-base',
-    'rm -f -v qa-app-pr qa-migrate-pr qa-probe-pr qa-pg-pr', 'network rm qa-session-pr',
+    'rm -f -v qa-app-base', 'rm -f -v qa-migrate-base', 'rm -f -v qa-pg-base', 'network rm qa-session-base',
+    'rm -f -v qa-app-pr', 'rm -f -v qa-migrate-pr', 'rm -f -v qa-probe-pr', 'rm -f -v qa-pg-pr', 'network rm qa-session-pr',
   ])
   assert.deepEqual(s.fsx.removed, [`${WORK}/.env.qa-base`, `${WORK}/.env.qa-pr`])
 
@@ -741,7 +741,7 @@ test('the probe doesn\'t run once the boot is aborted, and a teardown removes on
   await assert.rejects(t.provisioner.isolation({ signal: late.signal, canary: CANARY }), err => err.name === 'AbortError')
   assert.equal(probeRun(t.exec), undefined)
   await s.provisioner.teardown({ paneRef: { role: 'pr' } })
-  assert.deepEqual(docker(s.exec).map(c => c.args.join(' ')).at(-2), 'rm -f -v qa-app-pr qa-migrate-pr qa-probe-pr qa-pg-pr')
+  assert.deepEqual(docker(s.exec).map(c => c.args.join(' ')).slice(-5, -1), ['rm -f -v qa-app-pr', 'rm -f -v qa-migrate-pr', 'rm -f -v qa-probe-pr', 'rm -f -v qa-pg-pr'])
 })
 
 // The probe's script, run here with bash against loopback listeners: one that
@@ -1099,7 +1099,7 @@ test('with internal, teardown and sweep remove the forwarder and the edge networ
   const before = docker(s.exec).length
   await s.provisioner.teardown({ paneRef: { role: 'pr' } })
   assert.deepEqual(argvOf(s.exec).slice(before), [
-    'rm -f -v qa-app-pr qa-migrate-pr qa-probe-pr qa-fwd-pr qa-pg-pr',
+    'rm -f -v qa-app-pr', 'rm -f -v qa-migrate-pr', 'rm -f -v qa-probe-pr', 'rm -f -v qa-fwd-pr', 'rm -f -v qa-pg-pr',
     'network rm qa-session-pr',
     'network rm qa-session-pr-edge',
   ])
@@ -1438,5 +1438,60 @@ test('the base pane\'s teardown leaves the PR pane\'s forwarder and edge network
   await bootSession(s.deps, 7)
   const before = docker(s.exec).length
   await s.provisioner.teardown({ paneRef: { role: 'base' } })
-  assert.deepEqual(argvOf(s.exec).slice(before), ['rm -f -v qa-app-base qa-migrate-base qa-pg-base', 'network rm qa-session-base'])
+  assert.deepEqual(argvOf(s.exec).slice(before), ['rm -f -v qa-app-base', 'rm -f -v qa-migrate-base', 'rm -f -v qa-pg-base', 'network rm qa-session-base'])
+})
+
+// --- Round 3 of #40's review ---------------------------------------------------------
+
+const ENGINE = major => `Client: Docker Engine - Community\n Version:           ${major}.0.4\n\nServer: Docker Engine - Community\n Engine:\n  Version:          ${major}.0.4\n`
+
+test('dockerEngineMajor reads the server\'s Engine version, and none for Podman or no server', () => {
+  assert.equal(dockerEngineMajor(ENGINE(28)), 28)
+  assert.equal(dockerEngineMajor(ENGINE(27)), 27)
+  assert.equal(dockerEngineMajor(`Client: Docker Engine - Community\n Version:           28.0.4\n`), null, 'no server')
+  assert.equal(dockerEngineMajor('Client: Podman Engine\nVersion: 5.2.0\nServer: Podman Engine\nVersion: 5.2.0\n'), null)
+  assert.equal(dockerEngineMajor(undefined), null)
+})
+
+// On Docker Engine 28 and later, the PR pane's internal network gets no
+// address of the host's on its bridge (gateway mode isolated), so a host
+// service on 0.0.0.0 isn't reachable from it either.
+test('on Docker Engine 28 and later the internal network\'s gateway is isolated; on older Engines and Podman, or where refused, it is a plain internal network, never the fallback', async () => {
+  const createOf = exec => argvOf(exec).find(c => c.startsWith('network create') && c.endsWith(' qa-session-pr') && c.includes('--internal'))
+  const gw = '-o com.docker.network.bridge.gateway_mode_ipv4=isolated -o com.docker.network.bridge.gateway_mode_ipv6=isolated'
+  for (const [version, isolated] of [[ENGINE(28), true], [ENGINE(29), true], [ENGINE(27), false], ['Client: Podman Engine\nServer: Podman Engine\n', false]]) {
+    const { lines, log } = logged()
+    const s = makeSession({ provisionerOptions: { ...INTERNAL, log }, answer: probeDocker({ version, probe: refusedAll() }) })
+    await s.provisioner.provisionDatabase({ paneRef: { role: 'pr' }, databases: [] })
+    assert.equal(createOf(s.exec), `network create --label qa-conductor-session --internal ${isolated ? `${gw} ` : ''}qa-session-pr`, version)
+    assert.deepEqual(lines, [], 'no fallback')
+  }
+  // an Engine that refuses the option: a plain internal network, up
+  const { lines, log } = logged()
+  const answers = probeDocker({ version: ENGINE(28), probe: refusedAll() })
+  const refused = makeSession({ provisionerOptions: { ...INTERNAL, log }, answer: (args, opts) => (args.join(' ').includes('gateway_mode_ipv4=isolated') ? failWith('Error response from daemon: invalid option') : answers(args, opts)) })
+  await refused.provisioner.provisionDatabase({ paneRef: { role: 'pr' }, databases: [] })
+  const creates = argvOf(refused.exec).filter(c => c.startsWith('network create') && c.endsWith(' qa-session-pr'))
+  assert.deepEqual(creates, [`network create --label qa-conductor-session --internal ${gw} qa-session-pr`, 'network create --label qa-conductor-session --internal qa-session-pr'])
+  assert.deepEqual(lines, [])
+  assert.deepEqual(await refused.provisioner.isolation({ canary: CANARY }), { verdict: 'isolated', reasons: [], internal: true })
+})
+
+test('a left-over internal network without an isolated gateway is made again on Engine 28 and later; one with it is reused', async () => {
+  const exists = failWith('Error response from daemon: network with name qa-session-pr already exists')
+  for (const [mode, remade] of [['\n', true], ['isolated\n', false]]) {
+    let made = false
+    const answers = probeDocker({ version: ENGINE(28), probe: refusedAll() })
+    const s = makeSession({ provisionerOptions: INTERNAL, answer: (args, opts) => {
+      const c = args.join(' ')
+      if (c.startsWith('network create') && c.endsWith(' qa-session-pr') && c.includes('--internal')) { if (made) return ''; made = true; return exists }
+      if (c === 'network inspect --format {{.Name}} qa-session-pr') return 'qa-session-pr\n'
+      if (c.startsWith('network inspect --format {{index .Options')) return mode
+      return answers(args, opts)
+    } })
+    await s.provisioner.provisionDatabase({ paneRef: { role: 'pr' }, databases: [] })
+    const calls = argvOf(s.exec)
+    assert.equal(calls.includes('network rm qa-session-pr'), remade, mode)
+    assert.equal(calls.filter(c => c.startsWith('network create') && c.endsWith(' qa-session-pr')).length, remade ? 2 : 1, mode)
+  }
 })

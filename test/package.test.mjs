@@ -1039,7 +1039,7 @@ test('CI\'s Node 22 leg runs the package tests again with the npm the publish jo
     '          QA_DOCKER_IT: "1"',
     "          DOCKER_HOST: ${{ matrix.runtime == 'podman' && 'unix:///run/podman/podman.sock' || '' }}",
     "          DOCKER_BUILDKIT: ${{ matrix.runtime == 'podman' && '0' || '1' }}",
-    "      - run: grep -qx 'ℹ skipped 0' it.log",
+    "      - run: grep -qx 'ℹ skipped 0' it.log && grep -qx 'ℹ todo 0' it.log",
   ])
   assert.ok(readFileSync(WORKFLOW, 'utf8').includes(`      - run: ${NPM_UPGRADE}\n`), 'the publish job installs the same npm')
   if (process.env.CI_EXPECTS_PUBLISH_NPM === 'true') {
