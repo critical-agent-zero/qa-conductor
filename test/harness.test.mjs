@@ -805,14 +805,14 @@ test('a row\'s key shows each part as cellText does: a secret part only as a sec
   const data = { available: true, active: true, trust: 'trusted', errors: NO_ERRORS, problems: { base: [], pr: [] }, boot: null, session: { complete: true, base: pr, pr, divergence: divergence(pr, pr), flags: flagChanges(pr, pr, rules, { trusted: true }) } }
   const fp = before.collections.members.rows[0].email.fp
   for (const view of ['pr', 'divergence']) {
-    for (const open of [0, 1]) {
+    for (const open of ['members', 'sessions']) {
       const texts = textsOf(dataNodes(data, { span: 'session', view, open }))
       const all = texts.join('\n')
       assert.doesNotMatch(all, /sess-|example\.org|"t":|"d":/, `${view} ${open}`)
       for (const cell of [before.collections.sessions.rows[0].session_id, before.collections.sessions.rows[1].session_id]) assert.equal(all.includes(cell.d), false)
     }
   }
-  const shown = name => textsOf(dataNodes(data, { span: 'session', view: 'pr', open: ['members', 'sessions'].indexOf(name) }))
+  const shown = name => textsOf(dataNodes(data, { span: 'session', view: 'pr', open: name }))
   assert.ok(shown('sessions').includes('[(secret)]: n: 1, session_id: (secret)'), shown('sessions').join('\n'))
   assert.ok(shown('sessions').includes('[(secret)]: n: 1 → 2'))
   assert.ok(shown('members').includes(`[(personal data ${fp}, string, 16)]: email: (personal data ${fp}, string, 16), n: 1`), shown('members').join('\n'))
@@ -900,17 +900,19 @@ test('dataNodes: the trust chip, Snapshot now and Re-baseline, the span and view
   assert.ok(texts.includes(`PR: odd${HOSTILE}: rows must be an array`))
   assert.ok(texts.includes(`saved_carts${HOSTILE}: rows deleted, PR 1, base 0`))
   assert.ok(texts.includes('PR only'))
-  assert.deepEqual(actsOf(nodes), ['snapshot', 'rebaseline', 'span:session', 'span:boot', 'view:divergence', 'view:base', 'view:pr', 'open:0'])
+  // the flag and the row each open the collection, by name
+  const name = `saved_carts${HOSTILE}`
+  assert.deepEqual(actsOf(nodes), ['snapshot', 'rebaseline', 'span:session', 'span:boot', 'view:divergence', 'view:base', 'view:pr', `open:${name}`, `open:${name}`])
   // the boot span says only why a pane has no boot data
   const boot = textsOf(dataNodes(sampleData({ boot: sampleData().session }), { ...ui, span: 'boot' }))
   assert.ok(boot.includes(`BASE: no route to db ${HOSTILE}`))
   assert.equal(boot.some(t => t.startsWith('PR: busy')), false)
   // a collection opened: its changes, by key
-  const open = textsOf(dataNodes(sampleData(), { ...ui, open: 0 }))
+  const open = textsOf(dataNodes(sampleData(), { ...ui, open: name }))
   assert.ok(open.includes('delete [1]: PR only · base — · PR —'))
   assert.ok(open.includes('update [2]: PR only · base — · PR n: 1 → 2'))
   // the PR pane's own view: rows, a secret only as changed, personal data as a fingerprint
-  const pr = textsOf(dataNodes(sampleData(), { span: 'session', view: 'pr', open: 0 }))
+  const pr = textsOf(dataNodes(sampleData(), { span: 'session', view: 'pr', open: name }))
   assert.ok(pr.includes(`[1]: id: 1, owner: (personal data cafe0123, string, 15), note: ${JSON.stringify(HOSTILE)}, token: (secret)`))
   assert.ok(pr.includes('[2]: token: (secret, changed), n: 1 → 2'))
   assert.equal(pr.some(t => t.includes('ffffffff') || t.includes('aaaaaaaa')), false, 'no digest shows')
@@ -942,14 +944,14 @@ test('dataNodes shows at most 50 rows a list, and says how many more there are i
   const rows = Array.from({ length: 50 }, (_, i) => ({ key: `[${i}]`, row: { id: i } }))
   const c = { ...coll({ deleted: rows }), counts: { inserted: 0, updated: 0, deleted: 120 } }
   const data = sampleData({ session: { complete: true, base: DIFF({ c }), pr: DIFF({ c: counted(coll()) }), divergence: DIFF({}), flags: [] } })
-  const texts = textsOf(dataNodes(data, { span: 'session', view: 'base', open: 0 }))
+  const texts = textsOf(dataNodes(data, { span: 'session', view: 'base', open: 'c' }))
   assert.equal(texts.filter(t => /^\[\d+\]: id: \d+$/.test(t)).length, 50)
   assert.ok(texts.includes('and 70 more'))
   assert.ok(texts.includes('+0 ~0 −120'), 'the whole count')
   // divergence: its whole count of changes
   const changes = Array.from({ length: 50 }, (_, i) => ({ kind: 'delete', key: `[${i}]`, status: 'pr-only', base: null, pr: null }))
   const div = DIFF({ c: { status: 'pr-only', truncated: false, counts: { base: c.counts, pr: c.counts }, changes, changesCount: 75 } })
-  const d = textsOf(dataNodes(sampleData({ session: { complete: true, base: DIFF({ c }), pr: DIFF({ c }), divergence: div, flags: [] } }), { span: 'session', view: 'divergence', open: 0 }))
+  const d = textsOf(dataNodes(sampleData({ session: { complete: true, base: DIFF({ c }), pr: DIFF({ c }), divergence: div, flags: [] } }), { span: 'session', view: 'divergence', open: 'c' }))
   assert.ok(d.includes('and 25 more'))
 })
 
@@ -961,8 +963,8 @@ test('the Data panel draws at most 300 collections and 100 flags, red first, and
   const amber = names.slice(0, 150).map(n => ({ collection: n, kind: 'cleared', severity: 'amber', shared: true, pr: 1, base: 1, field: 'f' }))
   const red = names.slice(500, 520).map(n => ({ collection: n, kind: 'delete', severity: 'red', shared: false, pr: 3, base: 0 }))
   const data = sampleData({ session: { complete: true, base: pane, pr: pane, divergence: null, flags: [...amber, ...red] } })
-  const nodes = dataNodes(data, { span: 'session', view: 'pr', open: 299 })
-  assert.equal(actsOf(nodes).filter(a => a.startsWith('open:')).length, 300)
+  const nodes = dataNodes(data, { span: 'session', view: 'pr', open: 'c0279' })
+  assert.equal(nodes.find(n => n.cls === 'dataTable').children.slice(1).filter(r => r.act && r.act.startsWith('open:')).length, 300)
   const texts = textsOf(nodes)
   assert.ok(texts.includes('and 700 more collections'))
   // those with a red flag first, then the rest in name order
@@ -992,7 +994,7 @@ test('text PR code controls can\'t reorder or break what the panels draw: each c
     },
   })
   const raws = []
-  for (const view of ['divergence', 'base', 'pr']) raws.push(...rawTextsOf(dataNodes(data, { span: 'session', view, open: 0 })))
+  for (const view of ['divergence', 'base', 'pr']) raws.push(...rawTextsOf(dataNodes(data, { span: 'session', view, open: name })))
   const actions = mergeActions(actionsFresh(), answer({ seq: 2, requests: [req(1, 'base', `/x\u202E/y\n`)], marks: [], refused: { base: { 'other\u0007': 1 }, pr: {} } }))
   raws.push(...rawTextsOf(actionsNodes(actions)))
   for (const t of raws) {
@@ -1480,7 +1482,7 @@ test('a secret field\'s name, a session error, a problem and a JSON cell are eac
   const name = Object.keys(data.session.pr.collections)[0]
   data.session.pr.collections[name].updated = [{ key: '[2]', fields: [{ field: 'tok\u05D0en', before: { t: 'secret', d: 'a' }, after: { t: 'secret', d: 'b' } }] }]
   data.session.pr.collections[name].deleted = [{ key: '[1]', row: { doc: { t: 'json', s: '{"\u05D0":1}' } } }]
-  const raws = rawTextsOf(dataNodes(data, { span: 'session', view: 'pr', open: 0 }))
+  const raws = rawTextsOf(dataNodes(data, { span: 'session', view: 'pr', open: name }))
   for (const want of ['\u2068tok\u05D0en\u2069: (secret, changed)', '\u2068err\\u{202E}or\u2069', '\u2068pro\\u{202E}blem\u2069', '\u2068{"\u05D0":1}\u2069']) {
     assert.ok(raws.some(t => t.includes(want)), `${JSON.stringify(want)}\n${raws.join('\n')}`)
   }
@@ -1594,7 +1596,7 @@ test('the collections a span draws put flagged and changed ones first, and "and 
   const same = counted(coll({ status: 'same', countAfter: 3 }))
   const pr = { ...DIFF(Object.fromEntries([...names.map(n => [n, same]), ['users', counted(coll())]])), collectionsCount: 1_501 }
   const data = sampleData({ session: { complete: true, base: pr, pr, divergence: null, flags: [] } })
-  const nodes = dataNodes(data, { span: 'session', view: 'pr', open: 0 })
+  const nodes = dataNodes(data, { span: 'session', view: 'pr', open: 'users' })
   const rows = nodes.find(n => n.cls === 'dataTable').children.slice(1).map(r => plain(r.children[0].text))
   assert.equal(rows[0], 'users', 'the changed one first, though it sorts last')
   assert.equal(rows.length, 300)
@@ -1602,7 +1604,7 @@ test('the collections a span draws put flagged and changed ones first, and "and 
   assert.ok(texts.includes('and 1201 more collections'), texts.filter(t => /more collections/.test(t)).join('\n'))
   // fields dropped and added past the 50 listed
   const wide = { ...coll({ fieldsDropped: Array.from({ length: 50 }, (_, i) => `f${i}`), fieldsAdded: ['g'] }), counts: { inserted: 0, updated: 0, deleted: 0, fieldsDropped: 60, fieldsAdded: 1 } }
-  const w = textsOf(dataNodes(sampleData({ session: { complete: true, base: DIFF({ c: wide }), pr: DIFF({ c: wide }), divergence: null, flags: [] } }), { span: 'session', view: 'pr', open: 0 }))
+  const w = textsOf(dataNodes(sampleData({ session: { complete: true, base: DIFF({ c: wide }), pr: DIFF({ c: wide }), divergence: null, flags: [] } }), { span: 'session', view: 'pr', open: 'c' }))
   assert.ok(w.some(t => t.startsWith('Fields dropped: f0, f1') && t.endsWith(', and 10 more')), w.join('\n'))
   assert.ok(w.includes('Fields added: g'))
 })
@@ -1634,8 +1636,8 @@ test('the panel names the one flag for many collections, an answer too big to li
     flagsCount: { red: 2, amber: 0 },
   }
   const u = textsOf(dataNodes(sampleData({ session: unlisted }), { span: 'session', view: 'pr', open: null }))
-  assert.ok(u.includes('This span\'s details were too big to list: its counts and first red flags are below, and nothing else.'))
-  assert.ok(u.includes('This span\'s details were too big to list: only its counts and first red flags are shown.'))
+  assert.equal(u.filter(t => t.includes('too big to list')).length, 1, u.join('\n'))
+  assert.ok(u.includes('This span\'s details were too big to list: only its first red flags are shown, with how many flags it has in all.'))
   assert.ok(u.includes('users: rows deleted, PR 15, base 0'))
   assert.equal(u.some(t => /has no data for this span|couldn't be read/.test(t)), false, u.join('\n'))
   // a collection a snapshot may have left out
@@ -1658,4 +1660,157 @@ test('no "and 0 more flags"; a full 8-hex text digest at a cut is hidden; one ba
   assert.doesNotMatch(shown, /1a2b3c4d/)
   const texts = textsOf(dataNodes(sampleData({ baselineAt: 5_000, baselines: { base: 5_000, pr: 5_000 } }), { span: 'session', view: 'divergence', open: null }))
   assert.ok(texts.some(t => /^baseline \d\d:\d\d:\d\d · compared /.test(t)), texts.join('\n'))
+})
+
+// --- Round 4 of #37's review ---------------------------------------------------------
+
+// The review's medium, through the real capture: the panel ranked tables
+// itself (red, then not same, then by name), so padding pushed users out of
+// the 300 drawn. It follows the engine's flag order now, like the answer.
+test('the tables drawn follow the engine\'s order: 300 new empty tables, or 300 PR tables with a red flag each, can\'t push users out', async () => {
+  const { createDataCapture } = await import('../lib/data-capture.mjs')
+  // 300 new empty tables, and 3 users' emails rewritten (no flag covers it)
+  const people = n => Array.from({ length: n }, (_, i) => ({ id: i + 1, email: `u${i}@example.com` }))
+  let pr = { users: { key: ['id'], rows: people(20) } }
+  const base = { users: { key: ['id'], rows: people(20) } }
+  const open = role => ({ snapshot: () => ({ collections: structuredClone(role === 'base' ? base : pr) }) })
+  const capture = createDataCapture({ inspector: { open: ({ paneRef }) => open(paneRef.role) }, rules: validateRules({}) })
+  const signal = new AbortController().signal
+  for (const role of ['base', 'pr']) await capture.seeded({ paneRef: { role }, db: null, databases: [], signal })
+  await capture.ready({ signal })
+  const pad = Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`a${String(i).padStart(3, '0')}`, { key: ['id'], rows: [] }]))
+  pr = { ...pad, users: { key: ['id'], rows: people(20).map((r, i) => (i < 3 ? { ...r, email: `x${i}@example.com` } : r)) } }
+  await capture.snapshot()
+  for (const view of ['divergence', 'pr']) {
+    const nodes = dataNodes(capture.view({ isolation: { verdict: 'isolated' } }), { span: 'session', view, open: null })
+    const rows = nodes.find(n => n.cls === 'dataTable').children.slice(1).map(r => plain(r.children[0].text))
+    assert.equal(rows[0], 'users', view)
+  }
+  await capture.close()
+  // the PR's migration makes 300 tables; the session deletes a row of each,
+  // and 15 of 20 users
+  const users = n => ({ key: ['id'], rows: Array.from({ length: n }, (_, i) => ({ id: i + 1 })) })
+  const own = rows => Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`a${String(i).padStart(3, '0')}`, users(rows)]))
+  const base2 = { users: users(20) }
+  let pr2 = base2
+  const cap2 = createDataCapture({ inspector: { open: ({ paneRef }) => ({ snapshot: () => ({ collections: structuredClone(paneRef.role === 'base' ? base2 : pr2) }) }) }, rules: validateRules({}) })
+  for (const role of ['base', 'pr']) await cap2.seeded({ paneRef: { role }, db: null, databases: [], signal })
+  pr2 = { ...own(2), users: users(20) }
+  await cap2.ready({ signal })
+  pr2 = { ...own(1), users: users(5) }
+  await cap2.snapshot()
+  const data = cap2.view({ isolation: { verdict: 'isolated' } })
+  for (const view of ['divergence', 'pr']) {
+    const nodes = dataNodes(data, { span: 'session', view, open: null })
+    const rows = nodes.find(n => n.cls === 'dataTable').children.slice(1).map(r => plain(r.children[0].text))
+    assert.equal(rows[0], 'users', view)
+  }
+  // its flag opens it, by name
+  const flagged = dataNodes(data, { span: 'session', view: 'pr', open: null }).find(n => n.cls === 'flags').children[0]
+  assert.equal(flagged.act, 'open:users')
+  assert.ok(textsOf(dataNodes(data, { span: 'session', view: 'pr', open: 'users' })).includes('Deleted'))
+  await cap2.close()
+})
+
+// The ranks past red: rows moved, then amber, then any other change
+// (unknown included), then the rest.
+test('past red flags, tables rank by rows moved, an amber flag, any other change, then the rest', () => {
+  const pane = DIFF({
+    a_same: counted(coll({ status: 'same' })),
+    b_unknown: counted(coll({ status: 'unknown', truncated: true })),
+    c_amber: counted(coll({ status: 'same' })),
+    d_moved: counted(coll({ deleted: [{ key: '[1]', row: { id: 1 } }] })),
+    e_red: counted(coll({ status: 'same' })),
+  })
+  const flags = [{ collection: 'e_red', kind: 'delete', severity: 'red', shared: false, pr: 1, base: 0 }, { collection: 'c_amber', kind: 'cleared', severity: 'amber', shared: true, pr: 1, base: 1, field: 'f' }]
+  const nodes = dataNodes(sampleData({ session: { complete: true, base: pane, pr: pane, divergence: null, flags } }), { span: 'session', view: 'pr', open: null })
+  const rows = nodes.find(n => n.cls === 'dataTable').children.slice(1).map(r => plain(r.children[0].text))
+  assert.deepEqual(rows, ['e_red', 'd_moved', 'c_amber', 'b_unknown', 'a_same'])
+  // a dropped field, or a lost key, is rows moved too
+  const schema = DIFF({
+    a_amber: counted(coll({ status: 'same' })),
+    b_field: { ...coll({ fieldsDropped: ['x'] }), counts: { inserted: 0, updated: 0, deleted: 0, fieldsDropped: 1, fieldsAdded: 0 } },
+    c_key: { ...counted(coll()), keyLost: true },
+  })
+  const amberOnly = [{ collection: 'a_amber', kind: 'cleared', severity: 'amber', shared: true, pr: 1, base: 1, field: 'f' }]
+  const s2 = dataNodes(sampleData({ session: { complete: true, base: schema, pr: schema, divergence: null, flags: amberOnly } }), { span: 'session', view: 'pr', open: null })
+  assert.deepEqual(s2.find(n => n.cls === 'dataTable').children.slice(1).map(r => plain(r.children[0].text)), ['b_field', 'c_key', 'a_amber'])
+  // in the divergence, counts that moved with no change by key rank as moved
+  const zero = { inserted: 0, updated: 0, deleted: 0 }
+  const div = DIFF({
+    a_amber: { status: 'same', truncated: false, counts: { base: zero, pr: zero }, changes: [], changesCount: 0 },
+    b_counts: { status: 'differs', truncated: true, counts: { base: zero, pr: { inserted: 0, updated: 0, deleted: 2 } }, changes: [], changesCount: 0 },
+  })
+  const s3 = dataNodes(sampleData({ session: { complete: true, base: pane, pr: pane, divergence: div, flags: amberOnly } }), { span: 'session', view: 'divergence', open: null })
+  assert.deepEqual(s3.find(n => n.cls === 'dataTable').children.slice(1).map(r => plain(r.children[0].text)), ['b_counts', 'a_amber'])
+})
+
+test('the open table is kept by name across answers, shown wherever it ranks; one this view doesn\'t list says so', () => {
+  const names = Array.from({ length: 400 }, (_, i) => `c${String(i).padStart(3, '0')}`)
+  const pane = DIFF(Object.fromEntries(names.map(n => [n, counted(coll())])))
+  const data = sampleData({ session: { complete: true, base: pane, pr: pane, divergence: null, flags: [] } })
+  // c399 isn't among the 300 drawn, but opens
+  const texts = textsOf(dataNodes(data, { span: 'session', view: 'pr', open: 'c399' }))
+  assert.ok(texts.includes('c399'))
+  assert.ok(texts.includes('and 100 more collections'))
+  // a name the view doesn't list
+  assert.ok(textsOf(dataNodes(data, { span: 'session', view: 'pr', open: 'gone' })).includes('gone isn\'t listed in this view.'))
+  // a name like an Object member opens nothing
+  assert.ok(textsOf(dataNodes(data, { span: 'session', view: 'pr', open: 'constructor' })).includes('constructor isn\'t listed in this view.'))
+})
+
+test('a list or a collection the answer\'s size cut says so; a folded flag counts as its collections in "and N more flags"', () => {
+  const pane = { ...DIFF({ users: { ...counted(coll()), cut: true } }), cut: true, collectionsCount: 50 }
+  const texts = textsOf(dataNodes(sampleData({ session: { complete: true, base: pane, pr: pane, divergence: null, flags: [] } }), { span: 'session', view: 'pr', open: 'users' }))
+  assert.ok(texts.includes('Cut short: the answer\'s size limit stopped this list, so some collections aren\'t listed.'), texts.join('\n'))
+  assert.ok(texts.includes('Cut short: the answer\'s size limit stopped its lists.'))
+  assert.ok(texts.includes('and 49 more collections'), 'the "more" line when fewer than 300 are listed')
+  // 20 named unverified flags, one folded for 10 more, and 2 more past them
+  const flags = [
+    ...Array.from({ length: 20 }, (_, i) => ({ collection: `t${i}`, kind: 'unverified', severity: 'red', shared: false, pr: 1, base: 0 })),
+    { collection: null, kind: 'unverified', severity: 'red', shared: false, pr: 10, base: 0, collections: 10, names: [`n${HOSTILE}`], folded: true },
+  ]
+  const f = dataNodes(sampleData({ session: { complete: true, base: pane, pr: pane, divergence: null, flags, flagsCount: { red: 32, amber: 0 } } }), { span: 'session', view: 'pr', open: null })
+  const ft = textsOf(f)
+  assert.ok(ft.includes('and 2 more flags'), ft.filter(t => /more flags/.test(t)).join('\n'))
+  // the folded flag's names are set apart
+  assert.ok(rawTextsOf(f).some(t => t.includes(`\u2068n${HOSTILE}\u2069`)))
+})
+
+// The review's low: two states with a late PR baseline still said
+// "Neither pane could be read", and the header "baseline —".
+test('a late PR baseline says so whatever the reason, keyed on baselines.pr: both ready reads failed, or the base\'s now read failed', () => {
+  const t = Date.UTC(2026, 9, 22, 12, 0, 0)
+  const neither = [{ collection: null, kind: 'unreadable', severity: 'red', shared: false, pr: 1, base: 0, reason: 'neither' }]
+  // both ready reads failed, then a good Snapshot now: one shared time
+  const both = sampleData({ baselineAt: null, baselines: { base: t, pr: t }, comparedAt: t, errors: NO_ERRORS, session: { complete: false, aligned: true, base: null, pr: null, divergence: null, flags: neither, flagsCount: { red: 1, amber: 0 } } })
+  const a = textsOf(dataNodes(both, { span: 'session', view: 'divergence', open: null }))
+  assert.ok(a.includes('The PR pane\'s baseline is this snapshot: take another to see its changes.'), a.join('\n'))
+  assert.equal(a.some(t => t.startsWith('Neither pane could be read')), false)
+  assert.ok(a.some(t => /^baseline \d\d:\d\d:\d\d · compared /.test(t)), a.join('\n'))
+  // the base's now read failed, the PR's became its baseline
+  const half = sampleData({ baselines: { base: 1, pr: t }, comparedAt: t, errors: { boot: { base: null, pr: null }, session: { base: 'busy', pr: null } }, session: { complete: false, aligned: false, base: null, pr: null, divergence: null, flags: neither, flagsCount: { red: 1, amber: 0 } } })
+  const b = textsOf(dataNodes(half, { span: 'session', view: 'divergence', open: null }))
+  assert.ok(b.includes('The PR pane\'s baseline is this snapshot: take another to see its changes.'), b.join('\n'))
+  // with no span at all
+  assert.ok(textsOf(dataNodes({ ...both, session: null }, { span: 'session', view: 'divergence', open: null })).includes('The PR pane\'s baseline is this snapshot: take another to see its changes.'))
+  // a PR read that failed is no late baseline
+  const failed = { ...both, errors: { boot: NO_ERRORS.boot, session: { base: null, pr: 'busy' } } }
+  assert.ok(textsOf(dataNodes(failed, { span: 'session', view: 'divergence', open: null })).includes('Neither pane could be read for this span, so the PR pane\'s changes are unknown.'))
+})
+
+test('nits: plural panes, an unreadable reason named like an Object member, the neither line in red, and a divergence entry a snapshot left out', () => {
+  const none = sampleData()
+  none.session = { ...none.session, complete: false, base: null, pr: null, divergence: null }
+  assert.ok(textsOf(dataNodes(none, { span: 'session', view: 'divergence', open: null })).includes('No divergence: it needs both panes\' data, and the BASE and PR panes have none for this span.'))
+  assert.equal(plain(flagText({ collection: null, kind: 'unreadable', reason: 'constructor' })), 'The PR pane couldn\'t be read for this span, so its changes are unknown.')
+  const bare = dataNodes({ ...sampleData(), session: null, comparedAt: 2 }, { span: 'session', view: 'divergence', open: null })
+  assert.equal(bare.find(n => n.cls === 'flags').children[0].cls, 'flag red')
+  // a collection a pane's snapshot left out: its divergence entry says so
+  const left = counted(coll({ status: 'unknown', omitted: 'after', truncated: true, countAfter: null }))
+  const div = DIFF({ users: { status: 'unknown', truncated: true, counts: { base: { inserted: 0, updated: 0, deleted: 0 }, pr: { inserted: 0, updated: 0, deleted: 0 } }, changes: [], changesCount: 0 } })
+  const d = textsOf(dataNodes(sampleData({ session: { complete: true, base: DIFF({ users: counted(coll({ status: 'same' })) }), pr: DIFF({ users: left }), divergence: div, flags: [] } }), { span: 'session', view: 'divergence', open: null }))
+  assert.ok(d.includes('unknown (left out of a snapshot)'), d.join('\n'))
+  // a column-dropped flag names its count, its seeded ones and the first few
+  assert.equal(plain(flagText({ collection: 'users', kind: 'column-dropped', severity: 'red', shared: false, pr: 6, base: 0, count: 6, seeded: 1, fields: ['email', 'aa_tmp_0000', 'aa_tmp_0001', 'aa_tmp_0002', 'aa_tmp_0003'] })), 'users: column dropped (6, 1 seeded: email, aa_tmp_0000, aa_tmp_0001, aa_tmp_0002, aa_tmp_0003, …), PR 6, base 0')
 })

@@ -116,10 +116,13 @@ function clockTime(at) {
   return Number.isNaN(d.getTime()) ? '—' : d.toTimeString().slice(0, 8)
 }
 // When the baseline was taken: one time, or each pane's when they differ.
+// The panes' baseline times: one when they share it (from the ready read,
+// or a snapshot both took as their baseline), else each pane's.
 function baselineText(data) {
   const b = data.baselines
   if (b && b.base && b.pr && b.base !== b.pr) return `baselines BASE ${clockTime(b.base)}, PR ${clockTime(b.pr)}`
-  return `baseline ${data.baselineAt ? clockTime(data.baselineAt) : '—'}`
+  const shared = b && b.base && b.pr ? b.base : data.baselineAt
+  return `baseline ${shared ? clockTime(shared) : '—'}`
 }
 
 // The digests the data checks keep inside text (a value under a
@@ -194,9 +197,11 @@ const UNREADABLE = {
 }
 const namesText = f => (Array.isArray(f.names) && f.names.length ? `, such as ${f.names.map(isolated).join(', ')}` : '')
 
+const unreadableText = reason => (typeof reason === 'string' && Object.hasOwn(UNREADABLE, reason) ? UNREADABLE[reason] : UNREADABLE.failed)
+
 function flagText(f) {
-  if (f.kind === 'unreadable') return UNREADABLE[f.reason] || UNREADABLE.failed
-  if (f.kind === 'unlisted') return 'This span\'s details were too big to list: only its counts and first red flags are shown.'
+  if (f.kind === 'unreadable') return unreadableText(f.reason)
+  if (f.kind === 'unlisted') return 'This span\'s details were too big to list: only its first red flags are shown, with how many flags it has in all.'
   // one flag for many collections: those only the PR pane has, or those
   // past the ones listed one by one
   if (f.collection === null && f.kind === 'unverified') {
@@ -206,7 +211,13 @@ function flagText(f) {
       : `${n} collections only the PR pane has: ${label(KIND_LABELS, f.kind)}${namesText(f)}`
   }
   const field = f.field === undefined ? '' : ` (${isolated(f.field)})`
-  return `${isolated(f.collection)}: ${label(KIND_LABELS, f.kind)}${field}, PR ${f.pr}, base ${f.base}${f.shared ? ', the base\'s too' : ''}`
+  // a collection's dropped columns, one flag: how many, how many of them
+  // the base pane has too (seeded, named first), and the first few
+  const seeded = Number.isSafeInteger(f.seeded) && f.seeded > 0 ? `, ${f.seeded} seeded` : ''
+  const columns = f.kind === 'column-dropped' && Number.isSafeInteger(f.count)
+    ? ` (${f.count}${seeded}${Array.isArray(f.fields) && f.fields.length ? `: ${f.fields.map(isolated).join(', ')}${f.count > f.fields.length ? ', …' : ''}` : ''})`
+    : ''
+  return `${isolated(f.collection)}: ${label(KIND_LABELS, f.kind)}${field}${columns}, PR ${f.pr}, base ${f.base}${f.shared ? ', the base\'s too' : ''}`
 }
 
 // The Data button's badge: the red flags, both spans, those the answer
@@ -228,17 +239,50 @@ const flagTotal = span => (span.flagsCount && Number.isSafeInteger(span.flagsCou
   ? span.flagsCount.red + span.flagsCount.amber
   : span.flags.length)
 
-// The collections a span's view lists: those with a red flag first, then
-// any that changed or are unknown, then the rest, each in name order. So
-// padding a PR names to sort first can't push a changed one out of those
-// drawn.
+// The collections a span's view lists, as the data answer ranks them:
+// those with a red flag first, in the order of their first red flag in the
+// engine's order (so the base pane's collections, and what lost data, come
+// before the PR's own and its padding); then those whose rows moved; then
+// those with an amber flag; then any other change; then the rest; each in
+// name order. So padding a PR adds, flagged or not, can't push a changed
+// one out of those drawn.
+const num = v => (Number.isSafeInteger(v) && v > 0 ? v : 0)
+const moved = (c, view) => {
+  if (!c || typeof c !== 'object') return false
+  if (view === 'divergence') {
+    const changes = Number.isSafeInteger(c.changesCount) ? c.changesCount : Array.isArray(c.changes) ? c.changes.length : 0
+    const counts = c.counts || {}
+    return changes > 0 || [counts.base, counts.pr].some(n => n && num(n.inserted) + num(n.updated) + num(n.deleted) > 0)
+  }
+  const n = c.counts || {}
+  return num(n.inserted) + num(n.updated) + num(n.deleted) + num(n.fieldsDropped) + num(n.fieldsAdded) > 0 || c.keyLost === true
+}
 function spanCollections(span, view) {
   const d = view === 'divergence' ? span.divergence : span[view]
   const collections = d && d.collections ? d.collections : {}
-  const red = new Set((span.flags || []).filter(f => f.severity === 'red' && f.collection !== null).map(f => f.collection))
-  const rank = name => (red.has(name) ? 0 : collections[name] && collections[name].status !== 'same' ? 1 : 2)
-  return Object.keys(collections).sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0))
+  const firstRed = new Map()
+  const amber = new Set()
+  ;(span.flags || []).forEach((f, i) => {
+    if (!f || typeof f.collection !== 'string') return
+    if (f.severity === 'red') { if (!firstRed.has(f.collection)) firstRed.set(f.collection, i) } else amber.add(f.collection)
+  })
+  const rank = name => {
+    if (firstRed.has(name)) return [0, firstRed.get(name)]
+    const c = collections[name]
+    return [moved(c, view) ? 1 : amber.has(name) ? 2 : c && c.status !== 'same' ? 3 : 4, 0]
+  }
+  const ranked = Object.keys(collections).map(name => [rank(name), name])
+  ranked.sort(([x, a], [y, b]) => x[0] - y[0] || x[1] - y[1] || (a < b ? -1 : a > b ? 1 : 0))
+  return ranked.map(([, name]) => name)
 }
+// A diff's or divergence's collections, as an own property only.
+const listedIn = (span, view, name) => {
+  const d = view === 'divergence' ? span.divergence : span[view]
+  return Boolean(d && d.collections && typeof name === 'string' && Object.hasOwn(d.collections, name))
+}
+// Whether a pane's snapshot may have left a collection out: the divergence
+// entry doesn't say, its panes' diffs do.
+const omittedIn = (span, name) => ['base', 'pr'].some(pane => listedIn(span, pane, name) && Boolean(span[pane].collections[name].omitted))
 // How many collections a span's view has in all: its own count, or those
 // it lists.
 function collectionsTotal(span, view) {
@@ -268,7 +312,8 @@ function errorNodes(data, spanName) {
 }
 
 // The Data panel. ui: { span: 'session'|'boot', view: 'divergence'|'base'|'pr',
-// open: the index of the collection shown in full, or null }. data: the last
+// open: the name of the collection shown in full, or null }: by name, so
+// the next answer keeps it open wherever it now ranks. data: the last
 // answer of GET /api/data, or null before one came (failed: the read failed).
 function dataNodes(data, ui, failed = false) {
   if (!data) return [node('p', 'stepSub', failed ? 'The data checks couldn\'t be read yet.' : 'Reading the data checks…')]
@@ -293,24 +338,27 @@ function dataNodes(data, ui, failed = false) {
   }))
   out.push(...errorNodes(data, ui.span))
   const span = data[ui.span]
+  // the session span's PR baseline is the latest snapshot itself, which
+  // read the PR pane: whatever the flag's reason says, its changes are
+  // unknown only because there is nothing yet to compare it with
+  const errs = data.errors && data.errors.session
+  const lateBaseline = ui.span === 'session' && Boolean(data.comparedAt) && Boolean(data.baselines && data.baselines.pr === data.comparedAt) && !(errs && errs.pr)
   if (!span) {
     // before any snapshot; after one, a span with nothing at all is unknown
     if (ui.span === 'session' && data.comparedAt) {
-      out.push(node('ul', 'flags', undefined, { children: [node('li', 'flag red', UNREADABLE.neither)] }))
+      out.push(node('ul', 'flags', undefined, { children: [node('li', 'flag red', lateBaseline ? UNREADABLE.baseline : UNREADABLE.neither)] }))
       return out
     }
     out.push(node('p', 'stepSub', ui.span === 'session' ? 'Nothing to compare yet: take a snapshot with Snapshot now.' : 'No boot span yet: the panes\' ready snapshots haven\'t been taken.'))
     return out
   }
   const flagsOf = span.flags || []
-  const reason = (flagsOf.find(f => f.kind === 'unreadable') || {}).reason
+  const reason = lateBaseline ? 'baseline' : (flagsOf.find(f => f.kind === 'unreadable') || {}).reason
   // why a span is incomplete, per pane: a base pane missing excuses
   // nothing; a PR pane missing leaves its changes unknown; windows that
-  // differ excuse nothing; an answer too big lists nothing
+  // differ excuse nothing. An answer too big to list says so in its flag.
   const missing = ['base', 'pr'].filter(pane => !span[pane])
-  if (span.unlisted) {
-    out.push(node('p', 'dataErr', 'This span\'s details were too big to list: its counts and first red flags are below, and nothing else.'))
-  } else {
+  if (!span.unlisted) {
     if (!span.base) out.push(node('p', 'dataErr', 'Incomplete: the BASE pane has no data for this span, so nothing it did can excuse a change.'))
     if (!span.pr) {
       out.push(node('p', 'dataErr', reason === 'baseline'
@@ -325,15 +373,19 @@ function dataNodes(data, ui, failed = false) {
   const flags = [...flagsOf].sort((a, b) => (a.severity === 'red' ? 0 : 1) - (b.severity === 'red' ? 0 : 1))
   const total = Math.max(flagTotal({ ...span, flags }), flags.length)
   if (total || !span.pr) {
-    const items = flags.slice(0, SHOWN_FLAGS).map(f => node('li', `flag ${f.severity === 'red' ? 'red' : 'amber'}`, flagText(f)))
-    if (!span.pr && !span.unlisted && !flags.some(f => f.kind === 'unreadable')) items.unshift(node('li', 'flag red', flagText({ kind: 'unreadable' })))
-    const shownFlags = items.length
-    if (total > shownFlags) items.push(node('li', 'stepSub', `and ${total - shownFlags} more flags`))
+    const shownList = flags.slice(0, SHOWN_FLAGS)
+    // a flag on a collection opens it, by name
+    const items = shownList.map(f => node('li', `flag ${f.severity === 'red' ? 'red' : 'amber'}`, f.kind === 'unreadable' ? unreadableText(reason) : flagText(f),
+      typeof f.collection === 'string' ? { act: `open:${f.collection}` } : undefined))
+    if (!span.pr && !span.unlisted && !flags.some(f => f.kind === 'unreadable')) items.unshift(node('li', 'flag red', unreadableText(reason)))
+    // a folded flag stands for as many flags as it has collections
+    const covered = shownList.reduce((n, f) => n + (f.folded && num(f.collections) > 0 ? num(f.collections) : 1), 0)
+    if (total > covered) items.push(node('li', 'stepSub', `and ${total - covered} more flags`))
     out.push(node('ul', 'flags', undefined, { children: items }))
   } else out.push(node('p', 'stepSub', 'No destructive change.'))
   if (span.unlisted) return out
   if (ui.view === 'divergence' && !span.divergence) {
-    out.push(node('p', 'stepSub', `No divergence: it needs both panes' data, and the ${missing.map(paneName).join(' and ')} pane has none for this span.`))
+    out.push(node('p', 'stepSub', `No divergence: it needs both panes' data, and the ${missing.map(paneName).join(' and ')} ${missing.length > 1 ? 'panes have' : 'pane has'} none for this span.`))
     return out
   }
   const pane = ui.view === 'divergence' ? null : span[ui.view]
@@ -345,7 +397,7 @@ function dataNodes(data, ui, failed = false) {
   const rowsOf = name => {
     if (ui.view === 'divergence') {
       const c = span.divergence.collections[name]
-      return [isolated(name), deltaText(c.counts.base), deltaText(c.counts.pr), statusText(c)]
+      return [isolated(name), deltaText(c.counts.base), deltaText(c.counts.pr), omittedIn(span, name) ? statusText({ omitted: true }) : statusText(c)]
     }
     const c = pane.collections[name]
     const counts = c.counts || { inserted: c.inserted.length, updated: c.updated.length, deleted: c.deleted.length }
@@ -356,14 +408,22 @@ function dataNodes(data, ui, failed = false) {
   out.push(node('table', 'dataTable', undefined, {
     children: [
       node('tr', undefined, undefined, { children: head.map(h => node('th', undefined, h)) }),
-      ...shown.map((name, i) => node('tr', ui.open === i ? 'on' : undefined, undefined, {
-        act: `open:${i}`, children: rowsOf(name).map(text => node('td', undefined, text)),
+      ...shown.map(name => node('tr', ui.open === name ? 'on' : undefined, undefined, {
+        act: `open:${name}`, children: rowsOf(name).map(text => node('td', undefined, text)),
       })),
     ],
   }))
   const all = collectionsTotal(span, ui.view)
   if (all > shown.length) out.push(node('p', 'stepSub', `and ${all - shown.length} more collections`))
-  if (ui.open !== null && ui.open !== undefined && shown[ui.open] !== undefined) out.push(...collectionNodes(span, ui.view, shown[ui.open]))
+  // a list the answer's size cut short says so
+  const listing = ui.view === 'divergence' ? span.divergence : pane
+  if (listing && listing.cut === true) out.push(node('p', 'dataErr', 'Cut short: the answer\'s size limit stopped this list, so some collections aren\'t listed.'))
+  // the collection opened, by name: shown wherever it ranks now, if this
+  // view lists it
+  if (typeof ui.open === 'string') {
+    if (listedIn(span, ui.view, ui.open)) out.push(...collectionNodes(span, ui.view, ui.open))
+    else out.push(node('p', 'stepSub', `${isolated(ui.open)} isn't listed in this view.`))
+  }
   return out
 }
 
@@ -398,6 +458,7 @@ function collectionNodes(span, view, name) {
     out.push(node('p', 'stepSub', `${title}: ${fields.map(isolated).join(', ')}${more > 0 ? `, and ${more} more` : ''}`))
   }
   if (c.truncated) out.push(node('p', 'stepSub', 'Truncated: only its count is compared.'))
+  if (c.cut === true) out.push(node('p', 'dataErr', 'Cut short: the answer\'s size limit stopped its lists.'))
   return out
 }
 
@@ -1091,9 +1152,11 @@ function inviteFromHash(hash) {
     const el = e.target.closest('[data-act]'); if (!el) return
     const act = el.dataset.act
     if (act === 'snapshot' || act === 'rebaseline') return takeSnapshot(act === 'rebaseline')
-    const [group, value] = act.split(':')
+    const at = act.indexOf(':')
+    const group = act.slice(0, at)
+    const value = act.slice(at + 1)
     if (group === 'span' || group === 'view') { D.ui[group] = value; D.ui.open = null }
-    else if (group === 'open') D.ui.open = D.ui.open === +value ? null : +value
+    else if (group === 'open') D.ui.open = D.ui.open === value ? null : value
     drawData()
   })
 
