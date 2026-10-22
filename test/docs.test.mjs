@@ -238,20 +238,27 @@ test('the README\'s sandbox-exec profile shuts the ports it names, over IPv4, IP
   const ports = {}
   for (const name of [...names, 'OTHER']) ports[name] = await both()
   const tries = [...names, 'OTHER'].flatMap(name => ['127.0.0.1', '::1', 'localhost'].map(host => [`${name} over ${host}`, host, ports[name]]))
+  // Each try's outcome, and for one that connected, the address it reached,
+  // with what localhost resolves to: CI's macOS 14 once connected over
+  // localhost to a named port, so a failure says where
   const client = `
     const net = require('net')
     const tries = JSON.parse(process.argv[1])
     const out = {}
-    let left = tries.length
-    const done = () => { if (--left === 0) console.log(JSON.stringify(out)) }
+    const via = {}
+    let left = tries.length + 1
+    let localhost = null
+    const done = () => { if (--left === 0) console.log(JSON.stringify({ out, via, localhost })) }
+    require('dns').lookup('localhost', { all: true }, (err, list) => { localhost = err ? err.code : list.map(a => a.address); done() })
     for (const [name, host, port] of tries) {
-      const socket = net.connect({ host, port }, () => { out[name] = 'connected'; socket.destroy(); done() })
-      socket.on('error', err => { out[name] = err.code; done() })
+      const socket = net.connect({ host, port }, () => { out[name] = 'connected'; via[name] = socket.remoteAddress; socket.destroy(); done() })
+      socket.on('error', err => { out[name] = err.code ?? String(err); done() })
     }`
   const flags = names.flatMap(name => ['-D', `${name}=${ports[name]}`])
   const got = await runSandbox([...flags, '-f', file, process.execPath, '-e', client, JSON.stringify(tries)])
   assert.equal(got.code, 0, got.stderr)
-  assert.deepEqual(JSON.parse(got.stdout), Object.fromEntries(tries.map(([name]) => [name, name.startsWith('OTHER') ? 'connected' : 'EPERM'])))
+  const { out, via, localhost } = JSON.parse(got.stdout)
+  assert.deepEqual(out, Object.fromEntries(tries.map(([name]) => [name, name.startsWith('OTHER') ? 'connected' : 'EPERM'])), JSON.stringify({ via, localhost }))
   // a parameter left out: the profile doesn't load, and nothing runs
   const missing = await runSandbox([...flags.slice(0, -2), '-f', file, '/usr/bin/true'])
   assert.equal(missing.code, 65, missing.stderr)
