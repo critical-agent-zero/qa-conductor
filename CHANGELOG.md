@@ -78,9 +78,11 @@ What changed in each release, newest first. A 0.x minor version may break the in
   - **Checked on a real runtime:** CI's `docker-integration` job boots both panes on the topology against Docker Engine and Podman, and checks the verdict, what the PR pane can't reach, DNS, the proxy, a fallback under `QA_REQUIRE_ISOLATION=1`, and that nothing is left after. Docker Desktop and Podman machine are checked by hand (#43).
   - **The verdict:** the check's result says `internal: true` once the topology is up: the network reads back internal, and the forwarder runs and says it is ready. Then the probe decides, through the forwarder's proxy too, which must answer for every address it tries, in place of the macOS floor and the Docker Desktop and Podman reasons.
   - **If it can't be set up,** the PR pane runs as it would without `internal`, and its egress isn't restricted. That is logged, the floors apply, and the verdict is never better than `unknown`, saying why, so `QA_REQUIRE_ISOLATION=1` refuses. An undo that can't remove the internal network fails the boot.
-  - **Triage** adds the forwarder's log tail to the PR app's.
+  - **Triage** adds the forwarder's log tail to the PR app's. The forwarder writes every line to stdout, its refusals included, so the tail shows them.
+  - **Under the podman-docker shim,** whose `docker context inspect` is Podman's, the daemon's endpoint is Podman's own connection, and a network's gateways are read in Podman's own format, so the probe can decide there too.
+  - **The forwarder bounds a plain-HTTP answer's PR side too:** an answer the host has finished, but the PR stopped reading, is closed once nothing moves.
 - **New in the seams:** a Provisioner's optional `internal: true`, and a check's result's `internal`. The macOS floor waits for such a Provisioner's check, and is left out only when its result says `internal: true`. `floors` takes `internal`.
-- **New in `createDocker`:** `createNetwork(name, { internal })`, `networkInternal(name)`, `containerRunning(name)`, `runForwarder(name, image, network, { hostPort, config, source })` and `connectNetwork(network, container, { alias })`. `runApp` publishes nothing when `hostPort` is `null`. `runPg`, `runMigrate`, `runApp` and `runProbe` take `dns`.
+- **New in `createDocker`:** an `env` option, and `endpoint({ podman })`. `createNetwork(name, { internal })`, `networkInternal(name)`, `containerRunning(name)`, `runForwarder(name, image, network, { hostPort, config, source })` and `connectNetwork(network, container, { alias })`. `runApp` publishes nothing when `hostPort` is `null`. `runPg`, `runMigrate`, `runApp` and `runProbe` take `dns`.
 - **New in `createDockerProvisioner`:** `forwarderReadyMs` and `log`.
 - **Nothing changes without `internal`.**
 

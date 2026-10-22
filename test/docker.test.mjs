@@ -528,6 +528,54 @@ test('runtime keeps what docker version said when docker info fails, and fails o
   await assert.rejects(createDocker({ execFileFn: recordingExec([down]) }).runtime(), e => e === down)
 })
 
+// Behind the podman-docker shim, `docker context inspect` is Podman's,
+// which has no Docker context: it prints nothing, or fails on the template.
+// The daemon's endpoint is then Podman's own connection.
+test('endpoint under the podman-docker shim: CONTAINER_HOST, the connection CONTAINER_CONNECTION names, the default one, else local', async () => {
+  const contextFails = dockerFailure('Error: template: inspect:1:12: executing "inspect" at <.Endpoints.docker.Host>: can\'t evaluate field Endpoints in type config.Connection\n')
+  const list = JSON.stringify([
+    { Name: 'machine', URI: 'ssh://core@127.0.0.1:50000/run/user/1000/podman/podman.sock', Identity: '/x', Default: true },
+    { Name: 'here', URI: 'unix:///run/podman/podman.sock', Identity: '', Default: false },
+  ])
+  const at = (answers, env = {}) => createDocker({ execFileFn: recordingExec(answers), env })
+  assert.equal(await at(['\n', '[]\n']).endpoint({ podman: true }), 'local')
+  assert.equal(await at([contextFails, 'null\n']).endpoint({ podman: true }), 'local')
+  assert.equal(await at(['', '']).endpoint({ podman: true }), 'local')
+  assert.equal(await at(['', list]).endpoint({ podman: true }), 'ssh://core@127.0.0.1:50000/run/user/1000/podman/podman.sock')
+  assert.equal(await at(['', list], { CONTAINER_CONNECTION: 'here' }).endpoint({ podman: true }), 'unix:///run/podman/podman.sock')
+  await assert.rejects(at(['', list], { CONTAINER_CONNECTION: 'gone' }).endpoint({ podman: true }), /CONTAINER_CONNECTION names "gone", which podman doesn't list/)
+  assert.equal(await at([''], { CONTAINER_HOST: 'tcp://10.0.0.5:8888' }).endpoint({ podman: true }), 'tcp://10.0.0.5:8888')
+  await assert.rejects(at(['', '{"Name":"x"}']).endpoint({ podman: true }), /gave no list/)
+  // the docker CLI against Podman's socket has a context, and that is it
+  assert.equal(await at(['unix:///run/podman/podman.sock\n'], { CONTAINER_HOST: 'ssh://elsewhere' }).endpoint({ podman: true }), 'unix:///run/podman/podman.sock')
+  // Docker's own CLI: a failure is still one, and nothing is asked of Podman
+  await assert.rejects(at([contextFails]).endpoint(), e => e === contextFails)
+  const exec = recordingExec(['', '[]'])
+  await createDocker({ execFileFn: exec, env: {} }).endpoint({ podman: true })
+  assert.deepEqual(exec.calls, [
+    ['docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'],
+    ['docker', 'system', 'connection', 'list', '--format', 'json'],
+  ])
+})
+
+// Podman's own CLI (behind the podman-docker shim) has no .IPAM in its
+// network inspect: its gateways are under .Subnets.
+test('networkGateways reads Podman\'s own format when Docker\'s has no .IPAM, and any other failure is one', async () => {
+  const noIpam = dockerFailure('Error: template: inspect:1:8: executing "inspect" at <.IPAM.Config>: can\'t evaluate field IPAM in type *types.Network\n')
+  const exec = recordingExec([noIpam, '10.89.0.1 fd00:89::1 \n'])
+  assert.deepEqual(await createDocker({ execFileFn: exec }).networkGateways('qa-session-pr'), ['10.89.0.1', 'fd00:89::1'])
+  assert.deepEqual(exec.calls, [
+    ['docker', 'network', 'inspect', '--format', '{{range .IPAM.Config}}{{.Gateway}} {{end}}', 'qa-session-pr'],
+    ['docker', 'network', 'inspect', '--format', '{{range .Subnets}}{{.Gateway}} {{end}}', 'qa-session-pr'],
+  ])
+  const gone = dockerFailure('Error: No such network: qa-session-pr\n')
+  const once = recordingExec([gone, '10.89.0.1 \n'])
+  await assert.rejects(createDocker({ execFileFn: once }).networkGateways('qa-session-pr'), e => e === gone)
+  assert.equal(once.calls.length, 1)
+  const both = dockerFailure('Error: network not found\n')
+  await assert.rejects(createDocker({ execFileFn: recordingExec([noIpam, both]) }).networkGateways('qa-session-pr'), e => e === both)
+})
+
 // A wedged daemon must not hold the boot at the probe for ever. The docker
 // CLI passes SIGTERM on to the container, whose bash, as PID 1, ignores it:
 // so SIGKILL. And a teardown's abort stops it too.
