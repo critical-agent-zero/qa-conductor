@@ -549,7 +549,17 @@ The provisioner also has `networks`, `{ base, pr }` (frozen): the two network na
 
 #### The PR pane on an internal network
 
-With `internal`, the PR pane gets no route off its own network. So on Docker Desktop and Podman machine too it can reach neither the host's loopback, where the base app is published, nor the base pane, and the probe can find it `isolated`. It is off by default: it pulls a Node image and runs one more container, and what it does on each runtime can only be checked by hand (below).
+With `internal`, the PR pane gets no route off its own network. So on Docker Desktop and Podman machine too it should reach neither the host's loopback, where the base app is published, nor the base pane, and the probe can find it `isolated`. It is off by default: it pulls a Node image and runs one more container.
+
+**Where it is checked:**
+- **Linux, in CI:** on every pull request, CI's `docker-integration` job runs [`test/integration/docker-internal.test.mjs`](test/integration/docker-internal.test.mjs) against Docker Engine, and against Podman through its Docker-compatible socket. It boots both panes on the topology, and checks:
+  - the probe's `isolated`;
+  - that the PR pane reaches neither the host, the base pane's database nor `169.254.169.254`;
+  - its DNS;
+  - the proxy's refusals;
+  - a fallback refused under `QA_REQUIRE_ISOLATION=1`;
+  - that teardown and sweep leave nothing.
+- **Docker Desktop and Podman machine:** not yet checked on a real runtime. There, each session's probe still decides the verdict, and the check by hand below is tracked in [#43](https://github.com/critical-labs/qa-conductor/issues/43).
 
 ```js
 const provisioner = createDockerProvisioner({
@@ -593,19 +603,27 @@ const provisioner = createDockerProvisioner({
 - **Cleanup:** the PR pane's `teardown` removes the forwarder and the edge network too, and the base pane's leaves them alone. `sweep` removes the forwarder with the other labelled containers, and the edge network only while `internal` is on: one an earlier run left before `internal` was turned off stays until `docker network rm qa-session-pr-edge`. An internal network left over is reused only when it is internal.
 - **Its limits:**
   - Only the PR pane is internal. The base pane runs as before.
+  - **The host's own address on the PR pane's network.** An internal network keeps the PR pane off the host's loopback and off other networks, but not off the host's address on its own bridge (its gateway; on Podman, `host.containers.internal` too). So a host service bound to `0.0.0.0`, or to that bridge's address, is reachable from the PR pane. CI found this on Docker Engine and on Podman, and checks it on both:
+    - **The probe reports it:** each session's probe finds a conductor reachable there and says `reachable`.
+    - **The defaults aren't reachable:** the conductor binds `127.0.0.1` by default (`QA_BIND_HOST`), and so do the panes' published ports. With those, the PR pane can't reach them, and the verdict is `isolated`.
+    - **Other host services:** keep them off `0.0.0.0` too, or behind a firewall that drops traffic from the bridge.
   - The forwarder listens on IPv4.
   - A private address can't be allowed, even for a listed host. An app that needs an internal service leaves `internal` off.
   - Only HTTP and HTTPS go out, through the proxy. An app reaches a host only if its HTTP client honours the proxy env: a Node.js that supports `NODE_USE_ENV_PROXY` does with it set, and most other clients read `HTTPS_PROXY`. Raw TCP to a database elsewhere, or SMTP, doesn't go out.
-  - **DNS.** Docker Engine before 23.0.11, 25.0.0 to 25.0.4, and 26.0.0-rc1 to rc3, with the host's resolver on its loopback (systemd-resolved, dnsmasq), resolves an internal network's outside names through the host, so PR code could carry data out in its queries (CVE-2024-29018). So on Docker the PR pane's containers run with `--dns 192.0.2.1`, the advisory's workaround: names on the network still resolve, through Docker's own DNS, and an outside one gets no answer. The forwarder resolves the hosts it lets through itself. Podman's DNS answers nothing outside an internal network, and a `--dns` would replace it, so there it gets none. A container you start on `qa-session-pr` yourself gets no `--dns`: upgrade an affected Engine anyway.
+  - **DNS.** Docker Engine before 23.0.11, 25.0.0 to 25.0.4, and 26.0.0-rc1 to rc3, with the host's resolver on its loopback (systemd-resolved, dnsmasq), resolves an internal network's outside names through the host, so PR code could carry data out in its queries (CVE-2024-29018). So the PR pane's containers run with `--dns 192.0.2.1`, the advisory's workaround: names on the network still resolve, and an outside one gets no answer. The forwarder resolves the hosts it lets through itself.
+    - **On Docker,** the network's names resolve through Docker's own DNS, beside the `--dns`.
+    - **On Podman,** its DNS also answers an internal network's outside names: CI found it on Podman 4.9. A `--dns` there replaces Podman's DNS, so the names the PR pane needs, `qa-pg-pr` and `qa-egress`, go in its containers' hosts files (`--add-host`).
+    - **A container you start on `qa-session-pr` yourself** gets neither. Upgrade an affected Engine anyway.
   - A runtime whose internal networks have no DNS can't resolve `qa-pg-pr` or `qa-egress` there, so the PR pane fails to boot.
-- **Check it by hand, once per runtime.** The tests run no real Docker. Boot a PR, then while it runs:
+- **Check it by hand** on a runtime CI doesn't run (Docker Desktop and Podman machine, tracked in [#43](https://github.com/critical-labs/qa-conductor/issues/43)). Boot a PR, then while it runs:
   1. The harness chip should say `isolated`.
-  2. From the PR pane's network, the host's loopback and the base pane's database must fail:
-     - `docker run --rm --network qa-session-pr curlimages/curl -sS -m 3 http://host.docker.internal:<harness port>/qa/` (on Podman, `host.containers.internal`);
-     - `docker run --rm --network qa-session-pr busybox nc -zw3 <an address of qa-pg-base> 5432`;
-     - an outside name, as the PR pane's containers resolve it: `docker run --rm --network qa-session-pr --dns 192.0.2.1 busybox nslookup example.com` (on Podman, without `--dns`);
-     - and as any container there resolves it: `docker run --rm --network qa-session-pr busybox nslookup example.com`. If this one answers, on Docker, the Engine has CVE-2024-29018 (DNS, under its limits above): the PR pane's own containers are covered by their `--dns`, but upgrade it.
-  3. Through the proxy, a host off the list gets `403`, and `docker logs qa-fwd-pr` says why: `docker run --rm --network qa-session-pr curlimages/curl -sS -m 5 -x http://qa-egress:3128 https://example.com`.
+  2. From the PR pane's network, the host's loopback and the base pane's database must fail. For a `curl` here, only a curl error passes: the `echo $?` after it must print `6` (no such name), `7` (no connect) or `28` (timed out). Any answer from the conductor, `421: unrecognised Host header` or `403: …` included, means the PR pane's network reached the host:
+     - `docker run --rm --network qa-session-pr curlimages/curl -sS -m 3 http://host.docker.internal:<harness port>/qa/; echo $?` (on Podman, `host.containers.internal`);
+     - by address too: `http://192.168.65.254:<harness port>/qa/` on Docker Desktop, `http://192.168.127.254:<harness port>/qa/` on Podman machine;
+     - `docker run --rm --network qa-session-pr busybox nc -zw3 <an address of qa-pg-base> 5432; echo $?`, which must print `1`;
+     - an outside name, as the PR pane's containers resolve it: `docker run --rm --network qa-session-pr --dns 192.0.2.1 busybox nslookup example.com`;
+     - and as any container there resolves it: `docker run --rm --network qa-session-pr busybox nslookup example.com`. If this one answers, the runtime's DNS forwards the internal network's names: on Docker, the Engine has CVE-2024-29018, and on Podman it is how its DNS works (DNS, under its limits above). The PR pane's own containers are covered by their `--dns`.
+  3. Through the proxy, a host off the list gets `403` (`curl: (56) CONNECT tunnel failed, response 403`), and `docker logs qa-fwd-pr` says why: `docker run --rm --network qa-session-pr curlimages/curl -sS -m 5 -x http://qa-egress:3128 https://example.com`.
   4. A host on the list goes through, the same way.
 
 
