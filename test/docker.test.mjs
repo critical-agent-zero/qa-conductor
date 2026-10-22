@@ -473,6 +473,7 @@ test('rmForce removes all names in one call, and tolerates only names already go
     dockerFailure(`${SHIM_BANNER}\nError: no container with name or ID "a" found: no such container\n`),
     dockerFailure(`${LOGRUS_PIPE}\nError: no container with name or ID "a" found: no such container\n`),
     dockerFailure(`${LOGRUS_TTY}\nError: no container with name or ID "a" found: no such container\n`),
+    dockerFailure('Error response from daemon: No such container: a\nexit status 1\n'),
   ]) {
     await createDocker({ execFileFn: recordingExec([err]) }).rmForce(['a', 'b'])
   }
@@ -581,6 +582,9 @@ test('createNetwork and rmNetwork build exact argv; rmNetwork tolerates only a n
     dockerFailure('Error response from daemon: unable to find network with name or ID qa-session-base: network not found\n'),
     dockerFailure(`${SHIM_BANNER}\nError: unable to find network with name or ID qa-session-base: network not found\n`),
     dockerFailure(`${LOGRUS_PIPE}\n${LOGRUS_TTY}\nError: unable to find network with name or ID qa-session-base: network not found\n`),
+    // the docker CLI on CI's Ubuntu runners adds a line of its own: what the
+    // integration test found, a sweep that failed on a clean host
+    dockerFailure('Error response from daemon: network qa-session-base not found\nexit status 1\n'),
   ]) {
     await createDocker({ execFileFn: recordingExec([err]) }).rmNetwork('gone')
   }
@@ -728,7 +732,7 @@ test('an internal network, an app with no host port, the forwarder and a network
 
 // #40's review: a DNS server for the PR pane's containers on an internal
 // network (CVE-2024-29018), and whether the forwarder runs.
-test('runPg, runMigrate, runApp and runProbe take a DNS server; containerRunning reads the container\'s state', async () => {
+test('runPg, runMigrate, runApp and runProbe take a DNS server, and all but runPg hosts entries; containerRunning and addressOn read the container', async () => {
   const exec = recordingExec(['', '', '', '', 'true\n', ''])
   const docker = createDocker({ execFileFn: exec })
   await docker.runPg('qa-pg-pr', 'qa-session-pr', { password: 'pw', dns: '192.0.2.1' })
@@ -750,4 +754,21 @@ test('runPg, runMigrate, runApp and runProbe take a DNS server; containerRunning
   await createDocker({ execFileFn: plain }).runApp('qa-app-pr', 'a:1', 'qa-session-pr', '/e', 3112)
   assert.equal(plain.calls[0].includes('--dns'), false)
   await assert.rejects(docker.containerRunning('qa fwd'), /unsafe container name/)
+  // hosts entries, after the DNS server, for all but the database
+  const hosted = recordingExec(['', '', '', '172.20.0.3\n'])
+  const h = createDocker({ execFileFn: hosted })
+  const hosts = ['qa-pg-pr:172.20.0.3', 'qa-egress:172.20.0.2']
+  await h.runMigrate('m:1', 'qa-session-pr', '/e', { name: 'qa-migrate-pr', dns: '192.0.2.1', hosts })
+  await h.runApp('qa-app-pr', 'a:1', 'qa-session-pr', '/e', null, { dns: '192.0.2.1', hosts })
+  await h.runProbe('qa-probe-pr', 'qa-session-pr', 'true', [], { dns: '192.0.2.1', hosts })
+  for (const call of hosted.calls.slice(0, 3)) {
+    const at = call.indexOf('--dns')
+    assert.deepEqual(call.slice(at, at + 6), ['--dns', '192.0.2.1', '--add-host', 'qa-pg-pr:172.20.0.3', '--add-host', 'qa-egress:172.20.0.2'], call.join(' '))
+  }
+  assert.equal(await h.addressOn('qa-pg-pr', 'qa-session-pr'), '172.20.0.3')
+  assert.deepEqual(hosted.calls[3], ['docker', 'inspect', '--format', '{{with index .NetworkSettings.Networks "qa-session-pr"}}{{.IPAddress}}{{end}}', 'qa-pg-pr'])
+  await assert.rejects(h.addressOn('qa-pg-pr', 'qa session'), /unsafe network name/)
+  for (const bad of ['qa-pg-pr', 'qa pg:1.2.3.4', 'qa-pg-pr:1.2.3.4 --privileged', '--privileged:1.2.3.4']) {
+    await assert.rejects(h.runApp('qa-app-pr', 'a:1', 'qa-session-pr', '/e', null, { hosts: [bad] }), /unsafe host entry/, bad)
+  }
 })
