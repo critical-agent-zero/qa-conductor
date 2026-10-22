@@ -64,6 +64,9 @@ function topologyAnswers(args) {
   if (c === 'network inspect --format {{.Internal}} qa-session-pr') return 'true\n'
   if (c === 'inspect --format {{.State.Running}} qa-fwd-pr') return 'true\n'
   if (args[0] === 'logs' && args.at(-1) === 'qa-fwd-pr') return 'qa-forwarder ready\n'
+  // on Podman, the addresses the PR pane's hosts file gets
+  if (c === 'inspect --format {{with index .NetworkSettings.Networks "qa-session-pr"}}{{.IPAddress}}{{end}} qa-pg-pr') return '172.20.0.3\n'
+  if (c === 'inspect --format {{with index .NetworkSettings.Networks "qa-session-pr"}}{{.IPAddress}}{{end}} qa-fwd-pr') return '172.20.0.2\n'
   return null
 }
 
@@ -1232,18 +1235,30 @@ test('with internal set, a topology that falls back is never isolated: the verdi
 // network reaches the host's resolver (CVE-2024-29018). The PR pane's
 // containers get an unroutable DNS server instead, so no name outside the
 // network resolves; names on it still do, through the runtime's own DNS.
-test('with the topology up on Docker, the PR pane\'s containers get an unroutable DNS server; not the base pane\'s, not on Podman, not after a fallback', async () => {
+test('with the topology up, the PR pane\'s containers get an unroutable DNS server, and on Podman its names in their hosts file; not the base pane\'s, not after a fallback', async () => {
   const dnsOf = (exec, name) => valueOf(runs(exec).find(c => (valueOf(c.args, '--name') ?? valueOf(c.args, '--env-file')).endsWith(name)).args, '--dns')
   const s = makeSession({ provisionerOptions: INTERNAL, answer: probeDocker({ probe: refusedAll() }) })
   s.deps.checkIsolation = async ({ stage, signal }) => { if (stage === 'panes') await s.provisioner.isolation({ signal, canary: CANARY }) }
   await bootSession(s.deps, 7)
   for (const name of ['qa-pg-pr', 'qa-migrate-pr', 'qa-app-pr', 'qa-probe-pr']) assert.equal(dnsOf(s.exec, name), '192.0.2.1', name)
   for (const name of ['qa-pg-base', 'qa-migrate-base', 'qa-app-base', 'qa-fwd-pr']) assert.equal(dnsOf(s.exec, name), null, name)
-  // Podman: its DNS answers nothing outside the network, and a --dns there
-  // would replace it
+  assert.equal(runs(s.exec).some(c => c.args.includes('--add-host')), false, 'Docker\'s own DNS serves the network\'s names')
+  // Podman: its DNS forwards outside names too (CI found it), and a --dns
+  // replaces it, so the names the pane needs are in its hosts file
   const podman = makeSession({ provisionerOptions: INTERNAL, answer: probeDocker({ version: 'Client: Podman Engine\nServer: Podman Engine\n', probe: refusedAll() }) })
+  podman.deps.checkIsolation = async ({ stage, signal }) => { if (stage === 'panes') await podman.provisioner.isolation({ signal, canary: CANARY }) }
   await bootSession(podman.deps, 7)
-  assert.equal(runs(podman.exec).some(c => c.args.includes('--dns')), false)
+  const hostsOf = (exec, name) => {
+    const call = runs(exec).find(c => (valueOf(c.args, '--name') ?? valueOf(c.args, '--env-file')).endsWith(name)).args
+    return call.flatMap((a, i) => (a === '--add-host' ? [call[i + 1]] : []))
+  }
+  for (const name of ['qa-pg-pr', 'qa-migrate-pr', 'qa-app-pr', 'qa-probe-pr']) assert.equal(dnsOf(podman.exec, name), '192.0.2.1', name)
+  for (const name of ['qa-migrate-pr', 'qa-app-pr', 'qa-probe-pr']) assert.deepEqual(hostsOf(podman.exec, name), ['qa-pg-pr:172.20.0.3', 'qa-egress:172.20.0.2'], name)
+  for (const name of ['qa-pg-base', 'qa-app-base']) assert.deepEqual([dnsOf(podman.exec, name), hostsOf(podman.exec, name)], [null, []], name)
+  // a PR database with no address on its network fails the boot, rather
+  // than leave the pane unable to reach it
+  const lost = makeSession({ provisionerOptions: INTERNAL, answer: (args, opts) => (args.join(' ').endsWith('qa-pg-pr') && args[0] === 'inspect' && args[2].startsWith('{{with') ? '\n' : probeDocker({ version: 'Client: Podman Engine\n' })(args, opts)) })
+  await assert.rejects(lost.provisioner.provisionDatabase({ paneRef: { role: 'pr' }, databases: [] }), /the PR pane's database or forwarder has no address on qa-session-pr/)
   // fallen back: no --dns either
   const down = makeSession({ provisionerOptions: { ...INTERNAL, log: logged().log }, answer: args => (args.join(' ').startsWith('run -d --name qa-fwd-pr') ? failWith('port is already allocated') : null) })
   await bootSession(down.deps, 7)
