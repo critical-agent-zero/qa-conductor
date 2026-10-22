@@ -72,12 +72,12 @@ What changed in each release, newest first. A 0.x minor version may break the in
 ### The data checks' engine
 
 - **A new entry point, `@critical-labs/qa-conductor/data-diff`:** the pure engine of #8's data checks, with no I/O. README's [Data checks](README.md#data-checks) has the details.
-  - **What a snapshot keeps:** each collection's rows, key and true count, at most 10,000 rows a collection, 32 MB in all, shared fairly, and 1,000 collections, those with the most rows. Up to ten times as many more are kept as their counts alone, flagged `unverified`, and only past those is one left out, by name in `problems`.
-  - **Masking:** a secret-looking or `secret` field keeps only a digest, and a `pii` one a fingerprint, its type and its length, as HMACs under a key made for the session; a `Set` or `Map` too. JSON keeps no value under a secret-looking key, nor in a name and value pair or a header list, in JSON held in strings (three deep), JSON encoded twice and NDJSON too. Text that shows a secret-looking key, quoted, escaped, in brackets or as a tag, is masked whole, and a URL's password or a `Bearer` value in text is replaced by a digest. The text scan is linear.
+  - **What a snapshot keeps:** each collection's rows, key and true count, at most 10,000 rows a collection, 32 MB in all, shared fairly, and 1,000 collections, those with the most rows. Up to ten times as many more are kept as their counts alone, flagged `unverified`, and only past those is one left out, by name in `problems`. A snapshot says how many it left out, and a collection missing from one that left some out is `unknown`, never added or dropped. A collection's key and declared fields count against its bytes, and are capped: a name over 200 characters is left out, a key of more than 32 fields is dropped, and a collection with more than 2,000 declared fields is kept as its count.
+  - **Masking:** a secret-looking or `secret` field keeps only a digest, and a `pii` one a fingerprint, its type and its length, as HMACs under a key made for the session; a `Set` or `Map` too. JSON keeps no value under a secret-looking key, nor in a name and value pair (`name`, `Name`, `key`, `k` and the like) or a header list, in JSON held in strings (three deep), JSON encoded twice and NDJSON too. JSON text encoded twice says so, so re-encoding a column shows. Text that shows a secret-looking key, quoted, escaped (HTML-escaped too), in brackets or as a tag (with a namespace or attributes), is masked whole. In text, a URL's password or token, and a `Bearer`, `Basic` or `Token` value that looks like a token, in any case, are replaced by a digest. The text scan is linear, runs of backslashes included.
   - **Comparing:**
     - what changed between two snapshots of a pane, by key;
     - where the PR pane's changes depart from the base pane's;
-    - which of the PR's changes are destructive: red unless the base made the same change (the same rows, the same fields, to the same values), then amber. A collection a PR cut short where the base's wasn't, or that the PR's snapshots don't show while the base's do, is flagged `unverified`.
+    - which of the PR's changes are destructive: red unless the base made the same change (the same rows, the same fields, to the same values), then amber. A collection a PR cut short where the base's wasn't, or that the PR's snapshots don't show while the base's do, is flagged `unverified`. Those only the PR pane has are one flag, with their number. Red flags come first, and among them the base pane's collections, and the destructive kinds before `unverified`.
   - **Advisory unless isolated:** unless the session's isolation verdict is `isolated`, the base's changes excuse nothing.
 
 ### The data checks
@@ -107,7 +107,7 @@ What changed in each release, newest first. A 0.x minor version may break the in
   - **Still reachable** ([Known limits](README.md#known-limits) lists these, and what the process Provisioner and a shared env leave open):
     - where containers reach the host's loopback: the base pane's app, the base pane's proxy and the harness;
     - where the conductor binds off loopback: the harness and the base pane's proxy;
-    - without Docker Engine's default iptables rules: the base pane's containers, by address.
+    - without Docker Engine's default iptables rules: the base pane's containers, by address. On a dual-stack network with `"ip6tables": false` (the default before Docker Engine 27), the same over IPv6.
 - **A stale boot stops at its next step.**
   - **The Docker Provisioner** checks `signal` before each step that creates or changes something: the network, a pull, a container, an env file.
   - **The postgres image** is pulled before its container is created (`createDocker` gains `ensurePgImage`).
