@@ -769,6 +769,8 @@ test('a delete is listed before column and mass-change flags, and its collection
   assert.equal(boot.flagsCount.red, 22)
   assert.deepEqual([boot.flags[0].collection, boot.flags[0].kind], ['users', 'delete'])
   assert.equal(Object.keys(boot.pr.collections)[0], 'users', 'its rows listed first')
+  // the engine's fieldsBefore isn't listed
+  assert.equal(Object.hasOwn(boot.pr.collections.users, 'fieldsBefore'), false)
   // and in the answer too big to build: among the first red flags
   const fallback = capture.view({}, { lists: false }).boot
   assert.deepEqual([fallback.flags[1].collection, fallback.flags[1].kind], ['users', 'delete'])
