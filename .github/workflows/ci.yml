@@ -72,7 +72,7 @@ jobs:
           QA_DOCKER_IT: "1"
           DOCKER_HOST: ${{ matrix.runtime == 'podman' && 'unix:///run/podman/podman.sock' || '' }}
           DOCKER_BUILDKIT: ${{ matrix.runtime == 'podman' && '0' || '1' }}
-      - run: grep -qx 'ℹ skipped 0' it.log
+      - run: grep -qx 'ℹ skipped 0' it.log && grep -qx 'ℹ todo 0' it.log
 
   # The README's sandbox-exec profile on macOS 14 and 15 (#32): the docs test
   # runs it through sandbox-exec. QA_REQUIRE_SANDBOX makes the test fail

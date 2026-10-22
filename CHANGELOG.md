@@ -81,9 +81,11 @@ What changed in each release, newest first. A 0.x minor version may break the in
   - **Triage** adds the forwarder's log tail to the PR app's. The forwarder writes every line to stdout, its refusals included, so the tail shows them.
   - **Under the podman-docker shim,** whose `docker context inspect` is Podman's, the daemon's endpoint is Podman's own connection, and a network's gateways are read in Podman's own format, so the probe can decide there too.
   - **The forwarder bounds a plain-HTTP answer's PR side too:** an answer the host has finished, but the PR stopped reading, is closed once nothing moves.
+  - **On Docker Engine 28 and later the internal network's gateway is isolated,** so the PR pane can't reach the host's `0.0.0.0` services either. Podman and older Engines keep the README's limit.
+  - **`rmForce` removes one name at a time,** so teardown and `sweep` remove every container under Podman before 5.1 (the podman-docker shim on Ubuntu 24.04), whose `rm -f a b c` stops at a name already gone and removes nothing.
 - **New in the seams:** a Provisioner's optional `internal: true`, and a check's result's `internal`. The macOS floor waits for such a Provisioner's check, and is left out only when its result says `internal: true`. `floors` takes `internal`.
-- **New in `createDocker`:** an `env` option, and `endpoint({ podman })`. `createNetwork(name, { internal })`, `networkInternal(name)`, `containerRunning(name)`, `runForwarder(name, image, network, { hostPort, config, source })` and `connectNetwork(network, container, { alias })`. `runApp` publishes nothing when `hostPort` is `null`. `runPg`, `runMigrate`, `runApp` and `runProbe` take `dns`.
-- **New in `createDockerProvisioner`:** `forwarderReadyMs` and `log`.
+- **New in `createDocker`:** an `env` option, and `endpoint({ podman })`. `createNetwork(name, { internal, isolatedGateway })`, `networkInternal(name)`, `networkGatewayIsolated(name)`, `containerRunning(name)`, `runForwarder(name, image, network, { hostPort, config, source })` and `connectNetwork(network, container, { alias })`. `runApp` publishes nothing when `hostPort` is `null`. `runPg`, `runMigrate`, `runApp` and `runProbe` take `dns`.
+- **New in `createDockerProvisioner`:** `forwarderReadyMs` and `log`. Its entry point also exports `dockerEngineMajor(version)`.
 - **Nothing changes without `internal`.**
 
 ### Hardening opt-ins

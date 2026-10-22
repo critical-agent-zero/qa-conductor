@@ -1242,3 +1242,15 @@ test('a client that resets mid-request through the inbound forward reaches the a
   client.write('y'.repeat(1000), () => setTimeout(() => client.resetAndDestroy(), 50))
   assert.equal(await outcome, 'ECONNRESET')
 })
+
+// A listed host that takes the request and never answers: after idleMs the
+// PR gets a 502 `failed`, never a reset (the PR-side timer is armed only
+// once the answer's headers are written).
+test('a plain-HTTP host that accepts the request but never answers gets the PR a 502 failed after idleMs', BOUNDED, async (t) => {
+  const silent = net.createServer(socket => { socket.on('error', () => {}); socket.on('data', () => {}) })
+  const silentPort = await listening(silent)
+  t.after(() => silent.close())
+  const w = await world(t, { allow: ['api.example.com'], timeouts: { idleMs: 300 }, connect: () => net.connect({ port: silentPort, host: '127.0.0.1' }) })
+  const out = await viaProxy(w.proxyPort, 'http://api.example.com/slow')
+  assert.deepEqual([out.status, out.headers['x-qa-egress']], [502, 'failed'])
+})
