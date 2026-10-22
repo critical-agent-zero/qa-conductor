@@ -579,7 +579,7 @@ const provisioner = createDockerProvisioner({
     - `NO_PROXY` (`localhost`, `127.0.0.1`, `::1`, `qa-pg-pr` and `qa-app-pr`);
     - `NODE_USE_ENV_PROXY=1`.
 
-    An app that ignores them reaches nothing outside its network. On Docker, the PR pane's containers also get `--dns 192.0.2.1`, an address nothing answers, so no name outside the network resolves for them (DNS, under its limits below).
+    An app that ignores them reaches nothing outside its network. On Docker and on Podman, the PR pane's containers also get `--dns 192.0.2.1`, an address nothing answers, so no name outside the network resolves for them (DNS, under its limits below).
 - **The allowlist, `egress`.**
   - **Entries:** `api.example.com` (that host), `*.example.com` (any host under it, not the domain itself) or a public IP address (an IPv6 one in brackets), each with an optional `:port`. Without a port, an entry allows 80 and 443. They are compared as the URL parser has them. Anything else throws when the Provisioner is made: a private address in any form, a name only this host or its network has (`*.localhost`, `*.internal`, `*.local`, …), a bad port.
   - **A wildcard is as wide as written:** `*.github.io` admits every site under it.
