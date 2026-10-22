@@ -97,4 +97,5 @@ jobs:
         shell: bash
         env:
           QA_REQUIRE_SANDBOX: "1"
+          QA_SANDBOX_ROUNDS: "30"
       - run: grep -q "sandbox-exec profile shuts the ports it names" sbx.log && grep -qx 'ℹ skipped 0' sbx.log

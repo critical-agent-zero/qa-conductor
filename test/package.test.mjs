@@ -1059,6 +1059,7 @@ test('CI\'s Node 22 leg runs the package tests again with the npm the publish jo
     '        shell: bash',
     '        env:',
     '          QA_REQUIRE_SANDBOX: "1"',
+    '          QA_SANDBOX_ROUNDS: "30"',
     "      - run: grep -q \"sandbox-exec profile shuts the ports it names\" sbx.log && grep -qx 'ℹ skipped 0' sbx.log",
   ])
   assert.ok(readFileSync(WORKFLOW, 'utf8').includes(`      - run: ${NPM_UPGRADE}\n`), 'the publish job installs the same npm')

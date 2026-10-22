@@ -321,29 +321,33 @@ Three more ways to narrow what the PR pane can reach, each opt-in, with what it 
 
 #### A `sandbox-exec` profile for the process Provisioner (macOS)
 
-**What it guarantees:** the PR pane's processes can't open a TCP connection to the ports the profile names on this Mac's loopback, over IPv4 or IPv6:
+**What it guarantees:** the PR pane's processes can't open a TCP connection to the port numbers the profile names, on any address: this Mac's loopback over IPv4 and IPv6, an IPv4-mapped IPv6 address (`::ffff:127.0.0.1`), `0.0.0.0` or another of the host's addresses. They are:
 - the conductor's three (`QA_HARNESS_PORT`, `QA_BASE_PROXY_PORT`, `QA_PR_PROXY_PORT`);
 - the base pane's service and database ports.
+
+**The trade-off:** those port numbers are refused on every host, remote ones too. A PR pane that must reach, say, port 3100 on another machine can't while the conductor uses it.
 
 **What it doesn't:**
 - The PR pane still runs as you. It can read and write your files (your browser's profile, which holds the capability, included), signal your processes, and use Unix sockets and every loopback port the profile doesn't name.
 - **Routes around it:**
   - A BuildConvention's install step runs the PR's code before the PR pane starts, outside the profile.
-  - `tailscale serve`'s ports on the node's tailnet address front the conductor too, and the profile names only loopback ports. The [capability](#security) still turns such a request away, and on a tagged node (below) the identity gate does first.
+  - `tailscale serve`'s ports on the node's tailnet address front the conductor too, on port numbers the profile doesn't name. The [capability](#security) still turns such a request away, and on a tagged node (below) the identity gate does first.
   - A file the PR pane writes can change what an unsandboxed process runs later: a script, a config, a shell profile, the profile itself if it can write it.
 - So the verdict stays `shared-host`, and the trust gate is still the boundary.
 
-**The profile** denies each port it is given, so it names what to shut rather than what to open. On macOS 12, `sandbox-exec` honoured a deny that names a port. An allow for one port after `(deny network-outbound (remote ip "localhost:*"))` didn't reopen it, although after a bare `(deny network-outbound)` it did. A profile that shuts everything and opens a list would depend on which form it used.
+**The profile** denies each port it is given, on any address (`*:<port>`), so it names what to shut rather than what to open.
+- **Why any address:** a deny on `localhost:<port>` refused `127.0.0.1`, `::1` and `localhost`, but on macOS 12 an IPv4-mapped IPv6 address, `::ffff:127.0.0.1`, reached every port it named, through the IPv4 listener.
+- **Why not shut everything and open a list:** on macOS 12, an allow for one port after `(deny network-outbound (remote ip "localhost:*"))` didn't reopen it, although after a bare `(deny network-outbound)` it did. A profile that shuts everything and opens a list would depend on which form it used.
 
 ```scheme
-; pr-pane.sb: no TCP to these loopback ports (IPv4 and IPv6)
+; pr-pane.sb: no TCP to these port numbers, on any address
 (version 1)
 (allow default)
-(deny network-outbound (remote ip (string-append "localhost:" (param "HARNESS"))))
-(deny network-outbound (remote ip (string-append "localhost:" (param "BASE_PROXY"))))
-(deny network-outbound (remote ip (string-append "localhost:" (param "PR_PROXY"))))
-(deny network-outbound (remote ip (string-append "localhost:" (param "BASE_APP"))))
-(deny network-outbound (remote ip (string-append "localhost:" (param "BASE_DB"))))
+(deny network-outbound (remote ip (string-append "*:" (param "HARNESS"))))
+(deny network-outbound (remote ip (string-append "*:" (param "BASE_PROXY"))))
+(deny network-outbound (remote ip (string-append "*:" (param "PR_PROXY"))))
+(deny network-outbound (remote ip (string-append "*:" (param "BASE_APP"))))
+(deny network-outbound (remote ip (string-append "*:" (param "BASE_DB"))))
 ```
 
 **Wire it in through `command`.** The boot launches the base pane's database and services before the PR pane's, so `command` can note the base pane's ports and pass them to the PR pane's sandbox. `sandbox-exec` runs the command in its own place, with the same pid, so teardown still signals the server's group:
@@ -391,9 +395,12 @@ const provisioner = createProcessProvisioner({
 - With more than one base service, note each port and add a line per port to the profile.
 
 **Checked:**
-- On macOS 12.7.6, a process under this profile got `EPERM` for each named port, over `127.0.0.1`, `::1` and `localhost`, and connected to the others.
+- **On macOS 12.7.6,** by hand and by `test/docs.test.mjs`: a process under this profile got `EPERM` for each named port, over `127.0.0.1`, `::1`, `localhost`, `::ffff:127.0.0.1`, `::ffff:7f00:1`, `127.1` and `0.0.0.0`, and connected to another port over each.
+- **On macOS 15,** by CI's `macos-sandbox` job on GitHub's runner, on every pull request: it runs that docs test, 30 rounds of every try, and fails if the test was skipped.
+- **On macOS 14, not yet.** The same job runs there, and with the earlier `localhost:<port>` form it let one named port through, over `localhost`, in 2 of 5 runs, though `127.0.0.1` to the same port got `EPERM` in the same process. Whether the `*:<port>` form holds there is tracked in [#43](https://github.com/critical-labs/qa-conductor/issues/43).
+- **The job is advisory:** it isn't a required check, until it has run reliably on both.
 - Apple already marks `sandbox-exec` deprecated on macOS 12, and still ships it on 14 and 15.
-- On macOS 14 and 15, CI's `macos-sandbox` job runs the same check on every pull request, on GitHub's macOS 14 and macOS 15 runners: `test/docs.test.mjs` takes this profile from this section and runs it through `sandbox-exec`, and the job fails if the test was skipped. Check yours while a session runs, with the ports you use:
+- **Check yours** while a session runs, with the ports you use:
   - `sandbox-exec -D HARNESS=3100 -D BASE_PROXY=3101 -D PR_PROXY=3102 -D BASE_APP=<port> -D BASE_DB=<port> -f /usr/local/etc/qa-conductor/pr-pane.sb "$(command -v node)" -e "require('net').connect(3100, '127.0.0.1').on('connect', function () { console.log('connected'); this.destroy() }).on('error', e => console.log(e.code))"` must print `EPERM`, and the same `node -e` without `sandbox-exec` must print `connected`. A closed port would print `ECONNREFUSED`.
   - Or with `curl -sv` in place of `node -e`: `Immediate connect fail for 127.0.0.1: Operation not permitted`, where `curl -sS` alone says only that it couldn't connect.
 
@@ -431,7 +438,7 @@ const provisioner = createProcessProvisioner({
 - So supporting it means more than a socket. The conductor would need to take the harness and pane origins from its config, rather than the `Host` header, for its [same-origin](#security) and pane request checks.
 - Tracked in [#42](https://github.com/critical-labs/qa-conductor/issues/42).
 
-**Today:** the Docker Provisioner's [internal network](#the-pr-pane-on-an-internal-network) closes the same path for container panes: it gives the PR pane no route to the host's loopback. Each session's probe checks that it doesn't reach the conductor or the base pane there. CI checks it on Linux, against Docker Engine and Podman, and its check by hand on Docker Desktop and Podman machine is tracked in [#43](https://github.com/critical-labs/qa-conductor/issues/43).
+**Today:** the Docker Provisioner's [internal network](#the-pr-pane-on-an-internal-network) is meant to close the same path for container panes: it gives the PR pane no route to the host's loopback. Each session's probe checks that it doesn't reach the conductor or the base pane there. CI runs the topology on Linux, against Docker Engine and Podman, where containers don't reach the host's loopback anyway. Its check by hand on Docker Desktop and Podman machine, where they do, is tracked in [#43](https://github.com/critical-labs/qa-conductor/issues/43).
 
 ## The seams
 

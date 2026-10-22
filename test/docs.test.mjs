@@ -171,8 +171,10 @@ test('the README\'s Contents link every second-level heading after it, in order'
 })
 
 // The README's sandbox-exec profile, run as written, on a Mac: each port it
-// names is refused over IPv4, IPv6 and localhost, another port isn't, and a
-// parameter left out keeps the profile from loading. The profile's
+// names is refused over IPv4, IPv6, localhost, IPv4-mapped IPv6 and other
+// spellings of loopback, another port isn't, and a parameter left out keeps
+// the profile from loading. QA_SANDBOX_ROUNDS (3 by default; CI's job asks
+// for 30) repeats every try, so one pass means something. The profile's
 // parameters are the ones the README's wiring passes and its check names.
 // Elsewhere it is skipped, and so is it where sandbox-exec can't nest (this
 // process already runs in a sandbox), unless QA_REQUIRE_SANDBOX=1 asks for
@@ -194,7 +196,7 @@ async function whyNoSandbox() {
 }
 // Decided in the test, not as the file loads: the probe can take a while,
 // and a test registered late would be cut off by --test-force-exit.
-test('the README\'s sandbox-exec profile shuts the ports it names, over IPv4, IPv6 and localhost, and no other; a parameter left out keeps it from loading', { timeout: 60_000 }, async (t) => {
+test('the README\'s sandbox-exec profile shuts the ports it names, over IPv4, IPv6, localhost and IPv4-mapped IPv6, and no other; a parameter left out keeps it from loading', { timeout: 120_000 }, async (t) => {
   const noSandbox = await whyNoSandbox()
   if (noSandbox && !REQUIRE_SANDBOX) return t.skip(noSandbox)
   if (noSandbox) assert.fail(`QA_REQUIRE_SANDBOX=1, but ${noSandbox}`)
@@ -237,28 +239,42 @@ test('the README\'s sandbox-exec profile shuts the ports it names, over IPv4, IP
   }
   const ports = {}
   for (const name of [...names, 'OTHER']) ports[name] = await both()
-  const tries = [...names, 'OTHER'].flatMap(name => ['127.0.0.1', '::1', 'localhost'].map(host => [`${name} over ${host}`, host, ports[name]]))
-  // Each try's outcome, and for one that connected, the address it reached,
-  // with what localhost resolves to: CI's macOS 14 once connected over
-  // localhost to a named port, so a failure says where
+  const HOSTS = ['127.0.0.1', '::1', 'localhost', '::ffff:127.0.0.1', '::ffff:7f00:1', '127.1', '0.0.0.0']
+  const tries = [...names, 'OTHER'].flatMap(name => HOSTS.map(host => [`${name} over ${host}`, host, ports[name]]))
+  const rounds = Number(process.env.QA_SANDBOX_ROUNDS) || 3
+  // Every try, `rounds` times, one round after another. Each outcome; for
+  // one that broke the rule, what it reached (address and port), the
+  // addresses Node tried in turn (localhost's fallback from ::1 to
+  // 127.0.0.1, say), the round and its place in it, and what localhost
+  // resolves to: CI's macOS 14 once connected over localhost to a named
+  // port, so a failure says how
   const client = `
     const net = require('net')
-    const tries = JSON.parse(process.argv[1])
+    const [tries, rounds] = JSON.parse(process.argv[1])
     const out = {}
-    const via = {}
-    let left = tries.length + 1
-    let localhost = null
-    const done = () => { if (--left === 0) console.log(JSON.stringify({ out, via, localhost })) }
-    require('dns').lookup('localhost', { all: true }, (err, list) => { localhost = err ? err.code : list.map(a => a.address); done() })
-    for (const [name, host, port] of tries) {
-      const socket = net.connect({ host, port }, () => { out[name] = 'connected'; via[name] = socket.remoteAddress; socket.destroy(); done() })
-      socket.on('error', err => { out[name] = err.code ?? String(err); done() })
-    }`
+    const odd = []
+    const one = (round, seq, [name, host, port]) => new Promise(resolve => {
+      const socket = net.connect({ host, port })
+      const record = outcome => {
+        const want = name.startsWith('OTHER') ? 'connected' : 'EPERM'
+        if (out[name] === undefined || out[name] === want) out[name] = outcome
+        if (outcome !== want) odd.push({ name, round, seq, port, outcome, remote: socket.remoteAddress ? socket.remoteAddress + ':' + socket.remotePort : null, tried: socket.autoSelectFamilyAttemptedAddresses ?? null })
+        socket.destroy()
+        resolve()
+      }
+      socket.on('connect', () => record('connected'))
+      socket.on('error', err => record(err.code ?? String(err)))
+    })
+    ;(async () => {
+      for (let round = 0; round < rounds; round++) await Promise.all(tries.map((t, seq) => one(round, seq, t)))
+      require('dns').lookup('localhost', { all: true }, (err, list) => console.log(JSON.stringify({ out, odd: odd.slice(0, 20), oddCount: odd.length, localhost: err ? err.code : list.map(a => a.address) })))
+    })()`
   const flags = names.flatMap(name => ['-D', `${name}=${ports[name]}`])
-  const got = await runSandbox([...flags, '-f', file, process.execPath, '-e', client, JSON.stringify(tries)])
+  const got = await runSandbox([...flags, '-f', file, process.execPath, '-e', client, JSON.stringify([tries, rounds])], { timeout: 90_000 })
   assert.equal(got.code, 0, got.stderr)
-  const { out, via, localhost } = JSON.parse(got.stdout)
-  assert.deepEqual(out, Object.fromEntries(tries.map(([name]) => [name, name.startsWith('OTHER') ? 'connected' : 'EPERM'])), JSON.stringify({ via, localhost }))
+  const { out, odd, oddCount, localhost } = JSON.parse(got.stdout)
+  assert.deepEqual(out, Object.fromEntries(tries.map(([name]) => [name, name.startsWith('OTHER') ? 'connected' : 'EPERM'])), JSON.stringify({ rounds, oddCount, odd, localhost, ports }))
+  assert.equal(oddCount, 0, JSON.stringify({ rounds, odd, localhost, ports }))
   // a parameter left out: the profile doesn't load, and nothing runs
   const missing = await runSandbox([...flags.slice(0, -2), '-f', file, '/usr/bin/true'])
   assert.equal(missing.code, 65, missing.stderr)
