@@ -1,0 +1,102 @@
+N=30000 seed=1: regressions 1300, fixed 5627
+---
+in   {"nested":"Zq9SeCr3tVal</password>Bearer '<p title=\"<x>\"><secret-note t=\"a<b\">"}
+old  {"t":"json","s":"{\"nested\":\"[text with a secret-looking key, 67 characters, 0416b300]\"}"}
+new  {"t":"json","s":"{\"nested\":\"Zq9SeCr3tVal</password>Bearer '<p title=\\\"<x>\\\"><secret-note t=\\\"a<b\\\">\"}"}
+---
+in   "-&#x22;k'  :  Zq9SeCr3tVal<p title=\"<x>\"><password a=\"<b\">"
+old  "[text with a secret-looking key, 58 characters, 22d73319]"
+new  "-&#x22;k'  :  Zq9SeCr3tVal<p title=\"<x>\"><password a=\"<b\">"
+---
+in   "<secret-note t=\"a<b\">\\\\\"state\\\\\"  :  Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 49 characters, 728018f6]"
+new  "<secret-note t=\"a<b\">\\\\\"state\\\\\"  :  Zq9SeCr3tVal"
+---
+in   "<add key=\"DbPassword\" value=\"><password a=\"<b\">Bearer <a -Zq9SeCr3tVala://"
+old  "[text with a secret-looking key, 74 characters, b0053c1d]"
+new  "<add key=\"DbPassword\" value=\"><password a=\"<b\">Bearer <a -Zq9SeCr3tVala://"
+---
+in   "{\"note\":\"Zq9SeCr3tValauth\\\\\\\"\\t=token &QUOT;id`%3d&QUOT;value[%3a<password a=\\\"<b\\\">\"}"
+old  {"t":"json","s":"{\"note\":\"[text with a secret-looking key, 70 characters, eaff8d59]\"}"}
+new  {"t":"json","s":"{\"note\":\"Zq9SeCr3tValauth\\\\\\\"\\t=token &QUOT;id`%3d&QUOT;value[%3a<password a=\\\"<b\\\">\"}"}
+---
+in   "\\\"a&#x22;=<password a=\"<b\">Zq9SeCr3tValpostgres://app:"
+old  "[text with a secret-looking key, 54 characters, e44942ac]"
+new  "\\\"a&#x22;=<password a=\"<b\">Zq9SeCr3tValpostgres://app:"
+---
+in   "Zq9SeCr3tValZq9SeCr3tVal<password a=\"<b\">"
+old  "[text with a secret-looking key, 41 characters, 56fa9644]"
+new  "Zq9SeCr3tValZq9SeCr3tVal<password a=\"<b\">"
+---
+in   "Zq9SeCr3tVal<secret-note t=\"a<b\">Zq9SeCr3tVal\\\\\"value`\t=//redis://:Zq9SeCr3tValdXNlcjpwYXNz"
+old  "[text with a secret-looking key, 91 characters, ac786077]"
+new  "Zq9SeCr3tVal<secret-note t=\"a<b\">Zq9SeCr3tVal\\\\\"value`\t=//redis://:Zq9SeCr3tValdXNlcjpwYXNz"
+---
+in   "<secret-note t=\"a<b\"></password>Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 44 characters, dac88ded]"
+new  "<secret-note t=\"a<b\"></password>Zq9SeCr3tVal"
+---
+in   "<secret-note t=\"a<b\">Zq9SeCr3tVal%22state[=bearer  "
+old  "[text with a secret-looking key, 51 characters, 01acfaaf]"
+new  "<secret-note t=\"a<b\">Zq9SeCr3tVal%22state[=bearer  "
+---
+in   "\\\\\"name'%3AZq9SeCr3tVal-<secret-note t=\"a<b\">"
+old  "[text with a secret-looking key, 45 characters, d57d31a7]"
+new  "\\\\\"name'%3AZq9SeCr3tVal-<secret-note t=\"a<b\">"
+---
+in   "Zq9SeCr3tVal<secret-note t=\"a<b\">https://"
+old  "[text with a secret-looking key, 41 characters, 10a3954e]"
+new  "Zq9SeCr3tVal<secret-note t=\"a<b\">https://"
+---
+in   "?Zq9SeCr3tVal<secret-note t=\"a<b\">"
+old  "[text with a secret-looking key, 34 characters, cac449c9]"
+new  "?Zq9SeCr3tVal<secret-note t=\"a<b\">"
+---
+in   "]a\\\\\"%3AZq9SeCr3tVal<secret-note t=\"a<b\">-p%22state&QUOT;\t="
+old  "[text with a secret-looking key, 59 characters, 35e90de4]"
+new  "]a\\\\\"%3AZq9SeCr3tVal<secret-note t=\"a<b\">-p%22state&QUOT;\t="
+---
+in   "<password a=\"<b\">//Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 31 characters, 122eff9c]"
+new  "<password a=\"<b\">//Zq9SeCr3tVal"
+---
+in   {"nested":"<password a=\"<b\">Zq9SeCr3tVal"}
+old  {"t":"json","s":"{\"nested\":\"[text with a secret-looking key, 29 characters, 3897a80a]\"}"}
+new  {"t":"json","s":"{\"nested\":\"<password a=\\\"<b\\\">Zq9SeCr3tVal\"}"}
+---
+in   "Zq9SeCr3tValToken <secret-note t=\"a<b\">"
+old  "[text with a secret-looking key, 39 characters, c3c4b0b3]"
+new  "Zq9SeCr3tValToken <secret-note t=\"a<b\">"
+---
+in   "Zq9SeCr3tVal<password a=\"<b\">postgres://app:'id\": "
+old  "[text with a secret-looking key, 50 characters, c01a2c39]"
+new  "Zq9SeCr3tVal<password a=\"<b\">postgres://app:'id\": "
+---
+in   "]a[%3d<secret-note t=\"a<b\">Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 39 characters, e82c9b38]"
+new  "]a[%3d<secret-note t=\"a<b\">Zq9SeCr3tVal"
+---
+in   "<password a=\"<b\">Zq9SeCr3tVal:?Token "
+old  "[text with a secret-looking key, 37 characters, 4d6106b6]"
+new  "<password a=\"<b\">Zq9SeCr3tVal:?Token "
+---
+in   "Zq9SeCr3tValZq9SeCr3tVal<password a=\"<b\">Token "
+old  "[text with a secret-looking key, 47 characters, 04bc0d2f]"
+new  "Zq9SeCr3tValZq9SeCr3tVal<password a=\"<b\">Token "
+---
+in   "Zq9SeCr3tVal`a%22=<password a=\"<b\"><secret-note t=\"a<b\">"
+old  "[text with a secret-looking key, 56 characters, 564853bb]"
+new  "Zq9SeCr3tVal`a%22=<password a=\"<b\"><secret-note t=\"a<b\">"
+---
+in   "\\\"state&#x22;=Basic &#34;state`%3AeyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.Zq9SeCr3tVal<secret-note t=\"a<b\"><password a=\"<b\">"
+old  "[text with a secret-looking key, 121 characters, 7da7de4d]"
+new  "\\\"state&#x22;=Basic &#34;state`%3AeyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.Zq9SeCr3tVal<secret-note t=\"a<b\"><password a=\"<b\">"
+---
+in   "redis://:Zq9SeCr3tValredis://:https://ghp_A1b2C3d4E5f6G7h8I9j0:<secret-note t=\"a<b\">'value%22%3a"
+old  "[text with a secret-looking key, 96 characters, 81d8c4b8]"
+new  "redis://:Zq9SeCr3tValredis://:https://ghp_A1b2C3d4E5f6G7h8I9j0:<secret-note t=\"a<b\">'value%22%3a"
+---
+in   "https://Zq9SeCr3tVal_<password a=\"<b\">&QUOT;pw[%3DBasic <add key=\"DbPassword\" value=\":"
+old  "[text with a secret-looking key, 86 characters, 5f5b2b35]"
+new  "https://Zq9SeCr3tVal_<password a=\"<b\">&QUOT;pw[%3DBasic <add key=\"DbPassword\" value=\":"
+exit 0

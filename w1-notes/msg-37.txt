@@ -1,0 +1,24 @@
+fix: the Data panel counts a span neither pane could be read for, and draws flagged and changed collections first
+
+Round 3 of #37's review, on #36's new answer.
+
+- A span neither pane could be read for after a snapshot is red and
+  counted: "Neither pane could be read for this span…". "Nothing to
+  compare yet" is only for before the first snapshot. An answer with no
+  session span after one counts and says the same.
+- The collections drawn put those with a red flag first, then any that
+  changed or are unknown, then the rest, so padding can't push a changed
+  one out of the 300 drawn. "and N more collections" uses
+  collectionsCount; fields dropped and added say how many more.
+- The Re-baseline sentence is the session span's only; the boot span says
+  it stays as it was. A late PR baseline says "The PR pane's baseline is
+  this snapshot: take another to see its changes".
+- The new flags and states: one flag for many collections (only the PR
+  pane's, or folded), an answer too big to list, a collection left out of
+  a snapshot (its count as ?), and at most 20 problems a pane, with how
+  many more.
+- No "and 0 more flags"; an 8-hex text digest at a cut is hidden; one
+  baseline time when the panes' are equal (tests for the nits).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

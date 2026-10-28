@@ -1,0 +1,182 @@
+[
+ {
+  "id": "H1",
+  "file": "public/harness.js",
+  "old": "    if (!span) return name === 'session' && data.comparedAt ? 1 : 0",
+  "new": "    if (!span) return 0",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H2",
+  "file": "public/harness.js",
+  "old": "    if (ui.span === 'session' && data.comparedAt) {",
+  "new": "    if (false) {",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H3",
+  "file": "public/harness.js",
+  "old": "  const rank = name => (red.has(name) ? 0 : collections[name] && collections[name].status !== 'same' ? 1 : 2)",
+  "new": "  const rank = name => 0",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H4",
+  "file": "public/harness.js",
+  "old": "  const rank = name => (red.has(name) ? 0 : collections[name] && collections[name].status !== 'same' ? 1 : 2)",
+  "new": "  const rank = name => (collections[name] && collections[name].status !== 'same' ? 1 : 2)",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H5",
+  "file": "public/harness.js",
+  "old": "  return d && Number.isSafeInteger(d.collectionsCount) ? Math.max(d.collectionsCount, listed) : listed",
+  "new": "  return listed",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H6",
+  "file": "public/harness.js",
+  "old": "    const more = Number.isSafeInteger(total) ? total - fields.length : 0",
+  "new": "    const more = 0",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H7",
+  "file": "public/harness.js",
+  "old": "${ui.span === 'session' ? 'Re-baseline to compare both from one moment.' : 'The boot span stays as it was: a Re-baseline aligns only the session span.'}",
+  "new": "Re-baseline to compare both from one moment.",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H8",
+  "file": "public/harness.js",
+  "old": "      out.push(node('p', 'dataErr', reason === 'baseline'",
+  "new": "      out.push(node('p', 'dataErr', false",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H9",
+  "file": "public/harness.js",
+  "old": "  if (f.kind === 'unreadable') return UNREADABLE[f.reason] || UNREADABLE.failed",
+  "new": "  if (f.kind === 'unreadable') return UNREADABLE.failed",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H10",
+  "file": "public/harness.js",
+  "old": "  if (f.collection === null && f.kind === 'unverified') {",
+  "new": "  if (false) {",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H11",
+  "file": "public/harness.js",
+  "old": "    return f.folded\n",
+  "new": "    return false\n",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H12",
+  "file": "public/harness.js",
+  "old": "  if (span.unlisted) {\n    out.push(node('p', 'dataErr',",
+  "new": "  if (false) {\n    out.push(node('p', 'dataErr',",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H13",
+  "file": "public/harness.js",
+  "old": "  if (span.unlisted) return out",
+  "new": "",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H14",
+  "file": "public/harness.js",
+  "old": "const statusText = c => (c && c.omitted ? 'unknown (left out of a snapshot)' : label(STATUS_LABELS, c && c.status))",
+  "new": "const statusText = c => label(STATUS_LABELS, c && c.status)",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H15",
+  "file": "public/harness.js",
+  "old": "const countText = n => (Number.isSafeInteger(n) ? String(n) : '?')",
+  "new": "const countText = n => String(n)",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H16",
+  "file": "public/harness.js",
+  "old": "    for (const problem of problems.slice(0, SHOWN_PROBLEMS)) out.push(",
+  "new": "    for (const problem of problems) out.push(",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H17",
+  "file": "public/harness.js",
+  "old": "    if (more > 0) out.push(node('p', 'stepSub', `${paneName(pane)}: and ${more} more problems`))",
+  "new": "",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H18",
+  "file": "public/harness.js",
+  "old": "    if (total > shownFlags) items.push(",
+  "new": "    if (total >= shownFlags) items.push(",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H19",
+  "file": "public/harness.js",
+  "old": "  .replace(/(\\[text with a secret-looking key, \\d+ characters), [0-9a-f]{0,8}$/, '$1')",
+  "new": "  .replace(/(\\[text with a secret-looking key, \\d+ characters), [0-9a-f]{0,7}$/, '$1')",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H20",
+  "file": "public/harness.js",
+  "old": "  if (b && b.base && b.pr && b.base !== b.pr) return",
+  "new": "  if (b && b.base && b.pr) return",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ }
+]

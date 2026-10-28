@@ -1,0 +1,38 @@
+**Round 3, item by item: in `db5bfec`.** It is still stacked on #40's `5d2df65`. `git diff --name-status 5d2df65..db5bfec` lists `.github/workflows/ci.yml`, `CHANGELOG.md`, `README.md`, `test/docs.test.mjs` and `test/package.test.mjs`.
+
+**1. Medium: IPv4-mapped IPv6 got past the profile.** Fixed as proposed.
+- **The profile:** every rule is `(deny network-outbound (remote ip (string-append "*:" (param "X"))))`: those port numbers on any address.
+- **The trade-off is stated:** under "What it guarantees", the same port numbers are refused on remote hosts too. A pane that must reach, say, port 3100 elsewhere can't while the conductor uses it.
+- **Also fixed:**
+  - "What it guarantees" no longer says "on this Mac's loopback, over IPv4 or IPv6". It names any address, the mapped form included.
+  - The profile's comment now reads "no TCP to these port numbers, on any address".
+  - The CHANGELOG bullet says the same.
+  - "The profile" says why: the `localhost:<port>` form let `::ffff:127.0.0.1` through on macOS 12.
+  - A route-around bullet said "the profile names only loopback ports"; it now says `tailscale serve`'s ports are numbers the profile doesn't name.
+- **The test** tries every named port, and the unnamed one, over `127.0.0.1`, `::1`, `localhost`, `::ffff:127.0.0.1`, `::ffff:7f00:1`, `127.1` and `0.0.0.0`. Named ports must get `EPERM` and the other must connect, over all seven.
+- **Checked on macOS 12.7.6** (Node 24 and 22, 30 rounds): every named port refused in all seven forms, and the other port connected.
+- **Mutants:** profile mutants are killed. They put back the `localhost:` form for one port, narrow one to `127.0.0.1:`, or drop one rule.
+
+**2. Medium: macOS 14 was presented as checked.** Fixed: it is tracked, not claimed.
+- **README "Checked" now says:**
+  - macOS 12.7.6, by hand and by the docs test;
+  - macOS 15, by CI's `macos-sandbox` job;
+  - **macOS 14, not yet.** It says what CI saw: with the earlier `localhost:<port>` form, the macOS 14 runner let `BASE_APP` through over `localhost` in 2 of 5 runs, while `127.0.0.1` to the same port got `EPERM` in the same process. Whether the `*:<port>` form holds there is tracked in #43.
+- **#43 is edited** (title and body, as the bot). macOS 14 is back in it, with the anomaly, a new row for `::ffff:127.0.0.1` (2c2), and this Done-when: section 2 holds by hand on macOS 14, run a few times, or CI's job passes on `macos-14` in 10 runs in a row, 30 rounds each.
+- **The CHANGELOG's #43 line** now says macOS 14 is tracked in #43 (the first nit).
+- **So "Fixes #32" stays.** Every check #32 asks for is either done or tracked in #43, as in round 2. If you'd rather this be "Part of #32" until macOS 14 is settled, say so.
+- **The loop:** `QA_SANDBOX_ROUNDS` repeats every try (3 by default, 30 in CI's job), so one pass means something.
+- **Diagnostics (the second nit):** a failure now records, for each try that broke the rule:
+  - its outcome;
+  - the address and port it reached;
+  - the addresses Node tried in turn (`autoSelectFamilyAttemptedAddresses`, which shows `localhost`'s fallback from `::1` to `127.0.0.1`);
+  - its round and its place in the round.
+
+  It also records the number of odd tries, what `localhost` resolves to, and every port.
+- **So far with the `*:` form on `macos-14`:** 3 runs of 30 rounds each, all clean: this PR's run on `db5bfec`, and 2 reruns on the fork. Each round tries every named port in all seven address forms. More reruns are under way, and I'll add their count here. #43's bar is 10 in a row, so macOS 14 stays tracked there until then.
+
+**Low, the job's status.** The README now says `macos-sandbox` is advisory, not a required check, until it has run reliably on both runners. #43 says the same.
+
+**Low, "Today".** Round 2's hedge is restored, and the reason for it stated. The internal network "is meant to close" the path, and each session's probe checks it. CI runs the topology on Linux, where containers don't reach the host's loopback anyway. Docker Desktop and Podman machine, where they do, are tracked in #43.
+
+**Tests:** 812 passed and 0 failed on Node 24 and on Node 22 (`node --test --test-force-exit`); the 3 integration tests skip without `QA_DOCKER_IT=1`. CI on `db5bfec` is green: `test (22)`, `test (24)`, `macos-sandbox` on `macos-14` and `macos-15`, and `docker-integration` on Docker Engine and Podman.

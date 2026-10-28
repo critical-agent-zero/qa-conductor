@@ -1,0 +1,8 @@
+N=30000 seed=1: regressions 0, fixed 7137
+exit 0
+N=40000 seed=11: regressions 0, fixed 13742
+exit 0
+N=40000 seed=7: regressions 0, fixed 10026
+exit 0
+N=40000 seed=23: regressions 0, fixed 9347
+exit 0

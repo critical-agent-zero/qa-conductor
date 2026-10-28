@@ -1,0 +1,19 @@
+[
+  {"id": "E1 order by name", "file": "lib/data-diff.mjs", "old": ".sort((x, y) => x[0] - y[0] || (x[1] < y[1] ? -1 : 1))", "new": ".sort((x, y) => (x[1] < y[1] ? -1 : 1))", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E2 no share", "file": "lib/data-diff.mjs", "old": "    const budget = Math.floor(left / (order.length - i))", "new": "    const budget = left", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E3 no unverified", "file": "lib/data-diff.mjs", "old": "    flags.push({ collection: name, kind: 'unverified',", "new": "    if (false) flags.push({ collection: name, kind: 'unverified',", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E4 old count excuse", "file": "lib/data-diff.mjs", "old": "      const shared = theirs !== undefined && (mine.items === null && theirs.items === null", "new": "      const shared = theirs !== undefined && (mine.items === null || theirs.items === null", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E5 update id key only", "file": "lib/data-diff.mjs", "old": "    const updateId = u => `${u.key} ${u.fields.map(f => f.field).sort().join(',')}`", "new": "    const updateId = u => u.key", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E6 no key-lost flag", "file": "lib/data-diff.mjs", "old": "    if (c.keyLost) add('key-lost', null, 1, ['key-lost'])", "new": "", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E7 nested strings raw", "file": "lib/data-diff.mjs", "old": "      if (typeof v === 'string' && k !== '') return maskText(v, where, depth)", "new": "", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E8 no secret key in text", "file": "lib/data-diff.mjs", "old": "    for (const m of s.matchAll(/[\"']?([A-Za-z0-9_.-]{1,64})[\"']?\\s*[:=]/g)) if (SECRET_NAME.test(m[1])) return true", "new": "", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E9 no held cap", "file": "lib/data-diff.mjs", "old": "    if (s.length > HELD_JSON_MAX || !/^\\s*[[{]/.test(s)) return undefined", "new": "    if (!/^\\s*[[{]/.test(s)) return undefined", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E10 cache never cleared", "file": "lib/data-diff.mjs", "old": "      if (classes.size >= CLASS_CACHE) classes.clear()\n", "new": "", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E11 one-sided compared", "file": "lib/data-diff.mjs", "old": "      status = oneSided ? 'unknown' : sumUp(", "new": "      status = sumUp(", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E12 nested digest unscoped", "file": "lib/data-diff.mjs", "old": "mac(`j:${where}\\u0000${k}\\u0000${toJson(raw, where, HELD_JSON_DEPTH)}`, 8)", "new": "mac(`j:${toJson(raw, where, HELD_JSON_DEPTH)}`, 8)", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E13 sets as objects", "file": "lib/data-diff.mjs", "old": "      if (raw instanceof Set || raw instanceof Map) return [...raw]\n", "new": "", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E14 collections uncapped", "file": "lib/data-diff.mjs", "old": "  if (names.length > maxCollections) {", "new": "  if (false) {", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E15 hyphen names", "file": "lib/data-diff.mjs", "old": "api[-_]?key|", "new": "api_?key|", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E16 base truncated unchanged still flagged", "file": "lib/data-diff.mjs", "old": "    if (b?.truncated && !changed) continue\n", "new": "", "tests": ["test/data-diff.test.mjs"]},
+  {"id": "E17 shared ignores base truncation", "file": "lib/data-diff.mjs", "old": "    const shared = Boolean(b?.truncated) && b.countBefore === c.countBefore && b.countAfter === c.countAfter", "new": "    const shared = Boolean(b?.truncated)", "tests": ["test/data-diff.test.mjs"]}
+]

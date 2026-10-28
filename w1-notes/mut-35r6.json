@@ -1,0 +1,82 @@
+[
+ {
+  "id": "Q1",
+  "file": "lib/data-diff.mjs",
+  "old": "([^\\s/]{1,256})@((?:[a-z][\\w-]{0,31})?\\(|\\/)/gi",
+  "new": "([^\\s/:]{1,256})@((?:[a-z][\\w-]{0,31})?\\(|\\/)/gi",
+  "tests": [
+   "test/data-diff.test.mjs",
+   "test/data-masking-corpus.test.mjs"
+  ]
+ },
+ {
+  "id": "Q2",
+  "file": "lib/data-diff.mjs",
+  "old": "      .replace(DSN_USERINFO, (_, user, pw, rest) => `${user}:${hidden('d', pw)}@${rest}`)\n      .replace(JWT, value => hidden('j', value))",
+  "new": "      .replace(JWT, value => hidden('j', value))",
+  "tests": [
+   "test/data-diff.test.mjs",
+   "test/data-masking-corpus.test.mjs"
+  ]
+ },
+ {
+  "id": "Q3",
+  "file": "lib/data-diff.mjs",
+  "old": "    } else re.lastIndex = m.index + scheme.length",
+  "new": "    } else { out += text.slice(last, m.index + whole.length); last = m.index + whole.length }",
+  "tests": [
+   "test/data-diff.test.mjs",
+   "test/data-masking-corpus.test.mjs"
+  ]
+ },
+ {
+  "id": "Q4",
+  "file": "lib/data-diff.mjs",
+  "old": "      const paired = pair !== null && pair.values.includes(field) && !named.includes(field)",
+  "new": "      const paired = pair !== null && pair.values.includes(field)",
+  "tests": [
+   "test/data-diff.test.mjs",
+   "test/data-masking-corpus.test.mjs"
+  ]
+ },
+ {
+  "id": "Q5",
+  "file": "lib/data-diff.mjs",
+  "old": "    return c === undefined || Boolean(c.omitted) || (Boolean(c.truncated) && b !== undefined && !b.truncated)",
+  "new": "    return c === undefined || Boolean(c.omitted)",
+  "tests": [
+   "test/data-diff.test.mjs",
+   "test/data-masking-corpus.test.mjs"
+  ]
+ },
+ {
+  "id": "Q6",
+  "file": "lib/data-diff.mjs",
+  "old": "    return c === undefined || Boolean(c.omitted) || (Boolean(c.truncated) && b !== undefined && !b.truncated)",
+  "new": "    return Boolean(c?.omitted) || (Boolean(c?.truncated) && b !== undefined && !b.truncated)",
+  "tests": [
+   "test/data-diff.test.mjs",
+   "test/data-masking-corpus.test.mjs"
+  ]
+ },
+ {
+  "id": "Q7",
+  "file": "lib/data-diff.mjs",
+  "old": "    fieldsBefore: b?.fields ?? null,",
+  "new": "    fieldsBefore: a?.fields ?? null,",
+  "tests": [
+   "test/data-diff.test.mjs",
+   "test/data-masking-corpus.test.mjs"
+  ]
+ },
+ {
+  "id": "Q8",
+  "file": "lib/data-diff.mjs",
+  "old": "const MYSQL_P = /\\b(?:mysql|mysqldump|mysqladmin|mariadb)\\b[^\\n]{0,256}?\\s-p[^\\s-]/i",
+  "new": "const MYSQL_P = /\\b(?:mysql|mysqldump|mysqladmin|mariadb)\\b[^\\n]{0,256}?\\s-p[^\\s-]/",
+  "tests": [
+   "test/data-diff.test.mjs",
+   "test/data-masking-corpus.test.mjs"
+  ]
+ }
+]

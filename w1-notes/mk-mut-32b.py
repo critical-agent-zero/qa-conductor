@@ -1,0 +1,40 @@
+import json
+P = 'lib/adapters/provisioner-docker.mjs'
+PT = ['test/provisioner-docker.test.mjs']
+m = [
+    ('P1 not internal', P, "await docker.createNetwork(net, { internal: true }).catch(", "await docker.createNetwork(net).catch(", PT),
+    ('P2 app published', P, "paneRef.role === 'pr' && internalUp() ? null : reserved[name].port", "reserved[name].port", PT),
+    ('P3 no proxy env', P, "(role === 'pr' && internalUp() ? { ...(env ?? {}), ...proxyEnv() } : env)", "env", PT),
+    ('P4 base gets proxy', P, "(role === 'pr' && internalUp() ? { ...(env ?? {}), ...proxyEnv() } : env)", "(internal ? { ...(env ?? {}), ...proxyEnv() } : env)", PT),
+    ('P5 transform wins', P, "{ ...(env ?? {}), ...proxyEnv() }", "{ ...proxyEnv(), ...(env ?? {}) }", PT),
+    ('P6 no fallback', P, "      if (err?.name === 'AbortError') throw err\n      await docker.rmForce([FORWARDER])", "      throw err\n      await docker.rmForce([FORWARDER])", PT),
+    ('P7 reuse any', P, "        if (!(await docker.networkInternal(net))) throw new Error(`a network ${net} exists that isn't internal`)\n", "", PT),
+    ('P8 fallback no undo', P, "      await docker.rmNetwork(net).catch(() => {})\n      await docker.rmNetwork(edge)", "      await docker.rmNetwork(edge)", PT),
+    ('P9 abort falls back', P, "      if (err?.name === 'AbortError') throw err\n      await docker.rmForce([FORWARDER])", "      await docker.rmForce([FORWARDER])", PT),
+    ('P10 DD reason kept', P, "if (/docker desktop/i.test(runtime.os) && !up)", "if (/docker desktop/i.test(runtime.os))", PT),
+    ('P11 podman kept', P, "if (/podman/i.test(runtime.version) && !up)", "if (/podman/i.test(runtime.version))", PT),
+    ('P12 no vias', P, "const vias = up ? ['--', proxy,", "const vias = false ? ['--', proxy,", PT),
+    ('P13 v6 bare', P, "(address.includes(':') ? `[${address}]:${port}` : `${address}:${port}`)", "`${address}:${port}`", PT),
+    ('P14 silent proxy ok', P, "    if (up && !answered) return cannotTell(", "    if (false) return cannotTell(", PT),
+    ('P15 proxied no hit', P, "        if (kind === 'proxied' && where) hits.push(`the PR pane got through the forwarder's proxy to ${where}`)\n", "", PT),
+    ('P16 no internal flag', P, "      if (up) return { ...out, internal: true }", "      if (up) return out", PT),
+    ('P17 no fallback reason', P, "      if (inside && topology && !topology.up && out.verdict !== 'isolated') {", "      if (false) {", PT),
+    ('P18 teardown keeps fwd', P, "...(withForwarder ? [FORWARDER] : []), ", "", PT),
+    ('P19 teardown keeps edge', P, "const edgeNet = withForwarder ? await docker.rmNetwork(edge).then(() => {}, err => err) : undefined", "const edgeNet = undefined", PT),
+    ('P20 sweep keeps edge', P, "...(inside ? [edge] : [])", "", PT),
+    ('P21 floors ignore internal', 'lib/isolation.mjs', "containers && internal !== true", "containers", ['test/isolation.test.mjs', 'test/server.test.mjs']),
+    ('P22 server trusts intent', 'lib/server.mjs', "internal = raw?.internal === true", "internal = adapters.provisioner?.internal === true", ['test/server.test.mjs']),
+    ('P23 server start ignores intent', 'lib/server.mjs', "runtimeFloors(adapters.provisioner?.internal === true)", "runtimeFloors(false)", ['test/server.test.mjs']),
+    ('P24 forwarder runs imported', 'lib/forwarder.mjs', " && /\\[eval\\d*\\]$/.test(import.meta.url)", "", ['test/forwarder.test.mjs']),
+    ('P25 edge collision', P, "  if (inside && edge === networks.base) throw new Error(", "  if (false) throw new Error(", PT),
+    ('P26 egress unchecked', P, "    parseAllowlist(given.egress)\n", "", PT),
+    ('P27 refused as proxied', P, "  '    HTTP/*) echo \"refused $1\" ;;',", "  '    HTTP/*) echo \"proxied $1\" ;;',", PT),
+    ('P28 vias from 0', P, "  'for t in \"${vias[@]:1}\"; do via \"$t\" & done',", "  'for t in \"${vias[@]}\"; do via \"$t\" & done',", PT),
+    ('P29 fwd as root', 'lib/docker.mjs', ", '--user', 'node',", ",", ['test/docker.test.mjs']),
+    ('P30 fwd to base', P, "forward: { listen: 3000, to: `${appName('pr')}:3000` }", "forward: { listen: 3000, to: `${appName('base')}:3000` }", PT),
+    ('P31 no fwd image pull', P, "      await docker.ensureImage(inside.image, ensureOpts)\n", "", PT),
+    ('P32 edge internal too', P, "await docker.createNetwork(edge).catch(", "await docker.createNetwork(edge, { internal: true }).catch(", PT),
+]
+json.dump([{'id': i, 'file': f, 'old': o, 'new': n, 'tests': t} for i, f, o, n, t in m],
+          open('/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/w1/notes/mut-32b.json', 'w'), indent=1)
+print(len(m))

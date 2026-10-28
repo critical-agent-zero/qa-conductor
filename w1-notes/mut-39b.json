@@ -1,0 +1,155 @@
+[
+ {
+  "id": "V1 tunnel destroy",
+  "file": "lib/forwarder.mjs",
+  "old": "if (open) socket.destroySoon() })",
+  "new": "if (open) socket.destroy() })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V2 forward destroy",
+  "file": "lib/forwarder.mjs",
+  "old": "upstream.on('close', () => client.destroySoon())",
+  "new": "upstream.on('close', () => client.destroy())",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V3 at allowed",
+  "file": "lib/forwarder.mjs",
+  "old": "const NOT_A_HOST = /[@/?#\\\\%\\s]/",
+  "new": "const NOT_A_HOST = /[/?#\\\\%\\s]/",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V4 path allowed",
+  "file": "lib/forwarder.mjs",
+  "old": "const NOT_A_HOST = /[@/?#\\\\%\\s]/",
+  "new": "const NOT_A_HOST = /[@?#\\\\%\\s]/",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V5 hash allowed",
+  "file": "lib/forwarder.mjs",
+  "old": "const NOT_A_HOST = /[@/?#\\\\%\\s]/",
+  "new": "const NOT_A_HOST = /[@/?\\\\%\\s]/",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V6 space allowed",
+  "file": "lib/forwarder.mjs",
+  "old": "const NOT_A_HOST = /[@/?#\\\\%\\s]/",
+  "new": "const NOT_A_HOST = /[@/?#\\\\%]/",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V7 backslash allowed",
+  "file": "lib/forwarder.mjs",
+  "old": "const NOT_A_HOST = /[@/?#\\\\%\\s]/",
+  "new": "const NOT_A_HOST = /[@/?#%\\s]/",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V8 trim back",
+  "file": "lib/forwarder.mjs",
+  "old": "  const s = String(text ?? '')\n",
+  "new": "  const s = String(text ?? '').trim()\n",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V9 connect after gone",
+  "file": "lib/forwarder.mjs",
+  "old": "      if (socket.destroyed) return\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V10 http dials after gone",
+  "file": "lib/forwarder.mjs",
+  "old": "      if (gone) return\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V11 http res close",
+  "file": "lib/forwarder.mjs",
+  "old": "      res.on('close', () => { if (!res.writableFinished) upstream.destroy() })\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V12 connect timer",
+  "file": "lib/forwarder.mjs",
+  "old": "      const connecting = setTimeout(() => upstream.destroy(new Error('timed out')), connectMs)\n      upstream.once('connect'",
+  "new": "      const connecting = setTimeout(() => {}, connectMs)\n      upstream.once('connect'",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V13 reset ignored",
+  "file": "lib/forwarder.mjs",
+  "old": "      socket.on('error', () => upstream?.destroy())\n",
+  "new": "      socket.on('error', () => {})\n",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V14 listen failure kept",
+  "file": "lib/forwarder.mjs",
+  "old": "    await Promise.all(servers.map(server => new Promise(resolve => (server.listening ? server.close(() => resolve()) : resolve()))))\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V15 default any port",
+  "file": "lib/forwarder.mjs",
+  "old": "const DEFAULT_PORTS = [80, 443]",
+  "new": "const DEFAULT_PORTS = Array.from({ length: 65535 }, (_, i) => i + 1)",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V16 close ignored",
+  "file": "lib/forwarder.mjs",
+  "old": "      socket.on('close', () => upstream?.destroySoon())\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V17 url parts unchecked",
+  "file": "lib/forwarder.mjs",
+  "old": "    if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) return null\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ }
+]

@@ -1,0 +1,4 @@
+4a284f9: in clear ["@/","cloudsql"]; 256 KB of 'a:' cpu 168 ms
+4ed6449: in clear ["ending in a colon","unix, colon","log line","fuzz sample"]; 256 KB of 'a:' cpu 30 ms
+fix: in clear []; 256 KB of 'a:' cpu 174 ms
+exit 0

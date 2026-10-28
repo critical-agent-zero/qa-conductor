@@ -1,0 +1,226 @@
+N=40000 seed=11: regressions 56, fixed 13427
+---
+in   "Bearer %27state%27%3a--db-token=%27a:Zq9SeCr3tValmysql -u root -p<add key=\"DbPassword\" value=\""
+old  "[text with a secret-looking key, 94 characters, 93b4774a]"
+new  "Bearer %27state%27%3a--db-token=%27a:Zq9SeCr3tValmysql -u root -p<add key=\"DbPassword\" value=\""
+---
+in   "%22x%22                    =%22a`%3DPassword=Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 57 characters, 66c039bd]"
+new  "%22x%22                    =%22a`%3DPassword=Zq9SeCr3tVal"
+---
+in   "redis://:a`%3adb-token%3d%27state%27%3D--db-token=.Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 63 characters, b592d508]"
+new  "redis://:a`%3adb-token%3d%27state%27%3D--db-token=.Zq9SeCr3tVal"
+---
+in   "</password>`name%3A--db-token='Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 43 characters, d1b981e8]"
+new  "</password>`name%3A--db-token='Zq9SeCr3tVal"
+---
+in   "Zq9SeCr3tVal&QUOT;state&QUOT;%3D--db-token="
+old  "[text with a secret-looking key, 43 characters, 6b7d6926]"
+new  "Zq9SeCr3tVal&QUOT;state&QUOT;%3D--db-token="
+---
+in   "value%3aZq9SeCr3tVal--db-token="
+old  "[text with a secret-looking key, 31 characters, e64c23bb]"
+new  "value%3aZq9SeCr3tVal--db-token="
+---
+in   "state%3AZq9SeCr3tValtoken%22%3dtoken:"
+old  "[text with a secret-looking key, 37 characters, 19cf2d8d]"
+new  "state%3AZq9SeCr3tValtoken%22%3dtoken:"
+---
+in   "Zq9SeCr3tValauth%22%3d&QUOT;state%22%3D--db-token=name%3A"
+old  "[text with a secret-looking key, 57 characters, 13da99c8]"
+new  "Zq9SeCr3tValauth%22%3d&QUOT;state%22%3D--db-token=name%3A"
+---
+in   "Zq9SeCr3tVal&QUOT;state%27%3a--db-token=bearer  <input type=\"password\" value=\"Token "
+old  "[text with a secret-looking key, 84 characters, 352dfb80]"
+new  "Zq9SeCr3tVal&QUOT;state%27%3a--db-token=bearer  <input type=\"password\" value=\"Token "
+---
+in   "%22value%3a-p--db-token=mysql://u:Zq9SeCr3tValredis://:"
+old  "[text with a secret-looking key, 55 characters, 25d26803]"
+new  "%22value%3a-p--db-token=mysql://u:Zq9SeCr3tValredis://:"
+---
+in   "{\"note\":\"Zq9SeCr3tVal`id`%3A--db-token=git@\"}"
+old  {"t":"json","s":"{\"note\":\"[text with a secret-looking key, 34 characters, eb93598f]\"}"}
+new  {"t":"json","s":"{\"note\":\"Zq9SeCr3tVal`id`%3A--db-token=git@\"}"}
+---
+in   "Zq9SeCr3tValredis://:%27state&QUOT;%3A--db-token="
+old  "[text with a secret-looking key, 49 characters, a427f88f]"
+new  "Zq9SeCr3tValredis://:%27state&QUOT;%3A--db-token="
+---
+in   "Zq9SeCr3tVal;a&QUOT;                    =&QUOT;id%3a%22name%3DPassword%22%3D--db-token=Bearer "
+old  "[text with a secret-looking key, 94 characters, ec4eee34]"
+new  "Zq9SeCr3tVal;a&QUOT;                    =&QUOT;id%3a%22name%3DPassword%22%3D--db-token=Bearer "
+---
+in   "&QUOT;x=%22state`%3DZq9SeCr3tVal--db-token=x-oauth-basic"
+old  "[text with a secret-looking key, 56 characters, d52c7f61]"
+new  "&QUOT;x=%22state`%3DZq9SeCr3tVal--db-token=x-oauth-basic"
+---
+in   "https://ghp_A1b2C3d4E5f6G7h8I9j0:Zq9SeCr3tValstate%3D--db-token="
+old  "[text with a secret-looking key, 64 characters, 25453679]"
+new  "https://ghp_A1b2C3d4E5f6G7h8I9j0:Zq9SeCr3tValstate%3D--db-token="
+---
+in   "mysql://u:eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.</password>Bearer &QUOT;x%3DZq9SeCr3tValPassword:"
+old  "[text with a secret-looking key, 96 characters, b24e41b2]"
+new  "mysql://u:eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.</password>Bearer &QUOT;x%3DZq9SeCr3tValPassword:"
+---
+in   "Token \"%27a%3D--db-token=Zq9SeCr3tVal</password>"
+old  "[text with a secret-looking key, 48 characters, dc1d99c9]"
+new  "Token \"%27a%3D--db-token=Zq9SeCr3tVal</password>"
+---
+in   "Bearer x%27=https://id%3aZq9SeCr3tVal--db-token="
+old  "[text with a secret-looking key, 48 characters, 4b1d99b0]"
+new  "Bearer x%27=https://id%3aZq9SeCr3tVal--db-token="
+---
+in   "k%3A--db-token=Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 27 characters, fc307f55]"
+new  "k%3A--db-token=Zq9SeCr3tVal"
+---
+in   "%2F;value&QUOT;%3Adb-token:Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 39 characters, bd610abf]"
+new  "%2F;value&QUOT;%3Adb-token:Zq9SeCr3tVal"
+---
+in   "name%27%3D&QUOT;x%3d%22a%3D%22pw%3a--db-token=1Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 59 characters, 80d77042]"
+new  "name%27%3D&QUOT;x%3d%22a%3D%22pw%3a--db-token=1Zq9SeCr3tVal"
+---
+in   "Zq9SeCr3tVal`id%3d&QUOT;k%22%3A--db-token=state`:-"
+old  "[text with a secret-looking key, 50 characters, 95b4a2bd]"
+new  "Zq9SeCr3tVal`id%3d&QUOT;k%22%3A--db-token=state`:-"
+---
+in   "Zq9SeCr3tValroot:value&QUOT;%3A--db-token=Token </password><input type=\"password\" value=\""
+old  "[text with a secret-looking key, 89 characters, 22ca4a28]"
+new  "Zq9SeCr3tValroot:value&QUOT;%3A--db-token=Token </password><input type=\"password\" value=\""
+---
+in   "Zq9SeCr3tValmysql -u root -p&QUOT;value`%3a--db-token=Basic "
+old  "[text with a secret-looking key, 60 characters, 6ae2b959]"
+new  "Zq9SeCr3tValmysql -u root -p&QUOT;value`%3a--db-token=Basic "
+---
+in   "git@bearer  `a%3apassword:<a redis://:Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 50 characters, ec17632f]"
+new  "git@bearer  `a%3apassword:<a redis://:Zq9SeCr3tVal"
+---
+in   "Zq9SeCr3tVal\\nBearer name%3aredis://:%27x%22%3Dpassword=mysql://u:"
+old  "[text with a secret-looking key, 66 characters, 5a00bf52]"
+new  "Zq9SeCr3tVal\\nBearer name%3aredis://:%27x%22%3Dpassword=mysql://u:"
+---
+in   "`name%3a@tcp(h)eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.value`%3D--db-token=Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 84 characters, 49c69ad9]"
+new  "`name%3a@tcp(h)[secret 1e7266a6]`%3D--db-token=Zq9SeCr3tVal"
+---
+in   "Zq9SeCr3tVala%27%3Adb-token=&QUOT;a                    =_"
+old  "[text with a secret-looking key, 57 characters, 9c3efae9]"
+new  "Zq9SeCr3tVala%27%3Adb-token=&QUOT;a                    =_"
+---
+in   "%27state%27%3AZq9SeCr3tVal--db-token=>%22a%27="
+old  "[text with a secret-looking key, 46 characters, 392edfe4]"
+new  "%27state%27%3AZq9SeCr3tVal--db-token=>%22a%27="
+---
+in   "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.pw%3dtoken:Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 60 characters, c6e74b43]"
+new  "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.pw%3dtoken:Zq9SeCr3tVal"
+---
+in   "Zq9SeCr3tValgit@state%3D--db-token="
+old  "[text with a secret-looking key, 35 characters, 9acfe3ec]"
+new  "Zq9SeCr3tValgit@state%3D--db-token="
+---
+in   "Zq9SeCr3tVal<%22a%3Aapi_key="
+old  "[text with a secret-looking key, 28 characters, 8ab4c7a6]"
+new  "Zq9SeCr3tVal<%22a%3Aapi_key="
+---
+in   "x&QUOT;%3d--db-token=https://&QUOT;a=Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 49 characters, c1571cd7]"
+new  "x&QUOT;%3d--db-token=https://&QUOT;a=Zq9SeCr3tVal"
+---
+in   "{\"note\":\"`name%22%3D--db-token=root:Zq9SeCr3tValmysql://u:%27value%3d//\"}"
+old  {"t":"json","s":"{\"note\":\"[text with a secret-looking key, 62 characters, cda8843c]\"}"}
+new  {"t":"json","s":"{\"note\":\"`name%22%3D--db-token=root:Zq9SeCr3tValmysql://u:%27value%3d//\"}"}
+---
+in   "value%27%3A--db-token=1&QUOT;state%27%3DZq9SeCr3tVal"
+old  "[text with a secret-looking key, 52 characters, b72a00f2]"
+new  "value%27%3A--db-token=1&QUOT;state%27%3DZq9SeCr3tVal"
+---
+in   "git@%27name%3aZq9SeCr3tValtoken="
+old  "[text with a secret-looking key, 32 characters, 2a9779e1]"
+new  "git@%27name%3aZq9SeCr3tValtoken="
+---
+in   "<a Basic %22x`%3d--db-token=Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 40 characters, a75786bc]"
+new  "<a Basic %22x`%3d--db-token=Zq9SeCr3tVal"
+---
+in   "%22a:mysql://u: %22x`:`x%3Dapi_key=<add key=\"DbPassword\" value=\"state`=Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 83 characters, ec6a586a]"
+new  "%22a:mysql://u: %22x`:`x%3Dapi_key=<add key=\"DbPassword\" value=\"state`=Zq9SeCr3tVal"
+---
+in   "<add key=\"DbPassword\" value=\"%26Zq9SeCr3tVal`k%22%3D--db-token="
+old  "[text with a secret-looking key, 63 characters, 21e0e666]"
+new  "<add key=\"DbPassword\" value=\"%26Zq9SeCr3tVal`k%22%3D--db-token="
+---
+in   "a://`state%22%3d`k%27%3dpassword=Zq9SeCr3tVal<add key=\"DbPassword\" value=\""
+old  "[text with a secret-looking key, 74 characters, 32f13628]"
+new  "a://`state%22%3d`k%27%3dpassword=Zq9SeCr3tVal<add key=\"DbPassword\" value=\""
+---
+in   "%27state%22%3DPassword%22%3dZq9SeCr3tValZq9SeCr3tValtoken:<input type=\"password\" value=\"Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 100 characters, d5076009]"
+new  "%27state%22%3DPassword%22%3dZq9SeCr3tValZq9SeCr3tValtoken:<input type=\"password\" value=\"Zq9SeCr3tVal"
+---
+in   "?-pZq9SeCr3tVal1%22name%22%3A--db-token=https:////"
+old  "[text with a secret-looking key, 50 characters, 3e4cea5c]"
+new  "?-pZq9SeCr3tVal1%22name%22%3A--db-token=https:////"
+---
+in   "Basic postgres://app:<a %22value%22%3D--db-token=>Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 62 characters, 8460a5d0]"
+new  "Basic postgres://app:<a %22value%22%3D--db-token=>Zq9SeCr3tVal"
+---
+in   "token <Zq9SeCr3tVal%27value%27%3D--db-token="
+old  "[text with a secret-looking key, 44 characters, 91805c52]"
+new  "token <Zq9SeCr3tVal%27value%27%3D--db-token="
+---
+in   "a%3a--db-token=Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 27 characters, f0f00d72]"
+new  "a%3a--db-token=Zq9SeCr3tVal"
+---
+in   "Zq9SeCr3tVal<add key=\"DbPassword\" value=\"state%27%3d--db-token=%2F%27state%22="
+old  "[text with a secret-looking key, 78 characters, 38d6bb14]"
+new  "Zq9SeCr3tVal<add key=\"DbPassword\" value=\"state%27%3d--db-token=%2F%27state%22="
+---
+in   "<input type=\"password\" value=\"redis://:%2FZq9SeCr3tValk`%3A--db-token=Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 82 characters, 56005e41]"
+new  "<input type=\"password\" value=\"redis://:%2FZq9SeCr3tValk`%3A--db-token=Zq9SeCr3tVal"
+---
+in   "&QUOT;x%22%3aZq9SeCr3tVal--db-token=bearer  Zq9SeCr3tVal"
+old  "[text with a secret-looking key, 56 characters, 3a246460]"
+new  "&QUOT;x%22%3aZq9SeCr3tVal--db-token=bearer [secret 083c0251]"
+---
+in   "Bearer https://Zq9SeCr3tVal%22value%22%3D--db-token="
+old  "[text with a secret-looking key, 52 characters, eb4386f4]"
+new  "Bearer https://Zq9SeCr3tVal%22value%22%3D--db-token="
+---
+in   "&QUOT;value%3dtoken:Zq9SeCr3tValToken </password>name%27%3a"
+old  "[text with a secret-looking key, 59 characters, 9484b98d]"
+new  "&QUOT;value%3dtoken:Zq9SeCr3tValToken </password>name%27%3a"
+---
+in   "<<a 1Zq9SeCr3tVal>dXNlcjpwYXNz%22state%3aapi_key:"
+old  "[text with a secret-looking key, 49 characters, 5f980420]"
+new  "<<a 1Zq9SeCr3tVal>dXNlcjpwYXNz%22state%3aapi_key:"
+---
+in   "Zq9SeCr3tVal@tcp(h)mysql://u:%22state%22%3asecret:</password>"
+old  "[text with a secret-looking key, 61 characters, bdc6b420]"
+new  "Zq9SeCr3tVal@tcp(h)mysql://u:%22state%22%3asecret:</password>"
+---
+in   "git@value`%3aZq9SeCr3tValPassword="
+old  "[text with a secret-looking key, 34 characters, e950684e]"
+new  "git@value`%3aZq9SeCr3tValPassword="
+---
+in   "a://a%3a--db-token=Zq9SeCr3tValhttps://ghp_A1b2C3d4E5f6G7h8I9j0:&Zq9SeCr3tValToken "
+old  "[text with a secret-looking key, 83 characters, e5313a9e]"
+new  "a://a%3a--db-token=Zq9SeCr3tValhttps://ghp_A1b2C3d4E5f6G7h8I9j0:&Zq9SeCr3tValToken "
+---
+in   "@tcp(h)`name%3dZq9SeCr3tVal--db-token=redis://:"
+old  "[text with a secret-looking key, 47 characters, bc616b77]"
+new  "@tcp(h)`name%3dZq9SeCr3tVal--db-token=redis://:"
+---
+in   "id%3aZq9SeCr3tVal--db-token="
+old  "[text with a secret-looking key, 28 characters, c21dbf2c]"
+new  "id%3aZq9SeCr3tVal--db-token="
+exit 0

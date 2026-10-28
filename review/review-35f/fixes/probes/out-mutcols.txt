@@ -1,0 +1,3 @@
+head [["users","column-dropped","red",false,["email"]]]
+mutant [["users","column-dropped","amber",true,["email"]]]
+exit 0

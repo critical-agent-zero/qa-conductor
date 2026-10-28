@@ -1,0 +1,101 @@
+[
+ {
+  "id": "N1",
+  "file": "lib/data-diff.mjs",
+  "old": "(?:\\s[^<>]{0,256})?>/g\nconst FLAG",
+  "new": "(?:\\s[^>]{0,256})?>/g\nconst FLAG",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N2",
+  "file": "lib/data-diff.mjs",
+  "old": "    add('column-dropped', null, c.fieldsDropped.length, [...c.fieldsDropped])",
+  "new": "    for (const field of c.fieldsDropped) add('column-dropped', field, 1, [field])",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N3",
+  "file": "lib/data-diff.mjs",
+  "old": ".sort().slice(0, 5) }",
+  "new": ".slice(0, 5) }",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N10",
+  "file": "lib/data-diff.mjs",
+  "old": "    if (name === null && PAIR_NAMES.has(lower) && typeof obj[k] === 'string') name = obj[k]",
+  "new": "    if (name === null && PAIR_NAMES.has(lower)) name = String(obj[k])",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N12",
+  "file": "lib/data-diff.mjs",
+  "old": "const QUOTE = String.raw`(?:\\\\*[\"'\\x60]",
+  "new": "const QUOTE = String.raw`(?:\\\\?[\"'\\x60]",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N24",
+  "file": "lib/data-diff.mjs",
+  "old": "        const userShown = user !== '' && (tokenLike(user) || pw === '' || oauth) ? hidden('u', user) : user",
+  "new": "        const userShown = user !== '' && (tokenLike(user) || oauth) ? hidden('u', user) : user",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N25",
+  "file": "lib/data-diff.mjs",
+  "old": "        const userShown = user !== '' && (tokenLike(user) || pw === '' || oauth) ? hidden('u', user) : user",
+  "new": "        const userShown = user !== '' && (tokenLike(user) || pw === '') ? hidden('u', user) : user",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N26",
+  "file": "lib/data-diff.mjs",
+  "old": "  || (/^basic$/i.test(scheme) && value.length % 4 === 0",
+  "new": "  || (false && value.length % 4 === 0",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N29",
+  "file": "lib/data-diff.mjs",
+  "old": "      .replace(JWT, value => hidden('j', value))\n",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N32",
+  "file": "lib/data-diff.mjs",
+  "old": "const tokenLike = s => /^(?:gh[pousr]_|github_pat_|glpat-|xox[abpr]-|sk_live_|sk-)/.test(s) || (s.length >= 16 && /\\d/.test(s))",
+  "new": "const tokenLike = s => (s.length >= 16 && /\\d/.test(s))",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N34",
+  "file": "lib/data-diff.mjs",
+  "old": "  const late = f => (LOSES_DATA.has(f.kind) ? 0 : f.kind === 'unverified' || f.kind === 'cleared' ? 2 : 1)",
+  "new": "  const late = f => (LOSES_DATA.has(f.kind) ? 0 : f.kind === 'unverified' ? 2 : 1)",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ }
+]

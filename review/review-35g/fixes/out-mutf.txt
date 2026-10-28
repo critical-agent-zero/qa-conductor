@@ -1,0 +1,13 @@
+leftout_no-pr-lacks KILLED ✖ the review's mutant cases: a base collection the PR's diff lacks sorts with what loses rows; fieldsBefore is the befor|✖ failing tests:|✖ the review's mutant cases: a base collection the PR's diff lacks sorts with what loses rows; fieldsBefore is the befor|
+leftout_no-omitted survives 
+leftout_omitted-after-only survives 
+leftout_no-cut-short KILLED ✖ padding collections can't push a collection out of the PR's snapshots: the biggest are kept, the rest as counts, and a|✖ the unverified flags of collections only the PR pane has are folded into one, after the base pane's collections (2.541|✖ failing tests:|
+leftout_cut-short-ignores-base KILLED ✖ flagChanges: the mass-change thresholds, and a truncated collection's fall in count (22.691755ms)|✖ flags: dropped columns of the same number but other names are the PR's own; a cleared field shared on one row of three|✖ failing tests:|
+leftout_null-fold-too survives 
+fieldsBefore_from-after KILLED ✖ the review's mutant cases: a base collection the PR's diff lacks sorts with what loses rows; fieldsBefore is the befor|✖ failing tests:|✖ the review's mutant cases: a base collection the PR's diff lacks sorts with what loses rows; fieldsBefore is the befor|
+cols_others-unsorted survives 
+cols_seeded-unsorted KILLED ✖ a flag is amber only when the base made the same change: the same rows, the same fields (5.848155ms)|✖ failing tests:|✖ a flag is amber only when the base made the same change: the same rows, the same fields (5.848155ms)|
+cols_no-seeded-first KILLED ✖ a collection's dropped columns name the ones the base pane declares first, with their own count (2.332309ms)|✖ the review's mutant cases: a base collection the PR's diff lacks sorts with what loses rows; fieldsBefore is the befor|✖ failing tests:|
+cleared_merge-keeps-last survives 
+strip_no-r KILLED ✖ the masking corpus: every shape a review reported as masked stays masked (32.075712ms)|✖ failing tests:|✖ the masking corpus: every shape a review reported as masked stays masked (32.075712ms)|
+pair_soft-guard survives 

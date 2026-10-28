@@ -1,0 +1,200 @@
+[
+ {
+  "id": "M11 fallback: amber flags too",
+  "file": "lib/data-capture.mjs",
+  "old": "...flags.filter(f => f.severity === 'red').slice(0, FALLBACK_FLAGS)",
+  "new": "...flags.slice(0, FALLBACK_FLAGS)",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "M24 rowsChanged: keyLost ignored",
+  "file": "lib/data-capture.mjs",
+  "old": "c.fieldsAdded.length > 0 || c.keyLost",
+  "new": "c.fieldsAdded.length > 0",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "N4 divergence: entry not subtracted",
+  "file": "lib/data-capture.mjs",
+  "old": "      if (size > budget.left) break\n      budget.left -= size\n      const { out, cut } = within(changes, LISTED, budget)",
+  "new": "      if (size > budget.left) break\n      const { out, cut } = within(changes, LISTED, budget)",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "N7 divergence: skip, not stop",
+  "file": "lib/data-capture.mjs",
+  "old": "      if (size > budget.left) break\n      budget.left -= size\n      const { out, cut } = within(changes, LISTED, budget)",
+  "new": "      if (size > budget.left) { list.done++; continue }\n      budget.left -= size\n      const { out, cut } = within(changes, LISTED, budget)",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "N12 byRank: name order reversed",
+  "file": "lib/data-capture.mjs",
+  "old": "(x.name < y.name ? -1 : x.name > y.name ? 1 : 0)",
+  "new": "(x.name < y.name ? 1 : x.name > y.name ? -1 : 0)",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "N15a rank: own amber not ranked",
+  "file": "lib/data-capture.mjs",
+  "old": "moved ? 4 : order.has(name) ? 5 :",
+  "new": "moved ? 4 : false ? 5 :",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "N15b rank: seeded amber not ranked",
+  "file": "lib/data-capture.mjs",
+  "old": "    if (order.has(name)) return [2, order.get(name)]\n",
+  "new": "",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "N23 cut: whenever another stopped",
+  "file": "lib/data-capture.mjs",
+  "old": "...(list.done < list.todo.length ? { cut: true } : {})",
+  "new": "...(lists.some(l => l.done < l.todo.length) ? { cut: true } : {})",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R1 queue: each list whole, in turn",
+  "file": "lib/data-capture.mjs",
+  "old": ".sort((x, y) => byRank(x.item, y.item) || x.at - y.at)",
+  "new": ".sort((x, y) => x.at - y.at || byRank(x.item, y.item))",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R2 queue: by tier only",
+  "file": "lib/data-capture.mjs",
+  "old": ".sort((x, y) => byRank(x.item, y.item) || x.at - y.at)",
+  "new": ".sort((x, y) => x.item.rank[0] - y.item.rank[0] || x.at - y.at)",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R3 own: no base snapshot",
+  "file": "lib/data-capture.mjs",
+  "old": "      const known = latest.base ?? baseline.base ?? seeded.base\n",
+  "new": "      const known = null\n",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R4 own: no boot.pr fallback",
+  "file": "lib/data-capture.mjs",
+  "old": "      if (boot.pr) return name => Object.hasOwn(boot.pr.collections, name) && boot.pr.collections[name].status === 'added'\n",
+  "new": "",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R5 own: everything own without a base diff",
+  "file": "lib/data-capture.mjs",
+  "old": "      if (base) return name => !Object.hasOwn(base.collections, name)\n",
+  "new": "      if (base) return name => !Object.hasOwn(base.collections, name)\n      return () => true\n",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R6 flags: amber after every red",
+  "file": "lib/data-capture.mjs",
+  "old": "  return within(out, LISTED_FLAGS, budget).out",
+  "new": "  return within([...out.filter(f => f.severity === 'red'), ...out.filter(f => f.severity !== 'red')], LISTED_FLAGS, budget).out",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R7 answer order: owned ignored",
+  "file": "lib/data-capture.mjs",
+  "old": "owned(a) - owned(b) || sev(a)",
+  "new": "sev(a)",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R8 answer order: key-lost with row-losing",
+  "file": "lib/data-capture.mjs",
+  "old": "f.kind === 'key-lost' ? 1 : 2",
+  "new": "f.kind === 'key-lost' ? 0 : 2",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R9 answer order: no groups",
+  "file": "lib/data-capture.mjs",
+  "old": "|| group(a) - group(b) ",
+  "new": "",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R10 answer order: leftOut not row-losing",
+  "file": "lib/data-capture.mjs",
+  "old": "(ROW_LOSING.has(f.kind) || leftOut(f) ? 0 :",
+  "new": "(ROW_LOSING.has(f.kind) ? 0 :",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R11 takeAll: mask as each read lands",
+  "file": "lib/data-capture.mjs",
+  "old": "    const raws = await Promise.all(panes.map(pane => read(pane, phase, signal)))\n    return raws.map(masked)",
+  "new": "    return Promise.all(panes.map(pane => take(pane, phase, signal)))",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R12 reason: base diff, not the base read",
+  "file": "lib/data-capture.mjs",
+  "old": "baseRead ? why ?? 'failed' : 'neither'",
+  "new": "base ? why ?? 'failed' : 'neither'",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R13 reason: session passes no fresh base",
+  "file": "lib/data-capture.mjs",
+  "old": "Boolean(session.base) || fresh.base)",
+  "new": "Boolean(session.base))",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R14 flags: seeded amber dropped",
+  "file": "lib/data-capture.mjs",
+  "old": "    if (f.severity === 'red' && f.kind === 'unverified'",
+  "new": "    if (f.severity !== 'red') continue\n    if (f.kind === 'unverified'",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ }
+]

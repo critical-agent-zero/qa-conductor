@@ -1,0 +1,98 @@
+ok         empty_user                   new "cache at redis://:[secret d17dd0c8]@cache:6379/0"
+ok         at_in_pw                     new "postgres://app:[secret c5a51bd2]@db:5432/app"
+ok         u_alone                      new "git remote https://[secret 3c78cc46]@github.com/o/r.git"
+ok         u_user_x_oauth               new "git remote https://[secret 3c78cc46]:x-oauth-basic@github.com/o/r.git"
+ok         u_user_empty_pw              new "https://[secret 3c78cc46]:@github.com/o/r.git"
+ok         scheme_lower                 new "sent header bearer [secret 69d91241] ok"
+ok         scheme_upper                 new "BEARER [secret 69d91241]"
+ok         scheme_mixed                 new "BeArEr [secret 69d91241]"
+ok         basic_short_b64              new "[text with a secret-looking key, 26 characters, 49a6bb1f]"
+ok         basic_b64_pad                new "[text with a secret-looking key, 30 characters, 4cb2c148]"
+ok         basic_header_only            new "Authorization header: Basic [secret 9d7368cc]"
+CLEAR-BOTH scheme_short_alpha           new "send Token abcdefghij to it"
+ok         wsse                         new "[text with a secret-looking key, 91 characters, 81390635]"
+ok         xml_attr                     new "[text with a secret-looking key, 46 characters, a7cca893]"
+ok         html_quot                    new "[text with a secret-looking key, 62 characters, ed62f2c7]"
+ok         html_34                      new "[text with a secret-looking key, 58 characters, 57bbe149]"
+ok         html_x22                     new "[text with a secret-looking key, 62 characters, b8061000]"
+ok         html_X22_upper               new "[text with a secret-looking key, 62 characters, d41bf753]"
+ok         html_QUOT_upper              new "[text with a secret-looking key, 62 characters, 205a0603]"
+ok         newline_key                  new "[text with a secret-looking key, 26 characters, 8df9bbe1]"
+ok         win_path_key                 new "[text with a secret-looking key, 25 characters, a6e60d7f]"
+ok         spaced                       new "[text with a secret-looking key, 26 characters, be0ccf3b]"
+ok         url_userinfo                 new "postgres://app:[secret 188f69a7]@db:5432/x"
+ok         url_empty_user               new "redis://:[secret 188f69a7]@cache:6379"
+ok         bearer                       new "Authorization header was Bearer [secret 35ddd18f]"
+ok         key_eq                       new "[text with a secret-looking key, 21 characters, 0d008860]"
+ok         esc_quotes                   new "[text with a secret-looking key, 32 characters, 74eaad1e]"
+ok         tag_ns                       new "[text with a secret-looking key, 52 characters, fa441ad2]"
+ok         yaml                         new "[text with a secret-looking key, 29 characters, 541a3b95]"
+ok         mysql_backtick               new "[text with a secret-looking key, 59 characters, 5df75e90]"
+ok         md_inline                    new "[text with a secret-looking key, 24 characters, a88174d0]"
+ok         cli_flag_space               new "[text with a secret-looking key, 41 characters, 3b0b3dbf]"
+ok         cli_p_glued                  new "[text with a secret-looking key, 31 characters, 0be807c9]"
+ok         go_dsn                       new "root:[secret 594209aa]@tcp(127.0.0.1:3306)/app"
+CLEAR-BOTH url_raw_slash                new "postgres://app:Zq9SeCr3tVal/x@db/app"
+ok         jwt                          new "[secret a0ec92ec]"
+ok         form_body                    new "[text with a secret-looking key, 54 characters, 11aea7a5]"
+ok         pct_json                     new "[text with a secret-looking key, 51 characters, bfb52cd6]"
+ok         dotnet_add                   new "<add key=\"DbPassword\" value=\"[secret f46643a8]\" />"
+ok         html_input                   new "<input type=\"password\" name=\"pw\" value=\"[secret f46643a8]\">"
+ok         aligned10                    new "[text with a secret-looking key, 32 characters, ef4e7152]"
+CLEAR-BOTH sql_insert                   new "INSERT INTO users (email, password) VALUES ('a@x', 'Zq9SeCr3tVal')"
+ok         pem                          new "[text with a secret-looking key, 90 characters, 5942654b]"
+FIXED      tag_attr_lt                  new "[text with a secret-looking key, 44 characters, 28ac81ec]"
+FIXED      tag_attr_lt_ns               new "[text with a secret-looking key, 54 characters, 821b9825]"
+FIXED      tag_attr_lt_jsx              new "[text with a secret-looking key, 46 characters, 7fb0d304]"
+FIXED      tag_attr_lt_html             new "[text with a secret-looking key, 46 characters, 773be472]"
+CLEAR-BOTH attr_tag_lt                  new "<add key=\"DbPassword\" note=\"a<b\" value=\"Zq9SeCr3tVal\" />"
+FIXED      pct_eq_then_key              new "[text with a secret-looking key, 25 characters, 027a5b88]"
+FIXED      pct_colon_then_key           new "[text with a secret-looking key, 26 characters, ab7f1314]"
+FIXED      pct_eq_then_key_json         new "[text with a secret-looking key, 24 characters, 89895c08]"
+ok         pct_amp_form                 new "[text with a secret-looking key, 50 characters, eea16ff3]"
+FIXED      pgp_private                  new "[text with a secret-looking key, 86 characters, bfe19323]"
+FIXED      flag_tab                     new "[text with a secret-looking key, 41 characters, 1f0d221a]"
+ok         flag_newline                 new "[text with a secret-looking key, 24 characters, cc32e527]"
+ok         url_user_pw_both_tok         new "https://[secret 3c78cc46]:[secret 188f69a7]@github.com/"
+ok         url_empty_pw_user_plain      new "https://[secret 69ac5fd2]:@host/"
+ok         auth_lower_token             new "token [secret 083c0251]"
+ok         auth_alpha16                 new "Bearer [secret e3d29e5d]"
+CLEAR-BOTH auth_alpha_12                new "Bearer abcdefghijkl"
+ok         basic_alpha_8                new "Basic [secret 0a5ffc01]"
+ok         dsn_udp                      new "u:[secret 594209aa]@udp(1.2.3.4)"
+ok         jwt_in_json_str              new {"t":"json","s":"{\"note\":\"token is [secret edda20e4]\"}"}
+ok         ndjson                       new "{\"a\":1}\n{\"password\":\"[secret 5d4f384e]\"}"
+ok         ndjson_bad_first             new "not json\n{\"password\":\"[secret 5d4f384e]\"}"
+ok         dbl                          new {"t":"json","s":"{\"password\":\"[secret 5d4f384e]\"}","enc":2}
+ok         triple                       new "[text with a secret-looking key, 45 characters, 8e2fec97]"
+ok         triple_in_text               new "[text with a secret-looking key, 50 characters, 0f499976]"
+ok         npm_auth                     new "[text with a secret-looking key, 57 characters, afb15f0d]"
+ok         key_backtick_space           new "[text with a secret-looking key, 29 characters, 8991bfd3]"
+ok         aws_name                     new {"t":"json","s":"[{\"Name\":\"db-password\",\"Value\":\"[secret b105a85d]\"}]"}
+ok         aws_key                      new {"t":"json","s":"[{\"Key\":\"api_token\",\"Value\":\"[secret ad08f464]\"}]"}
+ok         field_val                    new {"t":"json","s":"[{\"field\":\"password\",\"val\":\"[secret f1d0bb3d]\"}]"}
+ok         k_v                          new {"t":"json","s":"[{\"k\":\"password\",\"v\":\"[secret d1db1c88]\"}]"}
+ok         NAME_VALUE_upper             new {"t":"json","s":"[{\"NAME\":\"password\",\"VALUE\":\"[secret 84c83de1]\"}]"}
+ok         pair_7_keys                  new {"t":"json","s":"[{\"name\":\"password\",\"value\":\"[secret 2f42287e]\",\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\"
+ok         harlog                       new {"t":"json","s":"[{\"name\":\"session\",\"value\":\"[secret 0e4271ce]\",\"path\":\"/\",\"domain\":\"x.test\",\
+ok         ssm_param                    new {"t":"json","s":"{\"Parameter\":{\"Name\":\"/prod/db-password\",\"Type\":\"SecureString\",\"Value\":\"[secret 
+ok         pair_two_values              new {"t":"json","s":"[{\"name\":\"password\",\"value\":\"[secret cef3afa0]\",\"v\":\"[secret bc1fe146]\"}]"}
+FIXED      pair_name_second             new {"t":"json","s":"[{\"field\":\"x\",\"name\":\"password\",\"value\":\"[secret 5d4f384e]\"}]"}
+FIXED      pair_key_first_nonsecret     new {"t":"json","s":"[{\"k\":\"id\",\"key\":\"api_token\",\"value\":\"[secret 0852f15e]\"}]"}
+ok         pair_name_null_key_secret    new {"t":"json","s":"[{\"name\":null,\"key\":\"password\",\"value\":\"[secret 5d4f384e]\"}]"}
+CLEAR-BOTH pair_Name_lower_value        new {"t":"json","s":"[{\"Name\":\"password\",\"value\":\"Zq9SeCr3tVal\",\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5}]"
+ok         pair_name_numeric_then_key   new {"t":"json","s":"[{\"name\":7,\"key\":\"password\",\"value\":\"[secret 5d4f384e]\"}]"}
+ok         pair_value_obj               new {"t":"json","s":"[{\"name\":\"password\",\"value\":\"[secret 5c4b302b]\"}]"}
+ok         raw_headers                  new {"t":"json","s":"[\"Authorization\",\"[secret b9d41f1e]\",\"[secret 820e418d]\",\"[secret 88242d13]\"]"}
+ok         col_pw                       new {"id":1,"pw":{"t":"secret","d":"11f5e6a5c7b51ab1"}}
+ok         col_psk                      new {"id":1,"psk":{"t":"secret","d":"624f06648c7fab4f"}}
+ok         col_auth                     new {"auth":{"t":"secret","d":"9847095b1fe82df9"},"id":1}
+ok         col__auth                    new {"_auth":{"t":"secret","d":"fb7c8f8cedf2721e"},"id":1}
+ok         col_Auth                     new {"Auth":{"t":"secret","d":"41e2df218853d653"},"id":1}
+ok         col_AUTH_upper               new {"AUTH":{"t":"secret","d":"e859b1a6ea275ed9"},"id":1}
+ok         col_auth_token               new {"auth_token":{"t":"secret","d":"a363b7be1bd6eb61"},"id":1}
+CLEAR-BOTH col_key                      new {"id":1,"key":"sk_live_Zq9SeCr3tVal"}
+ok         docker_auths                 new {"config":{"t":"json","s":"{\"auths\":{\"ghcr.io\":{\"auth\":\"[secret 05c1a967]\"}}}"},"id":1}
+ok         json_user_pw                 new {"creds_json":{"t":"json","s":"{\"user\":\"admin\",\"pw\":\"[secret f89f532c]\"}"},"id":1}
+{ ok: 78, 'CLEAR-BOTH': 7, FIXED: 11 }
+exit 0

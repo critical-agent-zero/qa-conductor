@@ -1,0 +1,22 @@
+docs: the hardening opt-ins name their follow-ups, and their checks show what they refuse
+
+Round 1 of #41's review.
+
+- The checks by hand that closing #32 leaves (the internal network on
+  Docker Desktop and Podman machine, sandbox-exec on macOS 14 and 15) are
+  tracked in #43, named in the README and the CHANGELOG. Unix-socket
+  listeners are tracked in #42.
+- The sandbox-exec section: the allow-after-deny finding narrowed to the
+  form that was checked, the routes around the profile, a root-owned
+  path for it, a missing parameter failing to load (exit 65), deprecated
+  already on macOS 12, and a check that prints EPERM.
+- The tag check reads the X-QA-Refusal header: identity when tagged,
+  capability when not.
+- The internal network's claim is hedged to what each session's probe
+  checks.
+- A docs test runs the README's profile through sandbox-exec on macOS:
+  each named port refused over IPv4, IPv6 and localhost, another
+  connecting, and a missing parameter exiting 65.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

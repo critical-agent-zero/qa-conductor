@@ -1,0 +1,20 @@
+fix: the data answer's work is bounded, its lists go by rank across all three, and its budget counts bytes
+
+Round 4 of #36's review (with #35's part merged in):
+- The session span's diffs are made once for each state, whatever the
+  trust, and the boot span once for each settle, for each trust. With
+  #35's maxCells, a read at the bound holds the event loop about 0.5 s
+  here, and the answer's first build about 0.7 s.
+- Collections rank by their first flag's place in the engine's order, so
+  the base pane's collections, and what lost data, come first; then
+  changed rows, an amber flag, any other change. The PR diff, the
+  divergence and the base diff are listed by rank across all three.
+- The budget counts bytes (UTF-8), not characters.
+- The unreadable flag's reason is the PR pane's first: baseline when its
+  baseline came from this snapshot.
+- Tests for the review's cases and for the eleven mutants it found alive;
+  a server test that the event loop isn't held long while a PR store of
+  6 million cells is read and answered.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

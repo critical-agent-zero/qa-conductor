@@ -1,0 +1,5 @@
+[
+  {"id": "M2 tie to next", "file": "lib/action-log.mjs", "old": "next.at - t < t - marks[before].at", "new": "next.at - t <= t - marks[before].at", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M3 since strict", "file": "lib/action-log.mjs", "old": "entry.at >= since", "new": "entry.at > since", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M11 clock not held", "file": "lib/action-log.mjs", "old": "const at = Math.max(now(), marks.at(-1)?.at ?? -Infinity)", "new": "const at = now()", "tests": ["test/action-log.test.mjs"]}
+]

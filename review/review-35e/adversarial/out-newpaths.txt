@@ -1,0 +1,20 @@
+--- the same name/value pair, as a row and inside JSON
+CLEAR  settings row {key, value}                                  [{"id":1,"key":"smtp_password","value":"Zq9SeCr3tVal"}]
+CLEAR  settings row {name, value}                                 [{"id":1,"name":"STRIPE_SECRET_KEY","value":"Zq9SeCr3tVal"}]
+CLEAR  wp_options row {option_name, option_value}                 [{"id":1,"option_name":"mailserver_pass","option_value":"Zq9SeCr3tVal"}]
+masked the same {key, value} inside a JSON column                 [{"doc":{"t":"json","s":"{\"key\":\"smtp_password\",\"value\":\"[secret 55d5c3e7]\"}"},"id":1}]
+masked a HAR cookie inside JSON (8 keys)                          [{"doc":{"t":"json","s":"{\"name\":\"session\",\"value\":\"[secret f4b0eb0b]\",\"path\":\"/\",\"domain\":\"x\",\"expires\":null,\"httpOnly\":true,\"se
+--- the pair rule picks the first name-like key
+CLEAR  {key: id, name: secret label, value} in JSON               [{"doc":{"t":"json","s":"{\"key\":\"setting_42\",\"name\":\"SMTP password\",\"value\":\"Zq9SeCr3tVal\",\"updated\":1}"},"id":1}]
+masked {name: secret label, key: id, value} in JSON               [{"doc":{"t":"json","s":"{\"name\":\"SMTP password\",\"key\":\"setting_42\",\"value\":\"[secret 3b8cb05c]\",\"updated\":1}"},"id":1}]
+--- element values
+CLEAR  <add key='DbPassword' value='a"b...'/> (single-quoted, a double quote in it) [{"id":1,"note":"<add key='DbPassword' value='a\"Zq9SeCr3tVal'/>"}]
+CLEAR  <input type="password" value="a>b..."> (a > in the value)  [{"id":1,"note":"<input type=\"password\" value=\"a>Zq9SeCr3tVal\">"}]
+CLEAR  <add key="DbPassword" value=unquoted />                    [{"id":1,"note":"<add key=\"DbPassword\" value=Zq9SeCr3tVal />"}]
+masked <add key="DbPassword" description="1,100 chars" value="..."/> [{"id":1,"note":{"t":"long","s":"<add key=\"DbPassword\" description=\"ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+masked <add key="DbPassword" value="..."/> (control)              [{"id":1,"note":"<add key=\"DbPassword\" value=\"[secret d2e5e246]\"/>"}]
+--- flags and keys
+CLEAR  --password<TAB>secret                                      [{"id":1,"note":"pg_dump --password\tZq9SeCr3tVal --host db"}]
+CLEAR  -----BEGIN PGP PRIVATE KEY BLOCK-----                      [{"id":1,"note":"-----BEGIN PGP PRIVATE KEY BLOCK-----\n\nZq9SeCr3tVal\n-----END PGP PRIVATE KEY BLOCK-----"}]
+masked PuTTY-User-Key-File-2 Private-Lines                        [{"id":1,"note":"[text with a secret-looking key, 78 characters, 4715c3cb]"}]
+exit 0

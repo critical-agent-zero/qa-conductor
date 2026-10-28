@@ -1,0 +1,25 @@
+fix: DSN passwords with ':' and secret elements beside a DSN-like tail are masked again, and a corpus keeps every reported shape masked
+
+Round 6 of #35's review:
+- A Go DSN's password runs up to its last '@' again, ':' included
+  (round 5 had left ':' out, which showed such passwords in whole or in
+  part).
+- Text rules run as URL credentials, scheme values, then an element's
+  value, then a DSN's and a JWT: the element's rule comes before the
+  DSN's, which could run past a secret element's '>'. A scheme's word
+  that isn't a token no longer hides the next scheme (`Bearer //bearer
+  <token>`).
+- test/data-masking-corpus.test.mjs: every shape a review round has
+  reported, as one table, each of which must stay masked, with the
+  shapes no head masks yet as its known misses. The reviewers'
+  differential fuzz finds no regression against 7193877, 4a284f9 or
+  4ed6449.
+- A base-pane collection the PR alone cut short (padding can push it
+  into a count) has its unverified flag with what loses rows; a row
+  pair never masks one of the collection's key fields.
+- README: what masking misses, `seeded` matched by name, the flag's
+  fields, the DSN's cost under Hostile PR data. The wall-clock tag and
+  DSN timing checks are gone (W28=B).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

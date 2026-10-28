@@ -1,0 +1,164 @@
+[
+ {
+  "id": "H1",
+  "file": "public/harness.js",
+  "old": "    if (firstRed.has(name)) return [0, firstRed.get(name)]",
+  "new": "    if (firstRed.has(name)) return [0, 0]",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H2",
+  "file": "public/harness.js",
+  "old": "    return [moved(c, view) ? 1 : amber.has(name) ? 2 : c && c.status !== 'same' ? 3 : 4, 0]",
+  "new": "    return [amber.has(name) ? 2 : c && c.status !== 'same' ? 3 : 4, 0]",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H3",
+  "file": "public/harness.js",
+  "old": "    return [moved(c, view) ? 1 : amber.has(name) ? 2 : c && c.status !== 'same' ? 3 : 4, 0]",
+  "new": "    return [moved(c, view) ? 1 : c && c.status !== 'same' ? 3 : 4, 0]",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H4",
+  "file": "public/harness.js",
+  "old": "    const covered = shownList.reduce((n, f) => n + (f.folded && num(f.collections) > 0 ? num(f.collections) : 1), 0)",
+  "new": "    const covered = shownList.length",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H5",
+  "file": "public/harness.js",
+  "old": "  const lateBaseline = ui.span === 'session' && Boolean(data.comparedAt)",
+  "new": "  const lateBaseline = false && Boolean(data.comparedAt)",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H6",
+  "file": "public/harness.js",
+  "old": "  const shared = b && b.base && b.pr ? b.base : data.baselineAt",
+  "new": "  const shared = data.baselineAt",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H7",
+  "file": "public/harness.js",
+  "old": "const unreadableText = reason => (typeof reason === 'string' && Object.hasOwn(UNREADABLE, reason) ? UNREADABLE[reason] : UNREADABLE.failed)",
+  "new": "const unreadableText = reason => (UNREADABLE[reason] || UNREADABLE.failed)",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H8",
+  "file": "public/harness.js",
+  "old": "  if (listing && listing.cut === true) out.push(",
+  "new": "  if (false) out.push(",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H9",
+  "file": "public/harness.js",
+  "old": "  if (c.cut === true) out.push(node('p', 'dataErr', 'Cut short: the answer\\'s size limit stopped its lists.'))",
+  "new": "",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H10",
+  "file": "public/harness.js",
+  "old": "omittedIn(span, name) ? statusText({ omitted: true }) : statusText(c)]",
+  "new": "statusText(c)]",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H11",
+  "file": "public/harness.js",
+  "old": "${missing.length > 1 ? 'panes have' : 'pane has'} none",
+  "new": "pane has none",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H12",
+  "file": "public/harness.js",
+  "old": "      typeof f.collection === 'string' ? { act: `open:${f.collection}` } : undefined))",
+  "new": "      undefined))",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H13",
+  "file": "public/harness.js",
+  "old": "    if (listedIn(span, ui.view, ui.open)) out.push(",
+  "new": "    if (shown.includes(ui.open)) out.push(",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H14",
+  "file": "public/harness.js",
+  "old": "  const seeded = Number.isSafeInteger(f.seeded) && f.seeded > 0 ? `, ${f.seeded} seeded` : ''",
+  "new": "  const seeded = ''",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H15",
+  "file": "public/harness.js",
+  "old": "  return num(n.inserted) + num(n.updated) + num(n.deleted) + num(n.fieldsDropped) + num(n.fieldsAdded) > 0 || c.keyLost === true",
+  "new": "  return num(n.inserted) + num(n.updated) + num(n.deleted) > 0",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H16",
+  "file": "public/harness.js",
+  "old": "    return changes > 0 || [counts.base, counts.pr].some(n => n && num(n.inserted) + num(n.updated) + num(n.deleted) > 0)",
+  "new": "    return changes > 0",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H17",
+  "file": "public/harness.js",
+  "old": "  const reason = lateBaseline ? 'baseline' : (flagsOf.find(",
+  "new": "  const reason = (flagsOf.find(",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "H18",
+  "file": "public/harness.js",
+  "old": "&& !(errs && errs.pr)",
+  "new": "",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ }
+]

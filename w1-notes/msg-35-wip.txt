@@ -1,0 +1,31 @@
+wip: #35 round 3, paused mid-way (note to self, not for review)
+
+Paused by the owner's order. On top of f0296cd, the merge of main 561bd84.
+
+Done here, and passing test/data-diff.test.mjs (54/54, Node 24) before
+the pause:
+- the key scan: a match never starts inside a run of backslashes (the
+  verifier's form, which keeps keys right after a single backslash), HTML-
+  escaped quotes; timing tests for 256 KB runs before '=' and '"'
+- omitted collections: snapshots carry `omitted`; a collection missing from
+  a snapshot that left some out is `unknown` (omitted before/after), red
+  unverified, never added or dropped; divergence unknown
+- PR-only unverified flags folded into one (collection null, collections,
+  names); order: red, base-has before PR-only, destructive before
+  unverified/cleared, then name
+- enc: 2 for JSON text encoded twice; nested keeps the outer string form
+- value masking: empty-user and '@' passwords, token-only userinfo, any-case
+  Bearer/Basic/Token with token-like values, Name/Key/k/v pairs, XML ns and
+  attributes; "Basic introduction" kept
+- masker never caches names over 128 characters
+- for #36's M1: names over 200 left out, keys over 32 fields dropped, over
+  2,000 declared fields or key+fields over the byte share kept as counts,
+  key and fields charged to the bytes
+- README and CHANGELOG for all of the above, the both-cut amber case, the
+  volatile presence nit
+
+Not done: the mutation run (interrupted at its first mutant, source
+restored), the full suite, the reply. #36 and #37 not started.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

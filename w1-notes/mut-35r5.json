@@ -1,0 +1,200 @@
+[
+ {
+  "id": "P1",
+  "file": "lib/data-diff.mjs",
+  "old": "(?:(?<![\\w.-])|(?<=%[0-9a-f]{2})|(?<=(?<!\\\\)\\\\[nrt]))",
+  "new": "(?:(?<![\\w.-])|(?<=(?<!\\\\)\\\\[nrt]))",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "P2",
+  "file": "lib/data-diff.mjs",
+  "old": "(?:(?<![\\w.-])|(?<=%[0-9a-f]{2})|(?<=(?<!\\\\)\\\\[nrt]))",
+  "new": "(?:(?<![\\w.-])|(?<=%[0-9a-f]{2}))",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "P3",
+  "file": "lib/data-diff.mjs",
+  "old": "        if (past !== null && past !== m[1] && SECRET_NAME.test(past)) return true\n",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "P4",
+  "file": "lib/data-diff.mjs",
+  "old": "before === '%' ? m[1].replace(/^[0-9a-f]{2}/i, '')",
+  "new": "before === '%' ? m[1]",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "P5",
+  "file": "lib/data-diff.mjs",
+  "old": "before === '\\\\' ? m[1].replace(/^[nrt]/, '')",
+  "new": "before === '\\\\' ? m[1]",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "T1",
+  "file": "lib/data-diff.mjs",
+  "old": "const TAG_IN_TEXT = /<(?:[\\w.-]{1,64}:)?([\\w.-]{1,128})(?=[\\s/>])/g",
+  "new": "const TAG_IN_TEXT = /<(?:[\\w.-]{1,64}:)?([\\w.-]{1,128})(?:\\s[^<>]{0,256})?>/g",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "T2",
+  "file": "lib/data-diff.mjs",
+  "old": "([\\w.-]{1,128})(?=[\\s/>])/g",
+  "new": "([\\w.-]{1,128})(?=[\\s>])/g",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "C1",
+  "file": "lib/data-diff.mjs",
+  "old": "        columns = { count: mine.n, seeded: seeded.length, fields: [...seeded, ...others].slice(0, 5) }",
+  "new": "        columns = { count: mine.n, seeded: seeded.length, fields: [...mine.items].sort().slice(0, 5) }",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "C2",
+  "file": "lib/data-diff.mjs",
+  "old": "    fieldsBefore: b?.fields ?? null,",
+  "new": "    fieldsBefore: null,",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "A1",
+  "file": "lib/data-diff.mjs",
+  "old": "      if (name === null && typeof obj[k] === 'string' && SECRET_NAME.test(obj[k])) name = obj[k]",
+  "new": "      if (name === null && typeof obj[k] === 'string') name = SECRET_NAME.test(obj[k]) ? obj[k] : ''",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "A2",
+  "file": "lib/data-diff.mjs",
+  "old": "    const pair = pairOf(r)\n",
+  "new": "    const pair = null\n",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "A3",
+  "file": "lib/data-diff.mjs",
+  "old": "    const as = secret && named !== 'plain' ? 'secret' : named",
+  "new": "    const as = named",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "D1",
+  "file": "lib/data-diff.mjs",
+  "old": "@((?:[a-z][\\w-]{0,31})?\\(|\\/)/gi",
+  "new": "@((?:tcp|udp|unix)\\()/gi",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "D2",
+  "file": "lib/data-diff.mjs",
+  "old": "([^\\s/:]{1,256})@((?:",
+  "new": "([^\\s@/:]{1,256})@((?:",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "D3",
+  "file": "lib/data-diff.mjs",
+  "old": "([^\\s/:]{1,256})@((?:",
+  "new": "([^\\s/]{1,256})@((?:",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "X1",
+  "file": "lib/data-diff.mjs",
+  "old": "|([^\\s\"'<>=\\x60]{1,128}))/gi\nconst ATTR_VALUE",
+  "new": ")/gi\nconst ATTR_VALUE",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "X2",
+  "file": "lib/data-diff.mjs",
+  "old": "|'([^']*)'|([^\\s\"'<>=\\x60]+))/gi",
+  "new": "|'([^']*)')/gi",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "X3",
+  "file": "lib/data-diff.mjs",
+  "old": "const ATTR_VALUE = /\\b(value)(",
+  "new": "const ATTR_VALUE = /\\b(VALUE)(",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "G1",
+  "file": "lib/data-diff.mjs",
+  "old": "(?=[\\s=])/gi\nconst MYSQL_P",
+  "new": "(?=[ =])/gi\nconst MYSQL_P",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "G2",
+  "file": "lib/data-diff.mjs",
+  "old": "PRIVATE KEY(?: BLOCK)?-----/",
+  "new": "PRIVATE KEY-----/",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "L1",
+  "file": "lib/data-diff.mjs",
+  "old": "  const late = f => (LOSES_ROWS.has(f.kind) || leftOut(f) ? 0",
+  "new": "  const late = f => (LOSES_ROWS.has(f.kind) ? 0",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "L2",
+  "file": "lib/data-diff.mjs",
+  "old": "    && (!Object.hasOwn(prDiff.collections, f.collection) || Boolean(own(prDiff.collections, f.collection).omitted))",
+  "new": "    && !Object.hasOwn(prDiff.collections, f.collection)",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ }
+]

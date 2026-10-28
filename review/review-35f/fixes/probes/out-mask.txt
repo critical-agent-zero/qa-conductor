@@ -1,0 +1,76 @@
+ok    old:ok    url userinfo                                   "postgres://app:[secret 306599dc]@db:5432/x"
+ok    old:ok    url empty user                                 "redis://:[secret 306599dc]@cache:6379"
+ok    old:CLEAR token:x-oauth-basic user                       "https://[secret 4d529c2c]:x-oauth-basic@github.com/o/r.git" (fixed)
+ok    old:CLEAR token:@ user                                   "https://[secret 4d529c2c]:@github.com/o/r.git" (fixed)
+ok    old:CLEAR token user with a password                     "https://[secret 4d529c2c]:[secret 08e22c53]@github.com/o/r.git" (fixed)
+ok    old:ok    Basic short base64                             "[text with a secret-looking key, 33 characters, 23c423fe]"
+ok    old:ok    basic lower short base64                       "[text with a secret-looking key, 33 characters, af87ed90]"
+ok    old:ok    Basic b64 of bot:S                             "[text with a secret-looking key, 41 characters, 782eb2b8]"
+ok    old:CLEAR &QUOT; upper                                   "[text with a secret-looking key, 48 characters, 58ffd45b]" (fixed)
+ok    old:CLEAR &#X22; upper                                   "[text with a secret-looking key, 48 characters, 7b9b0b50]" (fixed)
+ok    old:CLEAR &Quot; mixed                                   "[text with a secret-looking key, 48 characters, 9bdf9d3a]" (fixed)
+ok    old:ok    &apos;                                         "[text with a secret-looking key, 47 characters, 534f3eba]"
+ok    old:ok    &#x27;                                         "[text with a secret-looking key, 47 characters, 08967451]"
+ok    old:ok    triple-encoded JSON text                       "[text with a secret-looking key, 70 characters, 7a0db151]"
+ok    old:CLEAR backtick MySQL log                             "[text with a secret-looking key, 56 characters, 5c4b1a71]" (fixed)
+ok    old:CLEAR backtick markdown                              "[text with a secret-looking key, 21 characters, b47e684b]" (fixed)
+ok    old:CLEAR 32 spaces before =                             "[text with a secret-looking key, 51 characters, e4336b33]" (fixed)
+CLEAR old:CLEAR 33 spaces before = (past bound)                "password                                 = hunter2Zq"
+ok    old:ok    tab before =                                   "[text with a secret-looking key, 21 characters, 3dc4ac90]"
+ok    old:CLEAR password%3D at start                           "[text with a secret-looking key, 20 characters, 2bff973e]" (fixed)
+ok    old:CLEAR password%3d lower                              "[text with a secret-looking key, 20 characters, 7c62db80]" (fixed)
+ok    old:CLEAR &password%3D (after real &)                    "[text with a secret-looking key, 51 characters, 980c8f0b]" (fixed)
+ok    old:CLEAR %22password%22%3A after =                      "[text with a secret-looking key, 38 characters, cd21dc13]" (fixed)
+ok    old:CLEAR url-encoded JSON object %7B%22password%22%3A   "[text with a secret-looking key, 48 characters, face3623]" (fixed)
+ok    old:CLEAR url-encoded JSON, key after %2C                "[text with a secret-looking key, 68 characters, 05095e10]" (fixed)
+ok    old:CLEAR double-encoded query %26password%3D            "[text with a secret-looking key, 49 characters, b9f6ceec]" (fixed)
+ok    old:CLEAR encoded query %3Fpassword%3D                   "[text with a secret-looking key, 40 characters, d26e9a53]" (fixed)
+ok    old:CLEAR lowercase %7b%22password%22%3a                 "[text with a secret-looking key, 48 characters, e095193c]" (fixed)
+ok    old:CLEAR --password space                               "[text with a secret-looking key, 38 characters, 507fa342]" (fixed)
+ok    old:ok    --password=                                    "[text with a secret-looking key, 24 characters, f3a0b000]"
+ok    old:ok    --db-token=                                    "[text with a secret-looking key, 24 characters, edc711c9]"
+ok    old:CLEAR -p glued mysql                                 "[text with a secret-looking key, 28 characters, 1c2bb8b9]" (fixed)
+ok    old:CLEAR -p glued mysqldump                             "[text with a secret-looking key, 41 characters, 3b807a56]" (fixed)
+CLEAR old:CLEAR -p glued (not mysql)                           "psql -phunter2Zq"
+ok    old:CLEAR Go DSN tcp                                     "root:[secret f0bcd860]@tcp(127.0.0.1:3306)/app" (fixed)
+ok    old:CLEAR Go DSN unix                                    "root:[secret f0bcd860]@unix(/tmp/mysql.sock)/app" (fixed)
+ok    old:CLEAR Go DSN with @ in password                      "root:[secret 0cff97e0]@tcp(127.0.0.1:3306)/app" (fixed)
+ok    old:CLEAR Go DSN, no protocol                            "root:[secret f0bcd860]@/app" (fixed)
+ok    old:CLEAR Go DSN tcp6                                    "root:[secret f0bcd860]@tcp6([::1]:3306)/app" (fixed)
+ok    old:CLEAR JWT                                            "token was [secret bde755d6] ok" (fixed)
+ok    old:CLEAR PEM private key                                "[text with a secret-looking key, 87 characters, d91fce08]" (fixed)
+ok    old:CLEAR PEM OPENSSH                                    "[text with a secret-looking key, 83 characters, 68fe7462]" (fixed)
+ok    old:CLEAR PEM ENCRYPTED                                  "[text with a secret-looking key, 87 characters, 725859d7]" (fixed)
+ok    old:CLEAR .NET add key value                             "<add key=\"DbPassword\" value=\"[secret 4c62bf94]\" />" (fixed)
+ok    old:CLEAR .NET add value first                           "<add value=\"[secret 4c62bf94]\" key=\"DbPassword\"/>" (fixed)
+ok    old:CLEAR input type=password quoted                     "<input type=\"password\" name=\"x\" value=\"[secret 4c62bf94]\">" (fixed)
+ok    old:CLEAR input type=password unquoted                   "<input type=password value=[secret 4c62bf94]>" (fixed)
+ok    old:CLEAR .NET add value with an apostrophe              "<add key=\"DbPassword\" value=\"[secret 4224aa29]\" />" (fixed)
+ok    old:CLEAR .NET add key, single quotes                    "<add key='DbPassword' value='[secret 4c62bf94]' />" (fixed)
+ok    old:CLEAR Spring XML property                            "<property name=\"password\" value=\"[secret 4c62bf94]\"/>" (fixed)
+ok    old:CLEAR HTML entity in attr value                      "<add key=\"DbPassword\" value=\"[secret a0575828]\" />" (fixed)
+ok    old:CLEAR multi-line attrs                               "<add\n  key=\"DbPassword\"\n  value=\"[secret 4c62bf94]\"\n/>" (fixed)
+ok    old:CLEAR HAR cookie 8 keys                              {"t":"json","s":"[{\"name\":\"session\",\"value\":\"[secret f6aeabd7]\",\"path\":\"/\",\"domain\":\"x.test\",\"expires\":null,\"httpOnly\":t (fixed)
+ok    old:CLEAR SSM Parameter                                  {"t":"json","s":"{\"Parameter\":{\"Name\":\"/prod/db-password\",\"Type\":\"SecureString\",\"Value\":\"[secret e40bdec2]\",\"Version\":1,\"La (fixed)
+ok    old:CLEAR {name:password, value, +5}                     {"t":"json","s":"[{\"name\":\"password\",\"value\":\"[secret 0ea45a4c]\",\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5}]"} (fixed)
+ok    old:CLEAR two value keys                                 {"t":"json","s":"[{\"name\":\"password\",\"value\":\"[secret 0ea45a4c]\",\"v\":\"[secret 1ff740d0]\"}]"} (fixed)
+ok    old:CLEAR {key: password, value, +10}                    {"t":"json","s":"[{\"key\":\"password\",\"value\":\"[secret 0ea45a4c]\",\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5,\"f\":6,\"g\":7,\"h\":8,\"i\ (fixed)
+ok    old:CLEAR {Key: api_token, Value, +5}                    {"t":"json","s":"[{\"Key\":\"api_token\",\"Value\":\"[secret 18e27c1b]\",\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5}]"} (fixed)
+ok    old:ok    loose {k, v} 6 keys                            {"t":"json","s":"[{\"k\":\"password\",\"v\":\"[secret 0ea45a4c]\",\"a\":1,\"b\":2,\"c\":3,\"d\":4}]"}
+CLEAR old:CLEAR loose {k, v} 7 keys (bounded)                  {"t":"json","s":"[{\"k\":\"password\",\"v\":\"hunter2Zq\",\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5}]"}
+CLEAR old:CLEAR loose {NAME, VALUE} 7 keys (bounded)           {"t":"json","s":"[{\"NAME\":\"password\",\"VALUE\":\"hunter2Zq\",\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5}]"}
+CLEAR old:CLEAR mixed {name, Value} 7 keys (bounded)           {"t":"json","s":"[{\"name\":\"password\",\"Value\":\"hunter2Zq\",\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5}]"}
+ok    old:CLEAR name key after a neutral key                   {"t":"json","s":"[{\"key\":\"mail.smtp\",\"name\":\"Password\",\"value\":\"[secret 833d8079]\"}]"} (fixed)
+ok    old:CLEAR name key after a neutral k                     {"t":"json","s":"[{\"k\":\"row-17\",\"name\":\"password\",\"value\":\"[secret 0ea45a4c]\"}]"} (fixed)
+ok    old:ok    nested value object                            {"t":"json","s":"[{\"name\":\"password\",\"value\":\"[secret 08e9c60f]\"}]"}
+ok    old:ok    K8s env                                        {"t":"json","s":"{\"env\":[{\"name\":\"DB_PASSWORD\",\"value\":\"[secret f9a18b82]\"},{\"name\":\"HOST\",\"value\":\"db\"}]}"}
+-     old:-     neutral: prose Basic                           "Basic introduction to the topic"
+-     old:-     neutral: prose Basic Introduction              "Basic Introduction"
+-     old:-     neutral: prose basic plan                      "Basic plan: 10GB storage"
+-     old:-     neutral: mkdir -p                              "mkdir -p /var/lib/app && gcc -pthread x.c"
+-     old:-     neutral: author key                            "author=jane"
+-     old:-     neutral: plain url                             "https://app:[secret 09b213ec]@db"
+-     old:-     neutral: non-token user                        "https://alice:[secret 2e375d66]@host/x"
+-     old:-     neutral: rawHeaders-like roles                 {"t":"json","s":"[\"viewer\",\"session_manager\",\"[secret 66eb94d4]\"]"}
+-     old:-     neutral: ssh git@                              "ssh://git@github.com/o/r.git"
+exit 0

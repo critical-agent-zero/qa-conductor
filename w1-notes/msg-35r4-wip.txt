@@ -1,0 +1,20 @@
+wip: #35 round 4 under W28=B (note to self; fold before any PR push)
+
+On 13a9118 (local only, never pushed). State at the pause:
+- maxCells removed again (W28=B); the linear tally and the LOSES_DATA
+  tier kept.
+- Done: TAG_IN_TEXT [^<>] with its timing test; column-dropped folded
+  per collection (count, first five fields) with the 1,600-column test;
+  the pair rule (strict name/key + value spellings have no key bound,
+  every value key masked); names over 200 characters not counted in
+  omitted; the masking lows (QUOTE mutants, value residuals, cheap
+  secret shapes, pw/psk/auth names, PEM, JWT); README known gaps and the
+  "Hostile PR data" limit; CHANGELOG.
+- data-diff tests 65/65 on Node 24. Mutants mut-35r4b: 35 run, all
+  survivors fixed and re-killed (N18 removed with its code).
+- Left: full suites on 22 and 24; soft reset to 7193877 and one clean
+  commit; push; reply (W28=B: documented, not fixed for 2 and 6); body;
+  then #36 and #37 round 4.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

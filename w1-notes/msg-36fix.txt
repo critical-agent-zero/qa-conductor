@@ -1,0 +1,30 @@
+fix: the data capture keeps a failed pane's boot span, never compares a stale read, and builds its answer once
+
+The fixes from #36's review:
+
+- A pane whose ready read failed keeps its seeded snapshot, and its first
+  later snapshot becomes its baseline, so the PR's boot changes still
+  show. Errors are kept per span: `errors.boot` (the open, seeded and
+  ready reads, never erased by a later success) and `errors.session` (the
+  latest read). A span with a pane missing says `complete: false`.
+- A failed Snapshot now sets that pane's latest snapshot to null rather
+  than keeping the old one under a new time. A re-baseline is both panes
+  or neither.
+- Each inspector call gets a signal that aborts at limits.timeoutMs (or
+  when the boot aborts), so a timed-out read is told to stop.
+- An answer lists at most 50 rows of each kind per collection and 50
+  divergence changes, within about 4 MB of rows in all, with whole
+  counts. viewJson() builds the JSON once per state and trust, and both
+  routes send that string.
+- Snapshot now and Re-baseline no longer add capture events to the
+  progress log: only the seeded and ready phases are events.
+- runBoot waits for the last session's probes to close before it sweeps
+  and builds. The README states the 150 s worst case a hanging inspector
+  adds to a boot.
+- New tests: a superseded boot's capture events stay out of the next
+  boot's stream, and a boot of the same PR waits for the probes to close.
+
+Part of #8.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

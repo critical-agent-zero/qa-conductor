@@ -1,0 +1,34 @@
+== (1) row pairs and key fields
+4a284f9 O2 options keyed [value], renamed: ins 0 upd 1 del 0 flags []
+4a284f9 tokens keyed [value]: CLEAR  {"tokens":{"key":["value"],"fields":null,"rows":[{"name":"deploy_token","value":"Zq9SeCr3tVal"}],"count":1,"truncated":false}}
+4a284f9 settings keyed [key, value]: CLEAR  {"settings":{"key":["key","value"],"fields":null,"rows":[{"key":"smtp_password","value":"Zq9SeCr3tVal"}],"count":1,"truncated":false}}
+4a284f9 kv keyed [k, v]: CLEAR  {"kv":{"key":["k","v"],"fields":null,"rows":[{"k":"api_token","v":"Zq9SeCr3tVal"}],"count":1,"truncated":false}}
+4a284f9 settings keyed [id] (control): CLEAR  {"settings":{"key":["id"],"fields":null,"rows":[{"id":1,"key":"smtp_password","value":"Zq9SeCr3tVal"}],"count":1,"truncated":false}}
+4a284f9 sessions keyed [token] (named secret, control): masked  {"sessions":{"key":["token"],"fields":null,"rows":[{"token":{"t":"secret","d":"8b5c85a2ce3093ab"},"user":1}],"count":1,"truncated":false}}
+4ed6449 O2 options keyed [value], renamed: ins 1 upd 0 del 1 flags ["delete"]
+4ed6449 tokens keyed [value]: masked  {"tokens":{"key":["value"],"fields":null,"rows":[{"name":"deploy_token","value":{"t":"secret","d":"eddc0ac9ac1d2a4f"}}],"count":1,"truncated
+4ed6449 settings keyed [key, value]: masked  {"settings":{"key":["key","value"],"fields":null,"rows":[{"key":"smtp_password","value":{"t":"secret","d":"fb4cde7ad292ba75"}}],"count":1,"t
+4ed6449 kv keyed [k, v]: masked  {"kv":{"key":["k","v"],"fields":null,"rows":[{"k":"api_token","v":{"t":"secret","d":"3cb6d845e0baf21e"}}],"count":1,"truncated":false}}
+4ed6449 settings keyed [id] (control): masked  {"settings":{"key":["id"],"fields":null,"rows":[{"id":1,"key":"smtp_password","value":{"t":"secret","d":"fb4cde7ad292ba75"}}],"count":1,"tru
+4ed6449 sessions keyed [token] (named secret, control): masked  {"sessions":{"key":["token"],"fields":null,"rows":[{"token":{"t":"secret","d":"8b5c85a2ce3093ab"},"user":1}],"count":1,"truncated":false}}
+4033285 O2 options keyed [value], renamed: ins 0 upd 1 del 0 flags []
+4033285 tokens keyed [value]: CLEAR  {"tokens":{"key":["value"],"fields":null,"rows":[{"name":"deploy_token","value":"Zq9SeCr3tVal"}],"count":1,"truncated":false}}
+4033285 settings keyed [key, value]: CLEAR  {"settings":{"key":["key","value"],"fields":null,"rows":[{"key":"smtp_password","value":"Zq9SeCr3tVal"}],"count":1,"truncated":false}}
+4033285 kv keyed [k, v]: CLEAR  {"kv":{"key":["k","v"],"fields":null,"rows":[{"k":"api_token","v":"Zq9SeCr3tVal"}],"count":1,"truncated":false}}
+4033285 settings keyed [id] (control): masked  {"settings":{"key":["id"],"fields":null,"rows":[{"id":1,"key":"smtp_password","value":{"t":"secret","d":"fb4cde7ad292ba75"}}],"count":1,"tru
+4033285 sessions keyed [token] (named secret, control): masked  {"sessions":{"key":["token"],"fields":null,"rows":[{"token":{"t":"secret","d":"8b5c85a2ce3093ab"},"user":1}],"count":1,"truncated":false}}
+
+== (2) cut short in the PR pane only: where users' unverified sorts
+stub S=5 4a284f9: users [["unverified","red"]] at 10 of 11; before it: ["column-dropped","mass-change"]
+stub S=5 4ed6449: users [["unverified","red"]] at 10 of 11; before it: ["column-dropped","mass-change"]
+stub S=5 4033285: users [["unverified","red"]] at 0 of 11; before it: []
+maxRows S=5 4a284f9: users [["unverified","red"]] at 10 of 11
+maxRows S=5 4ed6449: users [["unverified","red"]] at 10 of 11
+maxRows S=5 4033285: users [["unverified","red"]] at 0 of 11
+stub S=50 4a284f9: users [["unverified","red"]] at 100 of 101; before it: ["column-dropped","mass-change"]
+stub S=50 4ed6449: users [["unverified","red"]] at 100 of 101; before it: ["column-dropped","mass-change"]
+stub S=50 4033285: users [["unverified","red"]] at 0 of 101; before it: []
+maxRows S=50 4a284f9: users [["unverified","red"]] at 100 of 101
+maxRows S=50 4ed6449: users [["unverified","red"]] at 100 of 101
+maxRows S=50 4033285: users [["unverified","red"]] at 0 of 101
+exit 0

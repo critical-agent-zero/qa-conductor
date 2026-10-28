@@ -1,0 +1,57 @@
+**Round 4, item by item, under the owner's decision W28=B: in `2b8379d`.** `c7059bb` merges #35's round 4 (`4a284f9`) in, by merging, never rebasing. `git diff --name-status 4a284f9..2b8379d` lists only this PR's own files.
+
+**The new bar (W28=B).** Slowdowns and memory growth caused by hostile PR data are accepted and documented, not engineered away. Only what shows a secret, or hides a destructive change or makes it look benign or excused, is fixed. So the high is documented, and the two mediums and the lows are fixed.
+
+**1. High: the engine runs on the conductor's event loop.** W28=B: documented, not fixed.
+- **Not done:**
+  - no per-build compare budget;
+  - no caching of the session diffs per state or the boot span per settle;
+  - no server test of the stall.
+
+  An earlier local version had them, plus a cell budget in #35; they came out under W28=B.
+- **Done, a one-line fix:** #35's `tally()` merges in place now (`4a284f9`). That was the 22.3 s case, 10,000 rows with 100 fields cleared. The test bounds 40 cleared fields at 3 s; they take about 0.1 s here.
+- **Stated:**
+  - **The README's `GET /api/data` row** says the answer's time isn't bounded: it is built on the event loop that serves the panes, and a PR's data can hold it for seconds.
+  - **The README's Known limits** has the entry #35 added, "Hostile PR data and the conductor's responsiveness", with this answer's costs: 200 PR tables of 10,000 rows took about 7 to 9 s a build, and the ready read 18 s.
+  - **Judgment call E** in the body has your worst-case table, and says a worker thread or yielding between collections is the fuller fix, for a follow-up.
+
+**2. Medium: a real delete fell past the flag cap behind red flags on earlier-named seeded collections.** Fixed.
+- **In the engine (#35, `4a284f9`):**
+  - within a severity and the base pane's collections, the kinds that lose data (`delete`, `emptied`, `dropped`, `key-lost`) come before `column-dropped` and `mass-change`;
+  - `column-dropped` is one flag a collection, with `count` and the first five `fields`, so renamed columns can't pile up flags.
+- **Here:**
+  - a collection ranks by its first flag's place in the engine's order, so `chosen()`'s red ties break by that order, data-losing kinds first;
+  - the fallback's first 20 red flags keep the engine's order too.
+- **Tests, both of your probe shapes:**
+  - **30 renamed columns in each of 20 seeded tables, beside a `users` delete of 15 of 20.** The 22 red flags (20 `column-dropped`, `users`'s delete and mass-change) lead with `users:delete`. `users` is the first collection in the PR diff, and in the fallback it is the first flag after `unlisted`, with 21 flags, all red.
+  - **100 seeded tables with 6 renamed columns and a rewritten text column (a mass change each), beside the same delete.** The 202 red flags lead with `users:delete`. `users` is first in the PR diff, with 15 deletes, and first in the divergence; the fallback agrees.
+
+**3. Medium: `chosen()` ranked the PR's own red-flagged tables with seeded ones, by name.** Fixed as proposed.
+- **The rank:** red-flagged collections rank by the index of their first flag in `flagChanges`' order. A red flag on a base-pane collection always precedes one on a PR-only collection.
+- **Not passed:** the base diff's names. The flag order already carries them.
+- **Test, your probe:**
+  - the PR makes 1,000 tables named `a…` at boot, then drops them in the session and deletes 15 of 20 users;
+  - the session has 1,002 red flags;
+  - `users` is the first collection in `session.pr`, with its 15 deletes, and first in `session.divergence`, as `pr-only`.
+
+**Low, the PR diff starved the divergence and the base diff.** Fixed. The three lists are listed by rank across all three: every list's red-flagged collections, then every list's changed ones, and so on. A list stopped by the budget with more to list says `cut: true`.
+- **Test:** 400 PR padding tables with 32 long key fields fill the budget. `users` is still listed in the PR diff, the divergence and the base diff, and the PR diff says `cut`.
+
+**Low, the budget counted UTF-16 characters.** Fixed: every size is `Buffer.byteLength` of the JSON, and the README says "about 4 MB (in bytes, as UTF-8)".
+- **Test:** 60 tables of 50 rows of 200 CJK characters (3 bytes each) give an answer under its 200,000-byte budget plus slack, counted in bytes.
+
+**Low, 11 surviving mutants.** Each has an assertion now:
+- **M28:** a span whose lists would fill the budget still lists its flags, at least 100 of them.
+- **M22 and M23:** the divergence ranks a collection whose counts alone moved before unchanged padding.
+- **M4:** the divergence says `cut` when the budget stops it.
+- **M11 and M12:** the fallback lists red flags only, at most 20 after `unlisted`.
+- **M18:** an empty added collection ranks before unchanged ones past 1,000.
+- **M24 and M25:** a collection whose declared fields alone changed ranks as changed.
+- **M30:** the PR-only summary keeps its count past 20 folded flags.
+- **M44:** one pane's failed ready read still sets `baselineAt`.
+
+  12 hand mutants of this round's code (the byte count, the rank, the tiers across lists, the cut marker, the reason, the flags first, divergence and row changes, red only) are all killed.
+
+**Nit, the `unreadable` reason.** Fixed: `fresh.pr` is checked first, so a PR pane whose read worked but became its baseline says `baseline`, never `neither`. There is a test.
+
+**Tests:** 883 passed and 0 failed on Node 24 and on Node 22 (`node --test --test-force-exit`). CI is green on `2b8379d`.

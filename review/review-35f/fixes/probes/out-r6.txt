@@ -1,0 +1,38 @@
+                                                 7193877  4a284f9  4ed6449  head output
+dsn pw with a colon in the middle                CLEAR    masked   CLEAR    "root:pa:[secret a537323f]@tcp(127.0.0.1:3306)/app"
+dsn pw with a colon after the secret             CLEAR    masked   CLEAR    "root:Zq9SeCr3tVal:[secret 2a68a01a]@tcp(db:3306)/app"
+dsn pw ending in a colon                         CLEAR    masked   CLEAR    "root:Zq9SeCr3tVal:@tcp(db)/app"
+dsn unix, colon in pw                            CLEAR    masked   CLEAR    "app:Zq9SeCr3tVal:[secret 3ac6a60a]@unix(/tmp/mysql.sock)/db"
+dsn in a log line                                CLEAR    masked   CLEAR    "connecting with root:Zq9SeCr3tVal:[secret db71c1f1]@tcp(10.0.0.5:3306)/orders?parseTime=true"
+dsn pw with a slash (not listed)                 CLEAR    CLEAR    CLEAR    "root:Zq9SeCr3tVal/x@tcp(db)/app"
+dsn pw "/" then @/                               CLEAR    CLEAR    CLEAR    "root:[secret adda5eab]@/Zq9SeCr3tVal@tcp(db)/app"
+attr: < in another attribute                     CLEAR    CLEAR    CLEAR    "<add key=\"DbPassword\" note=\"a<b\" value=\"Zq9SeCr3tVal\" />"
+attr: < in the value                             CLEAR    CLEAR    CLEAR    "<input type=\"password\" value=\"a<Zq9SeCr3tVal\">"
+attr: > in the value (listed)                    CLEAR    CLEAR    CLEAR    "<input type=\"password\" value=\"a>Zq9SeCr3tVal\">"
+attr: dq value with an apostrophe                CLEAR    CLEAR    masked   "<add key=\"DbPassword\" value=\"[secret 1ef04735]\" />"
+attr: unquoted name, quoted value                CLEAR    CLEAR    masked   "<add key=DbPassword value=\"[secret d2e5e246]\"/>"
+attr: value before a spaced =                    CLEAR    masked   masked   "<add key=\"DbPassword\" value = '[secret d2e5e246]' />"
+attr: data-value only                            CLEAR    masked   masked   "<x name=\"password\" data-value=\"[secret d2e5e246]\">"
+\r before pw                                     CLEAR    CLEAR    masked   "[text with a secret-looking key, 20 characters, 170b9291]"
+\f before pw                                     CLEAR    CLEAR    CLEAR    "a=1\\fpw=Zq9SeCr3tVal"
+\u000a before pw                                 CLEAR    CLEAR    CLEAR    "a=1\\u000apw=Zq9SeCr3tVal"
+%0D%0A before pw                                 CLEAR    CLEAR    masked   "[text with a secret-looking key, 28 characters, a487cb84]"
+&#10; before pw                                  CLEAR    masked   masked   "[text with a secret-looking key, 23 characters, 56b43b7e]"
++ before pin                                     masked   masked   masked   "[text with a secret-looking key, 20 characters, ae9bd1fd]"
+double-encoded %2526pin%253D                     CLEAR    CLEAR    CLEAR    "next=%2526pin%253DZq9SeCr3tVal"
+tag at end of text, no >                         masked   masked   masked   "log <password"
+tag: name over 128                               CLEAR    CLEAR    CLEAR    "<aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+tag: two namespaces                              CLEAR    CLEAR    CLEAR    "<a:b:password>Zq9SeCr3tVal</a:b:password>"
+pair: name not a string but key is               masked   masked   masked   {"t":"json","s":"[{\"name\":7,\"key\":\"password\",\"value\":\"[secret 68ef3a83]\"}]"}
+pair: {Name, value} mixed 7 keys (listed bounded) CLEAR    CLEAR    CLEAR    {"t":"json","s":"[{\"Name\":\"password\",\"value\":\"Zq9SeCr3tVal\",\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5}]"}
+pair: option_name (listed)                       CLEAR    CLEAR    CLEAR    {"t":"json","s":"[{\"option_name\":\"smtp_pass\",\"option_value\":\"Zq9SeCr3tVal\"}]"}
+row: settings key/value                          CLEAR    CLEAR    masked   {"id":1,"key":"smtp_password","value":{"t":"secret","d":"af7d5ac59e4b5460"}}
+row: settings Name/Value                         CLEAR    CLEAR    masked   {"Name":"db-password","Value":{"t":"secret","d":"471f17263cd4045b"},"a":1,"b":2,"c":3,"d":4,"e":5,"id":1}
+row: settings k/v 7 keys                         CLEAR    CLEAR    CLEAR    {"a":1,"b":2,"c":3,"d":4,"id":1,"k":"password","v":"Zq9SeCr3tVal"}
+row: settings k/v 6 keys                         CLEAR    CLEAR    masked   {"a":1,"b":2,"c":3,"id":1,"k":"password","v":{"t":"secret","d":"aa7fc13ef561f8e6"}}
+row: option_name (listed)                        CLEAR    CLEAR    CLEAR    {"option_id":1,"option_name":"mailserver_pass","option_value":"Zq9SeCr3tVal"}
+row: setting_key/setting_value                   CLEAR    CLEAR    CLEAR    {"id":1,"setting_key":"smtp_password","setting_value":"Zq9SeCr3tVal"}
+row: field/val                                   CLEAR    CLEAR    masked   {"field":"api_token","id":1,"val":{"t":"secret","d":"99bca8da09dfd523"}}
+row: key + value JSON                            CLEAR    CLEAR    CLEAR    {"id":1,"key":"oauth_client","value":{"t":"json","s":"{\"client_secret\":\"[secret 300d9839]\",\"note\":\"Zq9SeCr3tVal\"
+row: key, value null (cleared shows)             masked   masked   masked   {"id":1,"key":"smtp_password","value":null}
+exit 0

@@ -1,0 +1,25 @@
+fix: the data answer charges every collection's entry to its budget and lists flagged collections first
+
+Round 3 of #36's review.
+
+- Each listed collection's entry (its name, key and counts) counts
+  against the span's budget, for the diffs and the divergence. The
+  listing stops when the budget runs out, and says `cut: true`. The PR
+  pane's diff and the divergence are listed before the base pane's.
+- An answer too big to build is built again without its lists: counts,
+  the first red flags and a red `unlisted` flag, so the badge still
+  counts.
+- Collections are ranked: a red flag, changed rows, an amber flag, any
+  other change, then none. Red `unverified` flags past 20 are folded into
+  one in their place.
+- A boot span is aligned only when both baselines came from the ready
+  read, and baselineAt is set only then.
+- A span with neither pane's data after a run is red `unreadable`, not
+  null. The flag says why: failed, neither, or baseline (a late PR
+  baseline, whose errors.boot now says when it came).
+- At most 50 problems a pane, with problemsCount; error text cut at 500
+  characters.
+- README and CHANGELOG: the bound is about 4 MB.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

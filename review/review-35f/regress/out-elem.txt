@@ -1,0 +1,25 @@
+style ":" then @media( (minified CSS)
+  7193877 CLEAR | 4a284f9 masked | 4ed6449 CLEAR
+  4ed6449 "<input type=\"password\" name=\"pw\" value=\"Zq9SeCr3tVal\" style=\"width:[secret 588b7434]@media(max-width:600px){input{width:50%}}</style>"
+style ":" then @supports(
+  7193877 CLEAR | 4a284f9 masked | 4ed6449 CLEAR
+  4ed6449 "<input type=\"hidden\" name=\"api_token\" value=\"Zq9SeCr3tVal\" style=\"display:[secret 0eb782c9]@supports(display:grid){a{b:c}}</style>"
+class ":" then @/ (webpack alias)
+  7193877 CLEAR | 4a284f9 masked | 4ed6449 CLEAR
+  4ed6449 "<input type=\"password\" value=\"Zq9SeCr3tVal\" class=\"sm:[secret cd8a128f]@/components</b>"
+mailto then @x(
+  7193877 CLEAR | 4a284f9 masked | 4ed6449 CLEAR
+  4ed6449 "<x id=\"secret\" value=\"Zq9SeCr3tVal\" href=\"mailto:[secret 8d3713dc]@y(z)</i>"
+same, @tcp( (4a284f9 had it)
+  7193877 CLEAR | 4a284f9 CLEAR | 4ed6449 CLEAR
+  4ed6449 "<input type=\"password\" value=\"Zq9SeCr3tVal\" style=\"color:[secret 96a115a9]@tcp(h)</b>"
+URL rule eats it (pre-existing)
+  7193877 CLEAR | 4a284f9 CLEAR | 4ed6449 CLEAR
+  4ed6449 "<input type=\"password\" value=\"Zq9SeCr3tVal\" data-u=\"https://a:[secret 2375a3f6]@host</b>"
+self-closing (control)
+  7193877 CLEAR | 4a284f9 masked | 4ed6449 masked
+  4ed6449 "<add key=\"DbPassword\" value=\"[secret f46643a8]\" x=\"a:b\"/>@/"
+space before @ (control)
+  7193877 CLEAR | 4a284f9 masked | 4ed6449 masked
+  4ed6449 "<input type=\"password\" value=\"[secret f46643a8]\" style=\"color:red\"> @media(x)"
+/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/run/review-35f/regress/to.sh: line 12: 11088 Terminated: 15          ( sleep "$secs"; kill -TERM -"$pid" 2> /dev/null; sleep 3; kill -KILL -"$pid" 2> /dev/null )

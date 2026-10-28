@@ -1,0 +1,61 @@
+DIV orders:unknown->pr-only (long in p1 true, pn true, limits undefined)
+DIV users:unknown->pr-only (long in p1 true, pn true, limits undefined)
+LOST red at old, not red at new: [["orders|unverified","red"],["users|unverified","red"]] trusted=true limits=undefined long p1 true pn true
+  old [["accounts","column-dropped","red"],["accounts","unverified","red"],["orders","unverified","red"],["users","unverified","red"]]
+  new [["orders","dropped","red"],["users","dropped","red"],["accounts","column-dropped","red"],["accounts","unverified","red"]]
+DIV accounts:unknown->pr-only (long in p1 false, pn true, limits undefined)
+LOST red at old, not red at new: [["accounts|unverified","red"]] trusted=false limits=undefined long p1 false pn true
+  old [["accounts","unverified","red"],["users","unverified","red"]]
+  new [["accounts","dropped","red"],["users","unverified","red"]]
+DIV orders:unknown->differs (long in p1 false, pn true, limits undefined)
+LOST red at old, not red at new: [["orders|unverified","red"]] trusted=false limits=undefined long p1 false pn true
+  old [["orders","unverified","red"]]
+  new [["orders","dropped","red"]]
+LOST red at old, not red at new: [["orders|unverified","red"]] trusted=true limits={"maxCollections":1} long p1 false pn true
+  old [["orders","unverified","red"],["users","unverified","amber"]]
+  new [["orders","dropped","red"],["users","unverified","amber"]]
+LOST red at old, not red at new: [["users|unverified","red"]] trusted=true limits=undefined long p1 false pn true
+  old [["orders","column-dropped","red"],["accounts","unverified","red"],["orders","unverified","red"],["users","unverified","red"]]
+  new [["users","dropped","red"],["orders","column-dropped","red"],["accounts","unverified","red"],["orders","unverified","red"]]
+DIV users:unknown->both (long in p1 false, pn false, limits undefined)
+LOST red at old, not red at new: [["users|dropped","red"]] trusted=true limits=undefined long p1 false pn false
+  old [["accounts","column-dropped","red"],["users","dropped","red"],["orders","unverified","red"],["accounts","cleared","amber"]]
+  new [["accounts","column-dropped","red"],["orders","unverified","red"],["users","dropped","amber"],["accounts","cleared","amber"]]
+LOST red at old, not red at new: [["accounts|unverified","red"]] trusted=true limits=undefined long p1 false pn true
+  old [["accounts","unverified","red"],["users","unverified","red"]]
+  new [["accounts","dropped","red"],["users","unverified","red"]]
+LOST red at old, not red at new: [["orders|unverified","red"]] trusted=false limits=undefined long p1 false pn true
+  old [["orders","unverified","red"],["users","unverified","red"]]
+  new [["orders","dropped","red"],["users","unverified","red"]]
+LOST red at old, not red at new: [["accounts|unverified","red"]] trusted=false limits=undefined long p1 false pn true
+  old [["users","column-dropped","red"],["accounts","unverified","red"],["users","unverified","amber"]]
+  new [["accounts","dropped","red"],["users","column-dropped","red"],["users","unverified","amber"]]
+DIV users:unknown->base-only (long in p1 false, pn false, limits undefined)
+LOST red at old, not red at new: [["orders|unverified","red"]] trusted=true limits=undefined long p1 false pn true
+  old [["accounts","mass-change","red"],["users","column-dropped","red"],["added_co","unverified","red"],["orders","unverified","red"],["accounts","cleared","amber"]]
+  new [["orders","dropped","red"],["accounts","mass-change","red"],["users","column-dropped","red"],["added_co","unverified","red"],["accounts","cleared","amber"]]
+LOST red at old, not red at new: [["orders|unverified","red"]] trusted=true limits=undefined long p1 false pn true
+  old [["accounts","column-dropped","red"],["orders","unverified","red"],["users","unverified","red"]]
+  new [["orders","dropped","red"],["accounts","column-dropped","red"],["users","unverified","red"]]
+LOST red at old, not red at new: [["users|unverified","red"]] trusted=true limits={"maxCollections":1} long p1 false pn true
+  old [["accounts","unverified","red"],["users","unverified","red"]]
+  new [["users","dropped","red"],["accounts","unverified","red"]]
+LOST red at old, not red at new: [["orders|unverified","red"]] trusted=true limits=undefined long p1 false pn true
+  old [["orders","unverified","red"],["users","unverified","red"]]
+  new [["orders","dropped","red"],["users","unverified","red"]]
+LOST red at old, not red at new: [["users|unverified","red"]] trusted=false limits=undefined long p1 false pn true
+  old [["users","unverified","red"]]
+  new [["users","dropped","red"]]
+LOST red at old, not red at new: [["accounts|unverified","red"]] trusted=true limits={"maxCollections":1} long p1 false pn true
+  old [["accounts","unverified","red"],["orders","unverified","amber"],["users","unverified","amber"]]
+  new [["accounts","dropped","red"],["orders","unverified","amber"],["users","unverified","amber"]]
+DIV accounts:unknown->differs (long in p1 false, pn true, limits undefined)
+DIV users:unknown->differs (long in p1 false, pn true, limits {"maxBytes":600})
+DIV added_coll:unknown->pr-only (long in p1 true, pn true, limits undefined)
+DIV accounts:unknown->both (long in p1 false, pn true, limits undefined)
+DIV orders:unknown->base-only (long in p1 false, pn false, limits {"maxCollections":1})
+DIV accounts:unknown->base-only (long in p1 false, pn false, limits undefined)
+DIV added_coll:unknown->both (long in p1 true, pn true, limits {"maxCollections":1})
+DIV orders:unknown->both (long in p1 false, pn true, limits {"maxBytes":600})
+N=5000: red flags lost 204, divergence statuses changed 281
+exit 0

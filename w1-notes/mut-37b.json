@@ -1,0 +1,29 @@
+[
+ {
+  "id": "D7 isolated no escape",
+  "file": "public/harness.js",
+  "old": "const isolated = s => `\\u2068${String(s).replace(CONTROLS, codeOf)}\\u2069`",
+  "new": "const isolated = s => `\\u2068${String(s)}\\u2069`",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "D31 unmount leaves actions",
+  "file": "public/harness.js",
+  "old": "    setActionsPanel(false); setDataPanel(false)\n    D.data = null; D.failed = false; A.state",
+  "new": "    setDataPanel(false)\n    D.data = null; D.failed = false; A.state",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "D32 snapshot no guard",
+  "file": "public/harness.js",
+  "old": "      if (S.mounted !== mounted) return // another session's view now\n      D.data = data; D.failed = false",
+  "new": "      D.data = data; D.failed = false",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ }
+]

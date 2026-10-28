@@ -1,0 +1,20 @@
+docs: round 2's lows for the sandbox recipe and the tag check, and CI runs the sandbox docs test on macOS 14 and 15
+
+Round 2 of #41's review, and the owner's decision B:
+- A macos-sandbox job runs test/docs.test.mjs on GitHub's macOS 14 and
+  macOS 15 runners with QA_REQUIRE_SANDBOX=1, so it fails rather than
+  skips there; pinned in test/package.test.mjs. The README's "Checked"
+  names it. The sandbox probe runs inside the test, since one at the
+  file's top level was cut off by --test-force-exit on CI.
+- The tag check reads the refusal's body as well as its header: an
+  untagged node whose owner isn't an allowed login is refused at the
+  identity gate too.
+- The profile's directory: chown root:wheel and chmod 755 and 644,
+  since mkdir -p leaves one that is already there as it was, and an ls
+  to check.
+- sandbox-exec can't nest: a conductor already under a sandbox can't
+  start the PR pane under the profile (exit 71).
+- "Today" says CI checks the internal network on Linux.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

@@ -1,0 +1,56 @@
+[
+ {
+  "id": "Q7 no head cap",
+  "file": "lib/data-diff.mjs",
+  "old": "    const head = s.length > HELD_JSON_MAX ? s.slice(0, HELD_JSON_MAX) : s\n    if (/[:=]/.test(head))",
+  "new": "    const head = s\n    if (/[:=]/.test(head))",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q8 no word start",
+  "file": "lib/data-diff.mjs",
+  "old": "const KEY_IN_TEXT = /(?<![\\w.-])(?:",
+  "new": "const KEY_IN_TEXT = /(?:",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q9 no escaped quote",
+  "file": "lib/data-diff.mjs",
+  "old": "const KEY_IN_TEXT = /(?<![\\w.-])(?:\\\\*[\"'])?([\\w.-]{1,128})(?:\\\\*[\"'])?",
+  "new": "const KEY_IN_TEXT = /(?<![\\w.-])(?:[\"'])?([\\w.-]{1,128})(?:[\"'])?",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q10 no bracket",
+  "file": "lib/data-diff.mjs",
+  "old": "{1,128})(?:\\\\*[\"'])?\\]?\\s{0,8}[:=]/g",
+  "new": "{1,128})(?:\\\\*[\"'])?\\s{0,8}[:=]/g",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q15 no auth value",
+  "file": "lib/data-diff.mjs",
+  "old": "      .replace(AUTH_VALUE,",
+  "new": "      .replace(/(?!)/g,",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q23 cache reset kept",
+  "file": "lib/data-diff.mjs",
+  "old": "{ classes.clear(); fieldsCached = 0 }",
+  "new": "{ classes.clear() }",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ }
+]

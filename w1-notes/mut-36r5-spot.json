@@ -1,0 +1,1 @@
+[{"id": "Sb divergence entry size 0", "file": "lib/data-capture.mjs", "old": "      const { changes, ...rest } = c\n      const size = entrySize(name, rest)", "new": "      const { changes, ...rest } = c\n      const size = 0", "tests": ["test/data-capture.test.mjs"]}]

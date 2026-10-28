@@ -1,0 +1,12 @@
+[
+  {"id": "A1 one separator", "file": "lib/action-log.mjs", "old": "[^\\p{L}\\p{Nd}]{0,3}", "new": "[^\\p{L}\\p{Nd}]?", "tests": ["test/action-log.test.mjs"]},
+  {"id": "A2 decode whole", "file": "lib/action-log.mjs", "old": "    const next = decodeRuns(s)", "new": "    let next\n    try { next = decodeURIComponent(s) } catch { break }", "tests": ["test/action-log.test.mjs"]},
+  {"id": "A3 no raw 3D", "file": "lib/action-log.mjs", "old": "  if (/%(?:25)*3d/i.test(segment)) return '…=…'", "new": "", "tests": ["test/action-log.test.mjs"]},
+  {"id": "A4 cursor seq", "file": "lib/action-log.mjs", "old": "seq: more ? page.at(-1).seq : Math.max(from, seq),", "new": "seq: more ? page.at(-1).seq : seq,", "tests": ["test/action-log.test.mjs"]},
+  {"id": "A5 marks unpaged", "file": "lib/action-log.mjs", "old": "      marks: page.filter(e => 'type' in e).map(e => ({ ...e })),", "new": "      marks: fresh.filter(e => 'type' in e).map(e => ({ ...e })),", "tests": ["test/action-log.test.mjs"]},
+  {"id": "A6 no mark ring", "file": "lib/action-log.mjs", "old": "    if (ring.length > keptMarks) { ring.shift(); marksDropped[pane]++ }", "new": "", "tests": ["test/action-log.test.mjs"]},
+  {"id": "A7 eviction uncounted", "file": "lib/action-log.mjs", "old": "    if (ring.length > keptMarks) { ring.shift(); marksDropped[pane]++ }", "new": "    if (ring.length > keptMarks) { ring.shift() }", "tests": ["test/action-log.test.mjs"]},
+  {"id": "A8 kept default 2x", "file": "lib/action-log.mjs", "old": "keptMarks = 4 * maxMarks,", "new": "keptMarks = 2 * maxMarks,", "tests": ["test/action-log.test.mjs"]},
+  {"id": "A9 time not held", "file": "lib/action-log.mjs", "old": "    lastAt = Math.max(t, lastAt)", "new": "    lastAt = t", "tests": ["test/action-log.test.mjs"]},
+  {"id": "A10 limit uncapped", "file": "lib/action-log.mjs", "old": "Math.min(limit, MAX_READ)", "new": "limit", "tests": ["test/action-log.test.mjs"]}
+]

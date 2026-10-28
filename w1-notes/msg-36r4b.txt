@@ -1,0 +1,24 @@
+fix: the data answer lists collections in the engine's flag order, across all three lists, within a budget in bytes
+
+Round 4 of #36's review, under the owner's decision W28=B (slowdowns
+from hostile PR data are documented, not engineered away):
+- Collections rank by their first flag's place in the engine's order: a
+  red flag on a base-pane collection, and what lost data, before the
+  PR's own flagged tables and before column and mass-change flags (with
+  #35's fold, one column-dropped flag a collection). Then changed rows,
+  an amber flag, any other change. The fallback's first 20 red flags
+  keep that order.
+- The PR diff, the divergence and the base diff are listed by rank
+  across all three, so one list's padding can't starve another's flagged
+  entry.
+- The budget counts bytes (UTF-8), not characters.
+- The unreadable flag's reason is the PR pane's first: baseline when its
+  baseline came from this snapshot.
+- The README says the answer's time isn't bounded, pointing to the
+  Known limits entry.
+- Tests for the review's probe shapes (renamed columns beside a users
+  delete, two ways; 1,000 dropped PR tables) and for the mutants it
+  found alive.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

@@ -1,0 +1,209 @@
+[
+ {
+  "id": "Q1 cut by name",
+  "file": "lib/data-diff.mjs",
+  "old": "sort((x, y) => y[0] - x[0] || (x[1] < y[1] ? -1 : 1))",
+  "new": "sort((x, y) => (x[1] < y[1] ? -1 : 1))",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q2 no counts kept",
+  "file": "lib/data-diff.mjs",
+  "old": "    for (const name of stubs) counted.set(name, stubOf(own(given, name)))\n",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q3 no cap on counts",
+  "file": "lib/data-diff.mjs",
+  "old": "byRows.slice(maxCollections, maxCollections * (1 + COUNTED_COLLECTIONS))",
+  "new": "byRows.slice(maxCollections)",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q4 missing not flagged",
+  "file": "lib/data-diff.mjs",
+  "old": "    if (!Object.hasOwn(prDiff.collections, name)) flags.push(",
+  "new": "    if (false) flags.push(",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q5 missing same",
+  "file": "lib/data-diff.mjs",
+  "old": " || Boolean(b && !p)",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q6 Set unset",
+  "file": "lib/data-diff.mjs",
+  "old": "  if (value instanceof Set || value instanceof Map) return value.size > 0\n",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q7 no head cap",
+  "file": "lib/data-diff.mjs",
+  "old": "    const head = s.length > HELD_JSON_MAX ? s.slice(0, HELD_JSON_MAX) : s\n    if (/[:=]/.test(head))",
+  "new": "    const head = s\n    if (/[:=]/.test(head))",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q8 no word start",
+  "file": "lib/data-diff.mjs",
+  "old": "const KEY_IN_TEXT = /(?<![\\w.-])(?:",
+  "new": "const KEY_IN_TEXT = /(?:",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q9 no escaped quote",
+  "file": "lib/data-diff.mjs",
+  "old": "const KEY_IN_TEXT = /(?<![\\w.-])(?:\\\\*[\"'])?([\\w.-]{1,128})(?:\\\\*[\"'])?",
+  "new": "const KEY_IN_TEXT = /(?<![\\w.-])(?:[\"'])?([\\w.-]{1,128})(?:[\"'])?",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q10 no bracket",
+  "file": "lib/data-diff.mjs",
+  "old": "{1,128})(?:\\\\*[\"'])?\\]?\\s{0,8}[:=]/g",
+  "new": "{1,128})(?:\\\\*[\"'])?\\s{0,8}[:=]/g",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q11 no tag",
+  "file": "lib/data-diff.mjs",
+  "old": "    if (head.includes('<')) for (const m of head.matchAll(TAG_IN_TEXT)) if (SECRET_NAME.test(m[1])) return true\n",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q12 no double",
+  "file": "lib/data-diff.mjs",
+  "old": "  function heldJson(s, twice = true) {",
+  "new": "  function heldJson(s, twice = false) {",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q13 no field cap",
+  "file": "lib/data-diff.mjs",
+  "old": "if (fieldsCached < FIELD_CACHE) {",
+  "new": "if (true) {",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q14 no userinfo",
+  "file": "lib/data-diff.mjs",
+  "old": "      .replace(URL_USERINFO,",
+  "new": "      .replace(/(?!)/g,",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q15 no auth value",
+  "file": "lib/data-diff.mjs",
+  "old": "      .replace(AUTH_VALUE,",
+  "new": "      .replace(/(?!)/g,",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q16 no raw headers",
+  "file": "lib/data-diff.mjs",
+  "old": "      if (Array.isArray(v) && v.some(x => typeof x === 'string' && SECRET_NAME.test(x))) {",
+  "new": "      if (false) {",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q17 no pairs",
+  "file": "lib/data-diff.mjs",
+  "old": "        if (name !== null && SECRET_NAME.test(name)) return { ...v, value: secret(name, v.value) }",
+  "new": "        if (false) return v",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q18 update id without values",
+  "file": "lib/data-diff.mjs",
+  "old": "u.fields.map(f => `${f.field}=${canon(f.after)}`)",
+  "new": "u.fields.map(f => f.field)",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q19 both cut not listed",
+  "file": "lib/data-diff.mjs",
+  "old": "    const shared = Boolean(b?.truncated) && b.countBefore === c.countBefore && b.countAfter === c.countAfter\n    const severity",
+  "new": "    if (b?.truncated && !changed) continue\n    const shared = Boolean(b?.truncated) && b.countBefore === c.countBefore && b.countAfter === c.countAfter\n    const severity",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q20 key lost on counts",
+  "file": "lib/data-diff.mjs",
+  "old": "key === null && !out.truncated",
+  "new": "key === null",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q21 no ssh backup",
+  "file": "lib/data-diff.mjs",
+  "old": "ssh[-_]?key|",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q22 both cut red",
+  "file": "lib/data-diff.mjs",
+  "old": "(b?.truncated && !changed) || (trusted === true && shared) ? 'amber' : 'red'",
+  "new": "(trusted === true && shared) ? 'amber' : 'red'",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "Q23 cache reset kept",
+  "file": "lib/data-diff.mjs",
+  "old": "{ classes.clear(); fieldsCached = 0 }",
+  "new": "{ classes.clear() }",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ }
+]

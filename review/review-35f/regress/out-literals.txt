@@ -1,0 +1,22 @@
+CANDIDATE ",\n    userTok: 'https://abcdef0123456789:pw-secret-1@h/x',\n    noPw: 'https://deployuser:@h/x',\n    oauthUser: 'https://shortuser:x-oaut
+  shown now: x-oauth-basic
+  7193877 ",\n    userTok: 'https://abcdef0123456789:[secret ff85563c]@h/x',\n    noPw: 'https://deployuser:@h/x',\n    oauthUser: 'https://shortuser:
+  4a284f9 {"t":"long","s":",\n    userTok: 'https://[secret 887cdddb]:[secret ff85563c]@h/x',\n    noPw: 'https://[secret c7e67fca]:@h/x',\n    oauthU
+  4ed6449 {"t":"long","s":",\n    userTok: 'https://[secret 887cdddb]:[secret ff85563c]@h/x',\n    noPw: 'https://[secret c7e67fca]:@h/x',\n    oauthU
+CANDIDATE ",\n    userTok: 'https://abcdef0123456789:pw-secret-1@h/x',\n    noPw: 'https://deployuser:@h/x',\n    oauthUser: 'https://shortuser:x-oaut
+  shown now: x-oauth-basic
+  7193877 ",\n    userTok: 'https://abcdef0123456789:[secret 5e26f81e]@h/x',\n    noPw: 'https://deployuser:@h/x',\n    oauthUser: 'https://shortuser:
+  4a284f9 {"t":"long","s":",\n    userTok: 'https://[secret d7cb81f8]:[secret 5e26f81e]@h/x',\n    noPw: 'https://[secret 79b569dd]:@h/x',\n    oauthU
+  4ed6449 {"t":"long","s":",\n    userTok: 'https://[secret d7cb81f8]:[secret 5e26f81e]@h/x',\n    noPw: 'https://[secret 79b569dd]:@h/x',\n    oauthU
+CANDIDATE "<add KEY='DbPassword' VALUE='hunter2Zq'/>"
+  shown now: VALUE=
+  7193877 "<add KEY='DbPassword' VALUE='hunter2Zq'/>"
+  4a284f9 "<add KEY='DbPassword' value='[secret 7c496e28]'/>"
+  4ed6449 "<add KEY='DbPassword' VALUE='[secret 7c496e28]'/>"
+CANDIDATE "<add KEY='DbPassword' VALUE='hunter2Zq'/>"
+  shown now: VALUE=
+  7193877 "<add KEY='DbPassword' VALUE='hunter2Zq'/>"
+  4a284f9 "<add KEY='DbPassword' value='[secret b15f4fe5]'/>"
+  4ed6449 "<add KEY='DbPassword' VALUE='[secret b15f4fe5]'/>"
+693 literals, 1386 cells, 4 candidates
+/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/run/review-35f/regress/to.sh: line 12:  5102 Terminated: 15          ( sleep "$secs"; kill -TERM -"$pid" 2> /dev/null; sleep 3; kill -KILL -"$pid" 2> /dev/null )

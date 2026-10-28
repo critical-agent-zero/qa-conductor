@@ -1,0 +1,28 @@
+=== O1. versioned rows keyed [id, v]; a row whose name looks secret; the click renames it (v unchanged)
+4a284f9: S1 row {"body":"x","id":1,"name":"Session expired page","v":3}
+   diff {"st":"changed","ins":0,"upd":1,"del":0,"key":["id","v"],"flags":[]}
+4ed6449: S1 row {"body":"x","id":1,"name":"Session expired page","v":{"t":"secret","d":"b160d0ecc57f7dad"}}
+   diff {"st":"changed","ins":1,"upd":0,"del":1,"key":["id","v"],"flags":[["pages","delete","red"]]}
+
+=== O2. a lookup table keyed [value]; names that look secret; the click renames one
+4a284f9: S1 rows [{"name":"Password reset","value":"opt_reset"},{"name":"Home","value":"opt_home"}]
+   diff {"st":"changed","ins":0,"upd":1,"del":0,"key":["value"],"flags":[]}
+4ed6449: S1 rows [{"name":"Password reset","value":{"t":"secret","d":"5636b4a7683625c6"}},{"name":"Home","value":"opt_home"}]
+   diff {"st":"changed","ins":1,"upd":0,"del":1,"key":["value"],"flags":[["options","delete","red"]]}
+
+=== O3. settings keyed [key]: the click renames a key from secret-looking to not, value unchanged
+4a284f9: S1 [{"id":1,"key":"session_timeout","value":"30"}]
+   diff {"st":"changed","ins":0,"upd":1,"del":0,"key":["id"],"flags":[]} updated [{"key":"[1]","fields":[{"field":"key","before":"session_timeout","after":"idle_timeout"}]}]
+4ed6449: S1 [{"id":1,"key":"session_timeout","value":{"t":"secret","d":"471ed8333703cca7"}}]
+   diff {"st":"changed","ins":0,"upd":1,"del":0,"key":["id"],"flags":[]} updated [{"key":"[1]","fields":[{"field":"key","before":"session_timeout","after":"idle_timeout"},{"field":"value","before":{"t":"secret","d":"471ed8333703cca7"},"after":"30"}]}]
+
+=== O4. settings rows whose values are ordinary config under secret-looking names
+4a284f9: [{"id":1,"key":"session_timeout","value":"30"},{"id":2,"key":"card_layout","value":"grid"},{"id":3,"key":"hash_algorithm","value":"bcrypt"},{"id":4,"name":"Passport photo","value":"https://x/p.png"}]
+4ed6449: [{"id":1,"key":"session_timeout","value":{"t":"secret","d":"471ed8333703cca7"}},{"id":2,"key":"card_layout","value":{"t":"secret","d":"d78450e903ffa17c"}},{"id":3,"key":"hash_algorithm","value":{"t":"secret","d":"5211390bd0368a56"}},{"id":4,"name":"Passport photo","value":{"t":"secret","d":"3daea41f820151fb"}}]
+
+=== O5. ids in text: percent-escaped paths and DSN-like ids as a key
+4a284f9: keys ["[text with a secret-looking key, 14 characters, ded858c6]","[text with a secret-looking key, 14 characters, 9d92b924]","acct:42@/org","acct:43@/org","ns:x@(y)","x%3dpw=1"]
+   key kept ["path"]; diff {"st":"changed","ins":0,"upd":1,"del":0,"key":["path"],"flags":[]}
+4ed6449: keys ["[text with a secret-looking key, 14 characters, ded858c6]","[text with a secret-looking key, 14 characters, 9d92b924]","acct:[secret 60bc3c23]@/org","acct:[secret 3d228144]@/org","ns:[secret 3bebeb31]@(y)","[text with a secret-looking key, 8 characters, 773129a0]"]
+   key kept ["path"]; diff {"st":"changed","ins":0,"upd":1,"del":0,"key":["path"],"flags":[]}
+/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/run/review-35f/regress/to.sh: line 12: 10580 Terminated: 15          ( sleep "$secs"; kill -TERM -"$pid" 2> /dev/null; sleep 3; kill -KILL -"$pid" 2> /dev/null )

@@ -1,0 +1,30 @@
+fix: teardown removes every container under Podman before 5.1, and Docker Engine 28's internal network keeps the host out
+
+Round 3 of #40's review:
+- rmForce removes one name at a time: Podman before 5.1 (the
+  podman-docker shim on Ubuntu 24.04 and Debian 12) stops `rm -f a b c`
+  at the first name already gone, removes none of the rest, and still
+  exits 0, so teardown left the PR's app, database and forwarder. Every
+  name is tried, and the first real failure rejects.
+- On Docker Engine 28 and later, qa-session-pr is created with an
+  isolated gateway (gateway_mode_ipv4/ipv6=isolated): its bridge has no
+  address of the host's, so a host service on 0.0.0.0 is out of reach
+  too. An Engine that refuses it gets a plain internal network, never
+  the ordinary fallback, and one left over without it is made again.
+  createDocker gains networkGatewayIsolated; the entry point exports
+  dockerEngineMajor.
+- The real-runtime test checks there is no direct route out (1.1.1.1:443
+  from the base pane, not from the PR pane; IPv6 where the runner has
+  it), the 0.0.0.0 canary per runtime (out of reach on Engine 28, at the
+  PR network's own gateway alone on Podman), metadata with a control, a
+  200 through the proxy on CI, nslookup that ran, and the leftovers check
+  with a positive control and before the sweep. CI's job also fails on a
+  todo test.
+- Tests: Podman before 5.1's rm, the gateway mode by Engine version, a
+  refusal and a left-over network, a failure line ending in "exit status
+  N", and a host that never answers getting a 502.
+- README: the host's loopback, the probe's reach, the slow reader, the
+  limit by runtime; the job isn't a required check yet.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

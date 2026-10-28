@@ -1,0 +1,11 @@
+[
+ {
+  "id": "K14 version not bumped on snapshot",
+  "file": "lib/data-capture.mjs",
+  "old": "      }\n      version++\n    })().finally(() => { inFlight = null })",
+  "new": "      }\n    })().finally(() => { inFlight = null })",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ }
+]

@@ -1,0 +1,317 @@
+[
+ {
+  "id": "N1",
+  "file": "lib/data-diff.mjs",
+  "old": "(?:\\s[^<>]{0,256})?>/g\nconst FLAG",
+  "new": "(?:\\s[^>]{0,256})?>/g\nconst FLAG",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N2",
+  "file": "lib/data-diff.mjs",
+  "old": "    add('column-dropped', null, c.fieldsDropped.length, [...c.fieldsDropped])",
+  "new": "    for (const field of c.fieldsDropped) add('column-dropped', field, 1, [field])",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N3",
+  "file": "lib/data-diff.mjs",
+  "old": ".sort().slice(0, 5) }",
+  "new": ".slice(0, 5) }",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N4",
+  "file": "lib/data-diff.mjs",
+  "old": "  if (!strict && keys.length > 6) return null",
+  "new": "  if (keys.length > 6) return null",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N5",
+  "file": "lib/data-diff.mjs",
+  "old": "  if (!strict && keys.length > 6) return null",
+  "new": "  if (!strict && keys.length > 2) return null",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N6",
+  "file": "lib/data-diff.mjs",
+  "old": "  if (!strict && keys.length > 6) return null",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N7",
+  "file": "lib/data-diff.mjs",
+  "old": "    || ((isText(obj, 'Name') || isText(obj, 'Key')) && Object.hasOwn(obj, 'Value'))",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N8",
+  "file": "lib/data-diff.mjs",
+  "old": "    else if (PAIR_VALUES.has(lower) && obj[k] !== null && obj[k] !== undefined) values.push(k)",
+  "new": "    else if (PAIR_VALUES.has(lower) && obj[k] !== null && obj[k] !== undefined && values.length === 0) values.push(k)",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N9",
+  "file": "lib/data-diff.mjs",
+  "old": "    else if (PAIR_VALUES.has(lower) && obj[k] !== null && obj[k] !== undefined) values.push(k)",
+  "new": "    else if (PAIR_VALUES.has(lower)) values.push(k)",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N10",
+  "file": "lib/data-diff.mjs",
+  "old": "    if (name === null && PAIR_NAMES.has(lower) && typeof obj[k] === 'string') name = obj[k]",
+  "new": "    if (name === null && PAIR_NAMES.has(lower)) name = String(obj[k])",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N11",
+  "file": "lib/data-diff.mjs",
+  "old": "  return { collections, problems, omitted: total - long - n }",
+  "new": "  return { collections, problems, omitted: total - n }",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N12",
+  "file": "lib/data-diff.mjs",
+  "old": "const QUOTE = String.raw`(?:\\\\*[\"'\\x60]",
+  "new": "const QUOTE = String.raw`(?:\\\\?[\"'\\x60]",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N13",
+  "file": "lib/data-diff.mjs",
+  "old": "const QUOTE = String.raw`(?:\\\\*[\"'\\x60]",
+  "new": "const QUOTE = String.raw`(?:\\\\*[\"']",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N14",
+  "file": "lib/data-diff.mjs",
+  "old": "#x0{0,4}2[27]);|%2[27])`",
+  "new": "#x0{0,4}2[27]);)`",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N15",
+  "file": "lib/data-diff.mjs",
+  "old": "\\s{0,32}(?:[:=]|%3[ad])`, 'gi')",
+  "new": "\\s{0,32}(?:[:=]|%3[ad])`, 'g')",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N16",
+  "file": "lib/data-diff.mjs",
+  "old": "\\s{0,32}(?:[:=]|%3[ad])`, 'gi')",
+  "new": "\\s{0,8}(?:[:=]|%3[ad])`, 'gi')",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N17",
+  "file": "lib/data-diff.mjs",
+  "old": "\\s{0,32}(?:[:=]|%3[ad])`, 'gi')",
+  "new": "\\s{0,32}[:=]`, 'gi')",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N18",
+  "file": "lib/data-diff.mjs",
+  "old": "(?<=^|[^\\w.-]|%[0-9a-f]{2})",
+  "new": "(?<=^|[^\\w.-])",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N19",
+  "file": "lib/data-diff.mjs",
+  "old": "      for (const m of head.matchAll(FLAG_IN_TEXT)) if (SECRET_NAME.test(m[1])) return true\n",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N20",
+  "file": "lib/data-diff.mjs",
+  "old": "      if (MYSQL_P.test(head) || PEM_KEY.test(head)) return true",
+  "new": "      if (PEM_KEY.test(head)) return true",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N21",
+  "file": "lib/data-diff.mjs",
+  "old": "      if (MYSQL_P.test(head) || PEM_KEY.test(head)) return true",
+  "new": "      if (MYSQL_P.test(head)) return true",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N22",
+  "file": "lib/data-diff.mjs",
+  "old": "    if (/[:=]|%3[ad]/i.test(head)) for",
+  "new": "    if (/[:=]/.test(head)) for",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N23",
+  "file": "lib/data-diff.mjs",
+  "old": "        const userShown = user !== '' && (tokenLike(user) || pw === '' || oauth) ? hidden('u', user) : user",
+  "new": "        const userShown = user !== '' && (pw === '' || oauth) ? hidden('u', user) : user",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N24",
+  "file": "lib/data-diff.mjs",
+  "old": "        const userShown = user !== '' && (tokenLike(user) || pw === '' || oauth) ? hidden('u', user) : user",
+  "new": "        const userShown = user !== '' && (tokenLike(user) || oauth) ? hidden('u', user) : user",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N25",
+  "file": "lib/data-diff.mjs",
+  "old": "        const userShown = user !== '' && (tokenLike(user) || pw === '' || oauth) ? hidden('u', user) : user",
+  "new": "        const userShown = user !== '' && (tokenLike(user) || pw === '') ? hidden('u', user) : user",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N26",
+  "file": "lib/data-diff.mjs",
+  "old": "  || (/^basic$/i.test(scheme) && value.length % 4 === 0",
+  "new": "  || (false && value.length % 4 === 0",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N27",
+  "file": "lib/data-diff.mjs",
+  "old": "/[0-9+/=]|.[A-Z]/.test(value))",
+  "new": "/[0-9+/=]|[A-Z]/.test(value))",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N28",
+  "file": "lib/data-diff.mjs",
+  "old": "      .replace(DSN_USERINFO, (_, user, pw, proto) => `${user}:${hidden('d', pw)}@${proto}(`)\n",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N29",
+  "file": "lib/data-diff.mjs",
+  "old": "      .replace(JWT, value => hidden('j', value))\n",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N30",
+  "file": "lib/data-diff.mjs",
+  "old": "      .replace(ATTR_TAG, tag => ([...tag.matchAll(ATTR_NAME)].some(m => SECRET_NAME.test(m[2]))",
+  "new": "      .replace(ATTR_TAG, tag => ([...tag.matchAll(ATTR_NAME)].slice(0, 1).some(m => SECRET_NAME.test(m[2]))",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N31",
+  "file": "lib/data-diff.mjs",
+  "old": "|(?:^|[-_])(?:pin|pw|psk)(?:[-_]|$)|^_?auth$/i",
+  "new": "|(?:^|[-_])(?:pin)(?:[-_]|$)/i",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N32",
+  "file": "lib/data-diff.mjs",
+  "old": "const tokenLike = s => /^(?:gh[pousr]_|github_pat_|glpat-|xox[abpr]-|sk_live_|sk-)/.test(s) || (s.length >= 16 && /\\d/.test(s))",
+  "new": "const tokenLike = s => (s.length >= 16 && /\\d/.test(s))",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N33",
+  "file": "lib/data-diff.mjs",
+  "old": "(?:([^\\s/:@]{0,256}):([^\\s/]{0,256})|",
+  "new": "(?:([^\\s/:@]{0,256}):([^\\s/]{1,256})|",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N34",
+  "file": "lib/data-diff.mjs",
+  "old": "  const late = f => (LOSES_DATA.has(f.kind) ? 0 : f.kind === 'unverified' || f.kind === 'cleared' ? 2 : 1)",
+  "new": "  const late = f => (LOSES_DATA.has(f.kind) ? 0 : f.kind === 'unverified' ? 2 : 1)",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "N35",
+  "file": "lib/data-diff.mjs",
+  "old": "      else if (was.items !== null && items !== null) { merged = was.items; for (const item of items) merged.push(item) }",
+  "new": "      else if (was.items !== null && items !== null) { merged = [...was.items, ...items] }",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ }
+]

@@ -1,0 +1,10 @@
+4033285  a: x256KB                                1404 ms CPU for 8 cells
+4033285  <a b x256KB (no >)                       119 ms CPU for 8 cells
+4033285  <i type=password value=x a=… (tags)      761 ms CPU for 8 cells
+4033285  Bearer bearer …                          78 ms CPU for 8 cells
+4033285  u:p@tcp( …                               180 ms CPU for 8 cells
+vfix     a: x256KB                                1410 ms CPU for 8 cells
+vfix     <a b x256KB (no >)                       113 ms CPU for 8 cells
+vfix     <i type=password value=x a=… (tags)      752 ms CPU for 8 cells
+vfix     Bearer bearer …                          77 ms CPU for 8 cells
+vfix     u:p@tcp( …                               255 ms CPU for 8 cells

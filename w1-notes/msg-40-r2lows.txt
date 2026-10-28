@@ -1,0 +1,22 @@
+fix: the PR side of a finished answer is bounded, and the podman-docker shim gets a verdict
+
+Round 2's lows and nits for #40:
+- The forwarder bounds a plain-HTTP answer's PR side from its headers on
+  (res.setTimeout(idleMs)), so a PR that stops reading near the end of an
+  answer the host has finished no longer holds it for ever. As the
+  container runs it, it logs every line to stdout, so triage's tail shows
+  its refusals.
+- Under the podman-docker shim, endpoint({ podman }) takes Podman's own
+  connection (CONTAINER_HOST, CONTAINER_CONNECTION, the default one, else
+  local), and networkGateways reads Podman's format when Docker's has no
+  .IPAM, so the probe decides there too.
+- An aborted boot never assigns the shared topology, and its undo never
+  runs.
+- Tests: a finished answer to a PR that never reads, a host failing after
+  the headers, a client reset through the inbound forward, the e2e idle
+  tests reading every 300 ms, readiness polling and its abort, a failing
+  docker version after readiness, and an aborted boot beside the next.
+- The README's CVE versions and idle wording.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

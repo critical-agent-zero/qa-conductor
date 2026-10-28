@@ -1,0 +1,227 @@
+[
+ {
+  "id": "W1 idle tunnel leaves client",
+  "file": "lib/forwarder.mjs",
+  "old": "      upstream.on('close', () => { clearTimeout(connecting); if (open) socket.destroy() })",
+  "new": "      upstream.on('close', () => { clearTimeout(connecting) })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W3 any status",
+  "file": "lib/forwarder.mjs",
+  "old": "        if (!(upRes.statusCode >= 100 && upRes.statusCode <= 999)) { upRes.destroy(); upstream.destroy(); return failed() }\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W4 exact as suffix",
+  "file": "lib/forwarder.mjs",
+  "old": ": host === r.host))",
+  "new": ": host.endsWith(r.host)))",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W5 last answer only",
+  "file": "lib/forwarder.mjs",
+  "old": "  for (const address of addresses) {\n    const blocked",
+  "new": "  for (const address of addresses.slice(-1)) {\n    const blocked",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W6 CGNAT 16",
+  "file": "lib/forwarder.mjs",
+  "old": "['100.64.0.0', 10,",
+  "new": "['100.64.0.0', 16,",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W7 wildcard any port",
+  "file": "lib/forwarder.mjs",
+  "old": "rules.some(r => r.ports.includes(port) && (",
+  "new": "rules.some(r => (",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W8 lookup swapped",
+  "file": "lib/forwarder.mjs",
+  "old": "const defaultLookup = host => dns.lookup(host, { all: true, verbatim: true })",
+  "new": "const defaultLookup = async () => [{ address: '93.184.216.34', family: 4 }]",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W9 connect swapped",
+  "file": "lib/forwarder.mjs",
+  "old": "const defaultConnect = (port, address) => net.connect({ port, host: address })",
+  "new": "const defaultConnect = (port, address) => net.connect({ port, host: '127.0.0.1' })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W10 host kept",
+  "file": "lib/forwarder.mjs",
+  "old": "      headers.host = target.host\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W11 named kept",
+  "file": "lib/forwarder.mjs",
+  "old": " && !named.has(k.toLowerCase())) out[k] = v",
+  "new": ") out[k] = v",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W12 no connect timer",
+  "file": "lib/forwarder.mjs",
+  "old": "      const connecting = setTimeout(() => upstream.destroy(new Error('timed out')), connectMs)\n      upstream.on('socket'",
+  "new": "      const connecting = null\n      upstream.on('socket'",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W13 no http idle",
+  "file": "lib/forwarder.mjs",
+  "old": "      upstream.setTimeout(idleMs, () => upstream.destroy(new Error('idle')))\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W14 cut not passed on",
+  "file": "lib/forwarder.mjs",
+  "old": "        upRes.on('close', () => { if (!upRes.complete) res.destroy() })\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W15 head dropped",
+  "file": "lib/forwarder.mjs",
+  "old": "        if (head?.length) upstream.write(head)\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W16 502 into tunnel",
+  "file": "lib/forwarder.mjs",
+  "old": "if (!open && !socket.destroyed) answer(socket, 502,",
+  "new": "if (!socket.destroyed) answer(socket, 502,",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W17 502 refused",
+  "file": "lib/forwarder.mjs",
+  "old": "answer(socket, 502, 'failed',",
+  "new": "answer(socket, 502, 'refused',",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W18 no half open",
+  "file": "lib/forwarder.mjs",
+  "old": "net.createServer({ allowHalfOpen: true }, client =>",
+  "new": "net.createServer({ allowHalfOpen: false }, client =>",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W20 empty config",
+  "file": "lib/forwarder.mjs",
+  "old": "  if (!forward && !proxy) throw new Error('the config must be an object with forward, proxy or both')\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W22 close leaves sockets",
+  "file": "lib/forwarder.mjs",
+  "old": "      for (const socket of sockets) socket.destroy()\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W23 not canonical",
+  "file": "lib/forwarder.mjs",
+  "old": "    return new URL(`http://${h}/`).hostname.replace(/\\.$/, '') || null",
+  "new": "    return h.toLowerCase().replace(/\\.$/, '') || null",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W24 private names",
+  "file": "lib/forwarder.mjs",
+  "old": "    } else if (isPrivateName(name)) {",
+  "new": "    } else if (false) {",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W25 bare ipv6",
+  "file": "lib/forwarder.mjs",
+  "old": "    if (given.includes(':') && !bracketed) throw",
+  "new": "    if (false) throw",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W26 log unbounded",
+  "file": "lib/forwarder.mjs",
+  "old": "const LOG_MAX = 300",
+  "new": "const LOG_MAX = 100_000",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W27 log not bracketed",
+  "file": "lib/forwarder.mjs",
+  "old": ": name.includes(':') ? `[${name}]` : name",
+  "new": ": name",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "W28 pending ignored",
+  "file": "lib/forwarder.mjs",
+  "old": "if (socket.pending) socket.once('connect', () => clearTimeout(connecting)); else clearTimeout(connecting)",
+  "new": "clearTimeout(connecting)",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ }
+]

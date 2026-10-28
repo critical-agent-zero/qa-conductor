@@ -1,0 +1,10 @@
+7193877 tags x24  cpu 2131 ms, wall 4354 ms
+7193877 a: x1     cpu 24 ms, wall 27 ms
+7193877 \n x1     cpu 4 ms, wall 4 ms
+4a284f9 tags x24  cpu 240 ms, wall 345 ms
+4a284f9 a: x1     cpu 170 ms, wall 209 ms
+4a284f9 \n x1     cpu 6 ms, wall 8 ms
+4ed6449 tags x24  cpu 454 ms, wall 549 ms
+4ed6449 a: x1     cpu 29 ms, wall 38 ms
+4ed6449 \n x1     cpu 7 ms, wall 10 ms
+exit 0

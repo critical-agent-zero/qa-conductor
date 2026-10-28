@@ -1,0 +1,22 @@
+test: the internal network on a real runtime, in CI on Docker Engine and Podman
+
+A docker-integration job runs test/integration/docker-internal.test.mjs on
+Linux, against Docker Engine and against Podman through its
+Docker-compatible socket. It boots both panes with the internal topology
+and checks:
+- the probe says isolated, internal: true;
+- from the PR pane: the host at every gateway, the base pane's database
+  and 169.254.169.254 can't be reached, with a control from the base pane;
+- an outside name doesn't resolve, and qa-egress does;
+- the proxy refuses an unlisted host and metadata, and lets a listed
+  address through;
+- a forwarder that can't start falls back to unknown, and
+  QA_REQUIRE_ISOLATION=1 refuses the session;
+- teardown and sweep leave nothing.
+
+The test runs only when QA_DOCKER_IT=1 asks: it creates and removes the
+qa-* containers and networks. Asked, it fails rather than skips when no
+runtime answers, and the job fails on any skip.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

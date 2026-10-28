@@ -1,0 +1,220 @@
+killed ["the limits, and the names that look secret"] ["_auth"] 3s | name: no _auth
+killed ["the limits, and the names that look secret"] ["wifi-psk"] 3s | name: no psk
+killed ["the limits, and the names that look secret"] ["pw"] 3s | name: no pw
+killed ["the limits, and the names that look secret","masking: JSON kept as text, more secret-looking na","more values masked: a token as a URL's user, a sho"] ["author","author_id","The \"string\" argument must be of type st"] 3s | name: auth unanchored
+killed ["the limits, and the names that look secret"] ["auth"] 3s | name: no auth at all
+killed ["more keys in text: backticks, aligned config, perc"] ["pctJson"] 3s | gate: no percent
+killed ["more keys in text: backticks, aligned config, perc"] ["mysqlLog"] 4s | quote: no backtick
+killed ["more keys in text: backticks, aligned config, perc"] ["pctJson"] 4s | gate: percent case-sensitive
+killed ["more keys in text: backticks, aligned config, perc"] ["pctJson"] 4s | quote: no percent quote
+killed ["more keys in text: backticks, aligned config, perc"] ["aligned"] 3s | key: 8 spaces
+SURVIVED [] [] 3s | quote: percent only %22
+killed ["mutants: entity quotes, triple-encoded JSON, long "] ["The input was expected to not match the "] 3s | quote: run cut to one
+killed ["more keys in text: backticks, aligned config, perc"] ["pct"] 3s | key: no percent separator
+SURVIVED [] [] 3s | key: 31 spaces
+killed ["more keys in text: backticks, aligned config, perc"] ["pct"] 3s | key: percent : only
+killed ["mutants: entity quotes, triple-encoded JSON, long ","more keys in text: backticks, aligned config, perc"] ["upper","pct"] 2s | key: case-sensitive flag
+SURVIVED [] [] 2s | tag: attributes cross < (round-4 regression)
+killed ["more keys in text: backticks, aligned config, perc"] ["pctJson"] 3s | key: percent = only
+killed ["more keys in text: backticks, aligned config, perc"] ["flag"] 2s | flag: gate never
+killed ["more values masked: URLs with an empty user, an @ "] ["The input was expected to not match the "] 2s | tag: no attributes
+killed ["more values masked: URLs with an empty user, an @ "] ["The input was expected to not match the "] 2s | tag: no namespace
+killed ["more keys in text: backticks, aligned config, perc"] ["mysqlP"] 2s | flag: no mysql -p
+killed ["more keys in text: backticks, aligned config, perc"] ["flag"] 2s | flag: no flag loop
+killed ["more keys in text: backticks, aligned config, perc"] ["pem"] 2s | flag: no PEM
+SURVIVED [] [] 2s | flag: no start guard
+SURVIVED [] [] 3s | flag: double dash only
+killed ["more keys in text: backticks, aligned config, perc"] ["flag"] 3s | flag: = only
+SURVIVED [] [] 2s | mysql: mysql only
+SURVIVED [] [] 2s | flag: space only
+killed ["more keys in text: backticks, aligned config, perc"] ["Expected values to be strictly deep-equa"] 2s | mysql: no client needed
+SURVIVED [] [] 3s | mysql: -p then anything
+SURVIVED [] [] 3s | mysql: case-sensitive
+SURVIVED [] [] 3s | pem: RSA only
+SURVIVED [] [] 2s | pem: any BEGIN
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 2s | url: password needs a char
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 2s | url: oauth never
+SURVIVED [] [] 2s | url: oauth case-sensitive
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 2s | url: user not masked for tokenLike
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 2s | url: user not masked for empty pw
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 3s | url: user not masked for oauth
+SURVIVED [] [] 2s | url: empty user masked
+killed ["more values masked: a token as a URL's user, a sho"] ["The input did not match the regular expr"] 3s | url: password always hidden
+killed ["more values masked: a token as a URL's user, a sho"] ["The input did not match the regular expr"] 3s | url: oauth password hidden
+SURVIVED [] [] 3s | tokenLike: no gh prefix
+SURVIVED [] [] 3s | tokenLike: no github_pat
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 2s | tokenLike: no glpat
+SURVIVED [] [] 2s | tokenLike: no slack
+SURVIVED [] [] 2s | tokenLike: no sk
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 3s | tokenLike: from 17
+SURVIVED [] [] 3s | tokenLike: no digit needed
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 3s | tokenLike: never
+killed ["more secrets: names, URL credentials, Bearer value","more values masked: URLs with an empty user, an @ ","a scheme's value with a digit in it is masked from"] ["The input was expected to not match the ","The input was expected to not match the ","The  | auth: case-sensitive
+killed ["a scheme's value with a digit in it is masked from"] ["The input did not match the regular expr"] 3s | auth: from 12
+killed ["more values masked: URLs with an empty user, an @ ","a scheme's value with a digit in it is masked from","more values masked: a token as a URL's user, a sho"] ["Expected values to be strictly deep-equa","Expected values to be strictly equal:","Expecte | auth: always a token
+killed ["a scheme's value with a digit in it is masked from"] ["The input did not match the regular expr"] 3s | authToken: no digit rule
+killed ["a scheme's value with a digit in it is masked from"] ["The input did not match the regular expr"] 4s | authToken: no 16 rule
+killed ["a scheme's value with a digit in it is masked from"] ["The input did not match the regular expr"] 3s | authToken: 17 rule
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 3s | authToken: no base64 rule
+SURVIVED [] [] 3s | authToken: base64 for every scheme
+SURVIVED [] [] 3s | authToken: basic case-sensitive
+SURVIVED [] [] 2s | authToken: any length
+SURVIVED [] [] 2s | authToken: no shape check
+killed ["more values masked: URLs with an empty user, an @ ","more values masked: a token as a URL's user, a sho"] ["Expected values to be strictly deep-equa","Expected values to be strictly deep-equa"] 3s | authToken: any letter
+killed ["more values masked: a token as a URL's user, a sho"] ["Expected values to be strictly deep-equa"] 2s | authToken: capital anywhere
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 2s | dsn: none
+SURVIVED [] [] 2s | dsn: tcp only
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 1s | dsn: password shown
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 1s | jwt: none
+SURVIVED [] [] 1s | jwt: payload any
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 2s | attr: none
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 2s | attr: key and name only
+SURVIVED [] [] 3s | attr: no id
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 2s | attr: no key
+SURVIVED [] [] 2s | attr: name case-sensitive
+SURVIVED [] [] 2s | attr: value case-sensitive
+SURVIVED [] [] 2s | attr: double quotes only
+killed ["more values masked: a token as a URL's user, a sho"] ["The input was expected to not match the "] 2s | attr: value shown
+SURVIVED [] [] 2s | attr: tag needs a space-free name
+killed ["name and value pairs: a HAR cookie of 8 keys and a"] ["The input was expected to not match the "] 2s | pair: no capitalized strict
+SURVIVED [] [] 2s | pair: strict needs name (not key)
+SURVIVED [] [] 2s | pair: strict needs Name (not Key)
+SURVIVED [] [] 2s | pair: strict without value
+SURVIVED [] [] 2s | pair: strict name need not be text
+killed ["name and value pairs: a HAR cookie of 8 keys and a"] ["The input was expected to not match the "] 2s | pair: never strict
+killed ["name and value pairs: a HAR cookie of 8 keys and a"] ["The input did not match the regular expr"] 3s | pair: loose up to 7
+killed ["name and value pairs: a HAR cookie of 8 keys and a"] ["The input was expected to not match the "] 3s | pair: loose up to 5
+killed ["name and value pairs: a HAR cookie of 8 keys and a"] ["The input was expected to not match the "] 3s | pair: first value key only
+killed ["name and value pairs: a HAR cookie of 8 keys and a"] ["Expected values to be strictly equal:"] 3s | pair: null values masked
+killed ["name and value pairs: a HAR cookie of 8 keys and a"] ["The input was expected to not match the "] 3s | pair: only the first masked in toJson
+killed ["long names are left out; a key of more than 32 fie","a collection with a name over 200 characters makes"] ["Expected values to be strictly deep-equa","Expected values to be strictly equal:"] 3s | omitted: long counted again
+killed ["flagChanges: deletes, emptied and dropped collecti","a flag is amber only when the base made the same c","what loses data is listed before column and mass-c"] ["Expected values to be strictly deep-equa","Expected values to be strictly deep-equa","Expe | cols: per field again
+killed ["a flag is amber only when the base made the same c","what loses data is listed before column and mass-c","1,600 columns dropped from one collection are one "] ["Expected values to be strictly deep-equa","Expected values to be strictly deep-equa","Expe | cols: count 1
+killed ["a flag is amber only when the base made the same c"] ["Expected values to be strictly deep-equa"] 2s | cols: fields unsorted
+killed ["a flag is amber only when the base made the same c","1,600 columns dropped from one collection are one "] ["Expected values to be strictly deep-equa","Expected values to be strictly deep-equa"] 2s | cols: first six
+killed ["a flag is amber only when the base made the same c","1,600 columns dropped from one collection are one "] ["Expected values to be strictly deep-equa","Expected values to be strictly deep-equa"] 2s | cols: all fields
+killed ["flagChanges: deletes, emptied and dropped collecti","a flag is amber only when the base made the same c","what loses data is listed before column and mass-c"] ["Expected values to be strictly deep-equa","Expected values to be strictly deep-equa","Expe | cols: no count
+SURVIVED [] [] 2s | cols: shared when base dropped any
+killed ["flagChanges: deletes, emptied and dropped collecti","what loses data is listed before column and mass-c"] ["Expected values to be strictly deep-equa","Expected values to be strictly deep-equa"] 2s | order: losses not first (old order)
+SURVIVED [] [] 2s | order: key-lost not a loss
+killed ["flagChanges: deletes, emptied and dropped collecti"] ["Expected values to be strictly deep-equa"] 3s | order: dropped not a loss
+killed ["flagChanges: deletes, emptied and dropped collecti"] ["Expected values to be strictly deep-equa"] 3s | order: emptied not a loss
+killed ["flagChanges: deletes, emptied and dropped collecti","what loses data is listed before column and mass-c"] ["Expected values to be strictly deep-equa","Expected values to be strictly deep-equa"] 3s | order: column-dropped a loss
+killed ["flagChanges: deletes, emptied and dropped collecti"] ["Expected values to be strictly deep-equa"] 2s | order: mass-change a loss
+SURVIVED [] [] 2s | order: unverified with columns
+killed ["a collection a PR snapshot left out reads as unkno","the unverified flags of collections only the PR pa"] ["the base pane has it: listed first","Expected values to be strictly deep-equa"] 2s | order: late before prOwn
+SURVIVED [] [] 3s | tally: merge drops earlier items
+SURVIVED [] [] 3s | tally: merge drops new items
+SURVIVED [] [] 3s | tally: merge null-safe dropped (null kept as items)
+SURVIVED [] [] 3s | tally: quadratic spread (perf)
+---
+killed ["the lim   name: no pw
+killed ["the lim   name: no psk
+killed ["the lim   name: no _auth
+killed ["the lim   name: auth unanchored
+killed ["the lim   name: no auth at all
+killed ["more ke   gate: no percent
+killed ["more ke   gate: percent case-sensitive
+killed ["more ke   quote: no backtick
+killed ["more ke   quote: no percent quote
+SURVIVED [] [] 3   quote: percent only %22
+killed ["mutants   quote: run cut to one
+killed ["more ke   key: 8 spaces
+SURVIVED [] [] 3   key: 31 spaces
+killed ["more ke   key: no percent separator
+killed ["more ke   key: percent : only
+killed ["more ke   key: percent = only
+killed ["mutants   key: case-sensitive flag
+SURVIVED [] [] 2   tag: attributes cross < (round-4 regression)
+killed ["more va   tag: no attributes
+killed ["more va   tag: no namespace
+killed ["more ke   flag: gate never
+killed ["more ke   flag: no flag loop
+killed ["more ke   flag: no mysql -p
+killed ["more ke   flag: no PEM
+SURVIVED [] [] 3   flag: double dash only
+SURVIVED [] [] 2   flag: no start guard
+killed ["more ke   flag: = only
+SURVIVED [] [] 2   flag: space only
+SURVIVED [] [] 2   mysql: mysql only
+killed ["more ke   mysql: no client needed
+SURVIVED [] [] 3   mysql: -p then anything
+SURVIVED [] [] 3   mysql: case-sensitive
+SURVIVED [] [] 3   pem: RSA only
+SURVIVED [] [] 2   pem: any BEGIN
+killed ["more va   url: password needs a char
+killed ["more va   url: oauth never
+SURVIVED [] [] 2   url: oauth case-sensitive
+killed ["more va   url: user not masked for tokenLike
+killed ["more va   url: user not masked for empty pw
+killed ["more va   url: user not masked for oauth
+SURVIVED [] [] 2   url: empty user masked
+killed ["more va   url: password always hidden
+killed ["more va   url: oauth password hidden
+SURVIVED [] [] 3   tokenLike: no gh prefix
+SURVIVED [] [] 3   tokenLike: no github_pat
+killed ["more va   tokenLike: no glpat
+SURVIVED [] [] 2   tokenLike: no slack
+SURVIVED [] [] 2   tokenLike: no sk
+killed ["more va   tokenLike: from 17
+SURVIVED [] [] 3   tokenLike: no digit needed
+killed ["more va   tokenLike: never
+killed ["a schem   auth: from 12
+killed ["more se   auth: case-sensitive
+killed ["more va   auth: always a token
+killed ["a schem   authToken: no digit rule
+killed ["a schem   authToken: no 16 rule
+killed ["a schem   authToken: 17 rule
+killed ["more va   authToken: no base64 rule
+SURVIVED [] [] 3   authToken: base64 for every scheme
+SURVIVED [] [] 3   authToken: basic case-sensitive
+SURVIVED [] [] 2   authToken: any length
+SURVIVED [] [] 2   authToken: no shape check
+killed ["more va   authToken: any letter
+killed ["more va   authToken: capital anywhere
+killed ["more va   dsn: none
+SURVIVED [] [] 2   dsn: tcp only
+killed ["more va   dsn: password shown
+killed ["more va   jwt: none
+SURVIVED [] [] 1   jwt: payload any
+killed ["more va   attr: none
+killed ["more va   attr: key and name only
+SURVIVED [] [] 3   attr: no id
+killed ["more va   attr: no key
+SURVIVED [] [] 2   attr: name case-sensitive
+SURVIVED [] [] 2   attr: value case-sensitive
+SURVIVED [] [] 2   attr: double quotes only
+killed ["more va   attr: value shown
+SURVIVED [] [] 2   attr: tag needs a space-free name
+killed ["name an   pair: no capitalized strict
+SURVIVED [] [] 2   pair: strict needs name (not key)
+SURVIVED [] [] 2   pair: strict needs Name (not Key)
+SURVIVED [] [] 2   pair: strict without value
+SURVIVED [] [] 2   pair: strict name need not be text
+killed ["name an   pair: never strict
+killed ["name an   pair: loose up to 7
+killed ["name an   pair: loose up to 5
+killed ["name an   pair: first value key only
+killed ["name an   pair: null values masked
+killed ["name an   pair: only the first masked in toJson
+killed ["long na   omitted: long counted again
+killed ["flagCha   cols: per field again
+killed ["a flag    cols: count 1
+killed ["a flag    cols: fields unsorted
+killed ["a flag    cols: first six
+killed ["a flag    cols: all fields
+killed ["flagCha   cols: no count
+SURVIVED [] [] 2   cols: shared when base dropped any
+killed ["flagCha   order: losses not first (old order)
+SURVIVED [] [] 2   order: key-lost not a loss
+killed ["flagCha   order: dropped not a loss
+killed ["flagCha   order: emptied not a loss
+killed ["flagCha   order: column-dropped a loss
+killed ["flagCha   order: mass-change a loss
+SURVIVED [] [] 2   order: unverified with columns
+killed ["a colle   order: late before prOwn
+SURVIVED [] [] 3   tally: merge drops earlier items
+SURVIVED [] [] 3   tally: merge drops new items
+SURVIVED [] [] 3   tally: merge null-safe dropped (null kept as items)
+SURVIVED [] [] 3   tally: quadratic spread (perf)
+total 109 survived 40 skipped 0

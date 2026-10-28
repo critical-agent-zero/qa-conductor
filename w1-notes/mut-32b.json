@@ -1,0 +1,291 @@
+[
+ {
+  "id": "P1 not internal",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "await docker.createNetwork(net, { internal: true }).catch(",
+  "new": "await docker.createNetwork(net).catch(",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P2 app published",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "paneRef.role === 'pr' && internalUp() ? null : reserved[name].port",
+  "new": "reserved[name].port",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P3 no proxy env",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "(role === 'pr' && internalUp() ? { ...(env ?? {}), ...proxyEnv() } : env)",
+  "new": "env",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P4 base gets proxy",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "(role === 'pr' && internalUp() ? { ...(env ?? {}), ...proxyEnv() } : env)",
+  "new": "(internal ? { ...(env ?? {}), ...proxyEnv() } : env)",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P5 transform wins",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "{ ...(env ?? {}), ...proxyEnv() }",
+  "new": "{ ...proxyEnv(), ...(env ?? {}) }",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P6 no fallback",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      if (err?.name === 'AbortError') throw err\n      await docker.rmForce([FORWARDER])",
+  "new": "      throw err\n      await docker.rmForce([FORWARDER])",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P7 reuse any",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "        if (!(await docker.networkInternal(net))) throw new Error(`a network ${net} exists that isn't internal`)\n",
+  "new": "",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P8 fallback no undo",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      await docker.rmNetwork(net).catch(() => {})\n      await docker.rmNetwork(edge)",
+  "new": "      await docker.rmNetwork(edge)",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P9 abort falls back",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      if (err?.name === 'AbortError') throw err\n      await docker.rmForce([FORWARDER])",
+  "new": "      await docker.rmForce([FORWARDER])",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P10 DD reason kept",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "if (/docker desktop/i.test(runtime.os) && !up)",
+  "new": "if (/docker desktop/i.test(runtime.os))",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P11 podman kept",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "if (/podman/i.test(runtime.version) && !up)",
+  "new": "if (/podman/i.test(runtime.version))",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P12 no vias",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "const vias = up ? ['--', proxy,",
+  "new": "const vias = false ? ['--', proxy,",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P13 v6 bare",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "(address.includes(':') ? `[${address}]:${port}` : `${address}:${port}`)",
+  "new": "`${address}:${port}`",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P14 silent proxy ok",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "    if (up && !answered) return cannotTell(",
+  "new": "    if (false) return cannotTell(",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P15 proxied no hit",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "        if (kind === 'proxied' && where) hits.push(`the PR pane got through the forwarder's proxy to ${where}`)\n",
+  "new": "",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P16 no internal flag",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      if (up) return { ...out, internal: true }",
+  "new": "      if (up) return out",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P17 no fallback reason",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      if (inside && topology && !topology.up && out.verdict !== 'isolated') {",
+  "new": "      if (false) {",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P18 teardown keeps fwd",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "...(withForwarder ? [FORWARDER] : []), ",
+  "new": "",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P19 teardown keeps edge",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "const edgeNet = withForwarder ? await docker.rmNetwork(edge).then(() => {}, err => err) : undefined",
+  "new": "const edgeNet = undefined",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P20 sweep keeps edge",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "...(inside ? [edge] : [])",
+  "new": "",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P21 floors ignore internal",
+  "file": "lib/isolation.mjs",
+  "old": "containers && internal !== true",
+  "new": "containers",
+  "tests": [
+   "test/isolation.test.mjs",
+   "test/server.test.mjs"
+  ]
+ },
+ {
+  "id": "P22 server trusts intent",
+  "file": "lib/server.mjs",
+  "old": "internal = raw?.internal === true",
+  "new": "internal = adapters.provisioner?.internal === true",
+  "tests": [
+   "test/server.test.mjs"
+  ]
+ },
+ {
+  "id": "P23 server start ignores intent",
+  "file": "lib/server.mjs",
+  "old": "runtimeFloors(adapters.provisioner?.internal === true)",
+  "new": "runtimeFloors(false)",
+  "tests": [
+   "test/server.test.mjs"
+  ]
+ },
+ {
+  "id": "P24 forwarder runs imported",
+  "file": "lib/forwarder.mjs",
+  "old": " && /\\[eval\\d*\\]$/.test(import.meta.url)",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "P25 edge collision",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "  if (inside && edge === networks.base) throw new Error(",
+  "new": "  if (false) throw new Error(",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P26 egress unchecked",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "    parseAllowlist(given.egress)\n",
+  "new": "",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P27 refused as proxied",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "  '    HTTP/*) echo \"refused $1\" ;;',",
+  "new": "  '    HTTP/*) echo \"proxied $1\" ;;',",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P28 vias from 0",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "  'for t in \"${vias[@]:1}\"; do via \"$t\" & done',",
+  "new": "  'for t in \"${vias[@]}\"; do via \"$t\" & done',",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P29 fwd as root",
+  "file": "lib/docker.mjs",
+  "old": ", '--user', 'node',",
+  "new": ",",
+  "tests": [
+   "test/docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P30 fwd to base",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "forward: { listen: 3000, to: `${appName('pr')}:3000` }",
+  "new": "forward: { listen: 3000, to: `${appName('base')}:3000` }",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P31 no fwd image pull",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      await docker.ensureImage(inside.image, ensureOpts)\n",
+  "new": "",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P32 edge internal too",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "await docker.createNetwork(edge).catch(",
+  "new": "await docker.createNetwork(edge, { internal: true }).catch(",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ }
+]

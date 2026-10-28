@@ -1,0 +1,20 @@
+[
+ {
+  "id": "V1 tunnel destroy",
+  "file": "lib/forwarder.mjs",
+  "old": "if (open) socket.destroySoon() })",
+  "new": "if (open) socket.destroy() })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V2 forward destroy",
+  "file": "lib/forwarder.mjs",
+  "old": "upstream.on('close', () => client.destroySoon())",
+  "new": "upstream.on('close', () => client.destroy())",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ }
+]

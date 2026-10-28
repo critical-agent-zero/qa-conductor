@@ -1,0 +1,2 @@
+N=150000 seed=1: lost whole-masking 0, newly masked whole 3654
+/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/run/review-35f/regress/to.sh: line 12: 11541 Terminated: 15          ( sleep "$secs"; kill -TERM -"$pid" 2> /dev/null; sleep 3; kill -KILL -"$pid" 2> /dev/null )

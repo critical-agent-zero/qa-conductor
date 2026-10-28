@@ -1,0 +1,7 @@
+[
+  {"id": "R3 only the first missing family", "file": "lib/adapters/provisioner-docker.mjs", "old": "const reasons = unvouched.map(", "new": "const reasons = unvouched.slice(0, 1).map(", "tests": ["test/provisioner-docker.test.mjs"]},
+  {"id": "R5 families from own not base", "file": "lib/adapters/provisioner-docker.mjs", "old": "[...new Set(baseDbs.map(familyOf))]", "new": "[...new Set(ownDbs.map(familyOf))]", "tests": ["test/provisioner-docker.test.mjs"]},
+  {"id": "R6 no address fallback dropped", "file": "lib/adapters/provisioner-docker.mjs", "old": ".join(', ') || 'no address'", "new": ".join(', ')", "tests": ["test/provisioner-docker.test.mjs"]},
+  {"id": "R7 families of both", "file": "lib/adapters/provisioner-docker.mjs", "old": "[...new Set(baseDbs.map(familyOf))]", "new": "[...new Set([...baseDbs, ...ownDbs].map(familyOf))]", "tests": ["test/provisioner-docker.test.mjs"]},
+  {"id": "R8 unsorted", "file": "lib/adapters/provisioner-docker.mjs", "old": ".filter(family => !vouched.has(family)).sort()", "new": ".filter(family => !vouched.has(family)).reverse()", "tests": ["test/provisioner-docker.test.mjs"]}
+]

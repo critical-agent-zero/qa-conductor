@@ -1,0 +1,31 @@
+cut-only: {'2ec0bba,7193877': 2571, '4ed6449': 226, '2ec0bba,4a284f9,7193877': 406, '2ec0bba,4ed6449,7193877': 375, '2ec0bba': 335, '4a284f9,7193877': 6, '2ec0bba,4a284f9,4ed6449,7193877': 93, '4a284f9': 21, '7193877': 26, '2ec0bba,4033285,4a284f9,4ed6449,7193877': 3, '2ec0bba,4ed6449': 1, '4a284f9,4ed6449': 8, '4ed6449,7193877': 4, '4033285,4ed6449': 1}
+   472  ('P5 short scheme value (design)', '2ec0bba')
+     6  ('P4? escape hex digit', '2ec0bba,7193877')
+   TEXT 'A%3API_KEY="empn3V?8deaZU[8LPDwZ*"'
+   vfix {"t":"json","s":"{\"msg\":\"A%3API_KEY=\\\"empn3V?8deaZU[8LPDwZ*\\\"\"}"}
+    7193877 {"t":"json","s":"{\"msg\":\"[text with a secret-looking key, 34 characters, 8f104297]\"}"}
+    2ec0bba {"t":"json","s":"{\"msg\":\"[text with a secret-looking key, 34 characters, 8f104297]\"}"}
+   TEXT "db:\n  us<er: app\n  a%3ApiKey: '2AXhEVu'\n"
+   vfix {"t":"json","s":"{\"msg\":\"db:\\n  us<er: app\\n  a%3ApiKey: '2AXhEVu'\\n\"}","enc":2}
+    7193877 {"t":"json","s":"{\"msg\":\"[text with a secret-looking key, 40 characters, a632cf5e]\"}","enc":2}
+    2ec0bba {"t":"json","s":"{\"msg\":\"[text with a secret-looking key, 40 characters, a632cf5e]\"}"}
+   TEXT 'payload {"user":"a","a%3ApiKey":"pRtd6\'Dd6Ni,co8SUD,eyCcQG6%="}'
+   vfix "{\"a\":1}\n{\"msg\":\"payload {\\\"user\\\":\\\"a\\\",\\\"a%3ApiKey\\\":\\\"pRtd6'Dd6Ni,co8SUD,eyCcQG6%=\\\"}\"}"
+    7193877 "{\"a\":1}\n{\"msg\":\"[text with a secret-looking key, 63 characters, 1f98ce6c]\"}"
+    2ec0bba "{\"a\":1}\n{\"msg\":\"[text with a secret-looking key, 63 characters, 1f98ce6c]\"}"
+   TEXT ':@media(max-width:600px)cJUWP3UK%3DSNSFU8u:mysql://a::postgres://app:'
+   vfix ":@media(max-width:600px)cJUWP3UK%3DSNSFU8u:mysql://a::postgres://app:"
+    7193877 "[text with a secret-looking key, 69 characters, e9f89846]"
+    2ec0bba "[text with a secret-looking key, 69 characters, e9f89846]"
+   TEXT 'GET /v1 HTTP/1.1\r\nHost: api\r\n.X-A%3Api-Key: $ijnUSzQ.XV2CJk:7CmNk\r\nAccept: *\\\\/*'
+   vfix "first line\nGET /v1 HTTP/1.1\r\nHost: api\r\n.X-A%3Api-Key: $ijnUSzQ.XV2CJk:7CmNk\r\nAccept: *\\\\/*\nlast line"
+    7193877 "[text with a secret-looking key, 101 characters, 8832a204]"
+    2ec0bba "[text with a secret-looking key, 101 characters, 8832a204]"
+   TEXT 'Proxy-&amp;A%3Authorization: Bearer bGVTm\\\\riF8eSi\\\\MVQgAp6Y/6kVfd\'redis:\n  user: app\n  sec:ret: EN6Trfq"Z78RrJP\n'
+   vfix {"t":"json","s":"{\"msg\":\"Proxy-&amp;A%3Authorization: Bearer bGVTm\\\\\\\\riF8eSi\\\\\\\\MVQgAp6Y/6kVfd'redis:\\n  user: app\\n  sec:ret: EN6Trfq\\\"Z78RrJP\\n\"}"}
+    7193877 {"t":"json","s":"{\"msg\":\"[text with a secret-looking key, 113 characters, 633dfd4b]\"}"}
+    2ec0bba {"t":"json","s":"{\"msg\":\"[text with a secret-looking key, 113 characters, 633dfd4b]\"}"}
+     1  ('OTHER', '4a284f9')
+   TEXT 'spring.dat@mq.locaasource.pa)sswo\\"rd=+aXwW&3U NnkbHW$=BROKER=snowflake://ci-bot:EmqEV6gQ@dBR7wQ{mvx3LFLu.8mqfX(@mq.local/app"}{\\"password\\": \\"QGex5@o9ateVU@ouMtKdpe*\\"}'
+   vfix {"t":"long","s":"spring%2Edat%40mq%2Elocaasource%2Epa%29sswo%5C%22rd%3D%2BaXwW%263U%20NnkbHW%24%3DBROKER%3Dsnowflake%3A%2F%2Fci%2Dbot%3AEmqEV6gQ%40dBR7wQ%7Bmvx3LFLu%2E8mqfX%28%40mq%2Elocal%2Fapp%22%7D%7B%5C%22password","len":256,"d":"82b7ce5f726fa6a8"}
+    4a284f9 "[text with a secret-looking key, 256 characters, 9d1e3836]"

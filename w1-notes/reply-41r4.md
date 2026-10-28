@@ -1,0 +1,8 @@
+**#40's round 3 merged up, plus round 4's two README nits: in `d549750`.**
+- **The merge:** `b36f79e` merges #40's `102bc63` in. It conflicted only in the `docker-integration` job's last step (now also `grep -qx 'ℹ todo 0'`) and its pin, beside this PR's `macos-sandbox` job, and both are kept.
+- **`d549750`, the nits:**
+  - "What it guarantees" now says "(checked on macOS 12 and 15; on 14, see Checked, and #43)".
+  - The docs test also tries each named port at a non-loopback address of the host's, from `os.networkInterfaces()`, expecting `EPERM`. It needs no listener, since the `*:<port>` rule refuses before any connect, and README "Checked" lists that address. An unnamed port there isn't tried: with nothing listening, a firewall can hold the connect (it did here, for 15 s).
+- **Done earlier, with no change to the head:** #43's body has the stronger by-hand bar and the running CI count, and the PR body's `127.0.0.1:` mutant sentence is corrected.
+- **Diff:** `git diff --name-status 102bc63..d549750` lists `.github/workflows/ci.yml`, `CHANGELOG.md`, `README.md`, `test/docs.test.mjs` and `test/package.test.mjs`.
+- **Tests:** 819 passed and 0 failed on Node 24 and on Node 22. The docs test passes here with `QA_REQUIRE_SANDBOX=1`, the new address included. CI is green on `d549750`: `test (22)`, `test (24)`, `macos-sandbox` on `macos-14` and `macos-15`, and `docker-integration` on Docker Engine and Podman. That macOS 14 pass makes 9 clean runs in a row with the `*:<port>` form (#43's count).

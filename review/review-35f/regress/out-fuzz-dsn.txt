@@ -1,0 +1,27 @@
+N=6000: shown whole / in part: {"4a284f9":{"full":597,"part":28},"4ed6449":{"full":187,"part":363}}
+passwords holding ':': 889; masked at 4a284f9 and whole at 4ed6449: 153; in part: 307
+in root:=,d*M:wUSgg>6ZJs!2pj@tcp(db:3306)/app?parseTime=true
+  4a284f9 "root:[secret 93f4b49c]@tcp(db:3306)/app?parseTime=true"
+  4ed6449 "root:=,d*M:[secret 50ed7dd6]@tcp(db:3306)/app?parseTime=true"
+in root:ghGh>th-%mz:U]bDs@tcp(db:3306)/app?parseTime=true
+  4a284f9 "root:[secret f77c1f1b]@tcp(db:3306)/app?parseTime=true"
+  4ed6449 "root:ghGh>th-%mz:[secret a43ae410]@tcp(db:3306)/app?parseTime=true"
+in app:Rgv:U,<KDSW;e%XN@unix(/var/run/mysqld.sock)/app
+  4a284f9 "app:[secret ddd83109]@unix(/var/run/mysqld.sock)/app"
+  4ed6449 "app:Rgv:[secret bacbfa58]@unix(/var/run/mysqld.sock)/app"
+in app:+>8;HmRVAGwV<RV:wPQKkci@unix(/var/run/mysqld.sock)/app
+  4a284f9 "app:[secret 042cfb15]@unix(/var/run/mysqld.sock)/app"
+  4ed6449 "app:+>8;HmRVAGwV<RV:[secret 16430942]@unix(/var/run/mysqld.sock)/app"
+in root:]p3j5a,!VV!:z<h{=dL@tcp(db:3306)/app?parseTime=true
+  4a284f9 "root:[secret 6b3db9e4]@tcp(db:3306)/app?parseTime=true"
+  4ed6449 "root:]p3j5a,!VV!:z<h{=dL@tcp(db:3306)/app?parseTime=true"
+in app:VT!E987:VRU-@unix(/var/run/mysqld.sock)/app
+  4a284f9 "app:[secret 75d46678]@unix(/var/run/mysqld.sock)/app"
+  4ed6449 "app:VT!E987:[secret a58d6f1c]@unix(/var/run/mysqld.sock)/app"
+in root:o8Cu:N%JN36T+Jt:PyTjC@tcp(db:3306)/app?parseTime=true
+  4a284f9 "root:[secret 4ea023de]@tcp(db:3306)/app?parseTime=true"
+  4ed6449 "root:o8Cu:N%JN36T+Jt:[secret 23109d9f]@tcp(db:3306)/app?parseTime=true"
+in root:+oj7.:veEcVSPAj3_,f@tcp(db:3306)/app?parseTime=true
+  4a284f9 "root:[secret 682bc730]@tcp(db:3306)/app?parseTime=true"
+  4ed6449 "root:+oj7.:[secret 0d5e9134]@tcp(db:3306)/app?parseTime=true"
+/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/run/review-35f/regress/to.sh: line 12:  2138 Terminated: 15          ( sleep "$secs"; kill -TERM -"$pid" 2> /dev/null; sleep 3; kill -KILL -"$pid" 2> /dev/null )

@@ -1,0 +1,53 @@
+=== A. round 5 medium: the PR adds aa_tmp_0000..0004 at boot; the click drops them and seeded email
+7193877 trusted=true: [["users","column-dropped","red",false,"aa_tmp_0000"],["users","column-dropped","red",false,"aa_tmp_0001"],["users","column-dropped","red",false,"aa_tmp_0002"],["users","column-dropped","red",false,"aa_tmp_0003"],["users","column-dropped","red",false,"aa_tmp_0004"],["users","column-dropped","red",false,"email"]]
+7193877 trusted=false: [["users","column-dropped","red",false,"aa_tmp_0000"],["users","column-dropped","red",false,"aa_tmp_0001"],["users","column-dropped","red",false,"aa_tmp_0002"],["users","column-dropped","red",false,"aa_tmp_0003"],["users","column-dropped","red",false,"aa_tmp_0004"],["users","column-dropped","red",false,"email"]]
+4a284f9 trusted=true: [["users","column-dropped","red",false,"count=6","seeded=undefined",["aa_tmp_0000","aa_tmp_0001","aa_tmp_0002","aa_tmp_0003","aa_tmp_0004"]]]
+4a284f9 trusted=false: [["users","column-dropped","red",false,"count=6","seeded=undefined",["aa_tmp_0000","aa_tmp_0001","aa_tmp_0002","aa_tmp_0003","aa_tmp_0004"]]]
+4ed6449 trusted=true: [["users","column-dropped","red",false,"count=6","seeded=1",["email","aa_tmp_0000","aa_tmp_0001","aa_tmp_0002","aa_tmp_0003"]]]
+4ed6449 trusted=false: [["users","column-dropped","red",false,"count=6","seeded=1",["email","aa_tmp_0000","aa_tmp_0001","aa_tmp_0002","aa_tmp_0003"]]]
+
+=== B. rename: the PR boot migration renames email -> aa_email (data kept), adds aa_tmp padding; the click drops all of them
+7193877: [["users","column-dropped","red",false,"aa_email"],["users","column-dropped","red",false,"aa_tmp_0000"],["users","column-dropped","red",false,"aa_tmp_0001"],["users","column-dropped","red",false,"aa_tmp_0002"],["users","column-dropped","red",false,"aa_tmp_0003"],["users","column-dropped","red",false,"aa_tmp_0004"]]; names aa_email: false
+4a284f9: [["users","column-dropped","red",false,"count=6","seeded=undefined",["aa_email","aa_tmp_0000","aa_tmp_0001","aa_tmp_0002","aa_tmp_0003"]]]; names aa_email: true
+4ed6449: [["users","column-dropped","red",false,"count=6","seeded=0",["aa_email","aa_tmp_0000","aa_tmp_0001","aa_tmp_0002","aa_tmp_0003"]]]; names aa_email: true
+B2. rename case-only: email -> Email, padding Aa_tmp (sorts before)
+7193877: [["users","column-dropped","red",false,"A_0000"],["users","column-dropped","red",false,"A_0001"],["users","column-dropped","red",false,"A_0002"],["users","column-dropped","red",false,"A_0003"],["users","column-dropped","red",false,"A_0004"],["users","column-dropped","red",false,"Email"]]
+4a284f9: [["users","column-dropped","red",false,"count=6","seeded=undefined",["A_0000","A_0001","A_0002","A_0003","A_0004"]]]
+4ed6449: [["users","column-dropped","red",false,"count=6","seeded=0",["A_0000","A_0001","A_0002","A_0003","A_0004"]]]
+
+=== C. advisory: the PR (not isolated) also adds aa_tmp padding to the BASE pane at boot, so the base before snapshot declares it
+7193877 trusted=false: [["users","column-dropped","red",false,"aa_tmp_0000"],["users","column-dropped","red",false,"aa_tmp_0001"],["users","column-dropped","red",false,"aa_tmp_0002"],["users","column-dropped","red",false,"aa_tmp_0003"],["users","column-dropped","red",false,"aa_tmp_0004"],["users","column-dropped","red",false,"email"]]
+4a284f9 trusted=false: [["users","column-dropped","red",false,"count=6","seeded=undefined",["aa_tmp_0000","aa_tmp_0001","aa_tmp_0002","aa_tmp_0003","aa_tmp_0004"]]]
+4ed6449 trusted=false: [["users","column-dropped","red",false,"count=6","seeded=6",["aa_tmp_0000","aa_tmp_0001","aa_tmp_0002","aa_tmp_0003","aa_tmp_0004"]]]
+
+=== D. seeded comes from the base: base declares [id,email,role]; the PR S1 declares more; base diff fields null (schemaless base inspector)
+7193877 base without fields: [["users","column-dropped","red",false,"aa_tmp_0000"],["users","column-dropped","red",false,"aa_tmp_0001"],["users","column-dropped","red",false,"aa_tmp_0002"],["users","column-dropped","red",false,"aa_tmp_0003"],["users","column-dropped","red",false,"aa_tmp_0004"],["users","column-dropped","red",false,"email"]]
+4a284f9 base without fields: [["users","column-dropped","red",false,"count=6","seeded=undefined",["aa_tmp_0000","aa_tmp_0001","aa_tmp_0002","aa_tmp_0003","aa_tmp_0004"]]]
+4ed6449 base without fields: [["users","column-dropped","red",false,"count=6","seeded=0",["aa_tmp_0000","aa_tmp_0001","aa_tmp_0002","aa_tmp_0003","aa_tmp_0004"]]]
+
+=== D2. the base pane cut users short (count-only stub in base S1): fieldsBefore null
+7193877 base truncated by maxRows (fields kept): [["users","column-dropped","red",false,"aa_tmp_0000"],["users","column-dropped","red",false,"aa_tmp_0001"],["users","column-dropped","red",false,"aa_tmp_0002"],["users","column-dropped","red",false,"aa_tmp_0003"],["users","column-dropped","red",false,"aa_tmp_0004"],["users","column-dropped","red",false,"email"],["users","unverified","amber",true]]
+4a284f9 base truncated by maxRows (fields kept): [["users","column-dropped","red",false,"count=6","seeded=undefined",["aa_tmp_0000","aa_tmp_0001","aa_tmp_0002","aa_tmp_0003","aa_tmp_0004"]],["users","unverified","amber",true]]
+4ed6449 base truncated by maxRows (fields kept): [["users","column-dropped","red",false,"count=6","seeded=1",["email","aa_tmp_0000","aa_tmp_0001","aa_tmp_0002","aa_tmp_0003"]],["users","unverified","amber",true]]
+
+=== E. a wipe hidden by 11,000 empty PR tables, plus padding on S other seeded collections
+7193877 S=10: users at 40 of 42: ["users","unverified","red",false]; diff {"st":"unknown","om":"after"}
+4a284f9 S=10: users at 40 of 42: ["users","unverified","red",false]; diff {"st":"unknown","om":"after"}
+4ed6449 S=10: users at 20 of 42: ["users","unverified","red",false]; diff {"st":"unknown","om":"after"}
+7193877 S=100: users at 400 of 402: ["users","unverified","red",false]; diff {"st":"unknown","om":"after"}
+4a284f9 S=100: users at 400 of 402: ["users","unverified","red",false]; diff {"st":"unknown","om":"after"}
+4ed6449 S=100: users at 200 of 402: ["users","unverified","red",false]; diff {"st":"unknown","om":"after"}
+
+=== F. deletes hidden by a PR-only cut: the PR inflates seeded users past maxRows (100 here) at boot; the click deletes the 50 seeded users and inserts 50 padding rows; padding on S other seeded collections
+7193877 S=10: users at 40 of 41: ["users","unverified","red",false]; users flags 1; diff {"st":"unknown","tr":true,"del":0}
+4a284f9 S=10: users at 40 of 41: ["users","unverified","red",false]; users flags 1; diff {"st":"unknown","tr":true,"del":0}
+4ed6449 S=10: users at 40 of 41: ["users","unverified","red",false]; users flags 1; diff {"st":"unknown","tr":true,"del":0}
+7193877 S=100: users at 400 of 401: ["users","unverified","red",false]; users flags 1; diff {"st":"unknown","tr":true,"del":0}
+4a284f9 S=100: users at 400 of 401: ["users","unverified","red",false]; users flags 1; diff {"st":"unknown","tr":true,"del":0}
+4ed6449 S=100: users at 400 of 401: ["users","unverified","red",false]; users flags 1; diff {"st":"unknown","tr":true,"del":0}
+
+=== G. column drop shared check unchanged: base drops legacy, PR drops email (trusted)
+7193877: [["users","column-dropped","red",false,"email"]]
+4a284f9: [["users","column-dropped","red",false,"count=1","seeded=undefined",["email"]]]
+4ed6449: [["users","column-dropped","red",false,"count=1","seeded=1",["email"]]]
+/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/run/review-35f/regress/to.sh: line 12:  9204 Terminated: 15          ( sleep "$secs"; kill -TERM -"$pid" 2> /dev/null; sleep 3; kill -KILL -"$pid" 2> /dev/null )

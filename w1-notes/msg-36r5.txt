@@ -1,0 +1,30 @@
+fix: the data answer ranks seeded collections first in one queue, even without a base diff
+
+Round 5 of #36's review, under the owner's decision W28=B:
+- The PR diff, the divergence and the base diff are listed from one
+  queue, sorted by the whole rank (tier, first flag, name), the lists in
+  turn on a tie. So a collection's entries in all three come before any
+  lower-ranked entry of any list. A list is cut exactly when it stopped
+  short of its end.
+- A span with no base diff (the base pane's read failed, or became its
+  late baseline) tells the base pane's collections from the PR's own by
+  the base pane's newest snapshot, else by what the PR pane's boot
+  added. Their flags, list entries and fallback flags come first.
+- Every flag of a seeded collection, amber ones too, is listed before
+  the PR's own red flags, and a seeded collection with only an amber
+  flag ranks before the PR's own red tables in every list.
+- Among a span's flags, what loses rows (and a seeded collection the PR
+  left out or cut short) comes before a lost key, before the rest.
+- ready() and snapshot() wait for every pane's raw read before masking
+  any, so one pane's slow masking can't time out the other's read.
+- The unreadable flag's reason is `failed` when only the PR pane's read
+  failed, though the base pane's became its late baseline.
+- The server test that waited a fixed 20 ms waits for the inspector's
+  held snapshot instead.
+- Tests for the review's three probes, the no-base shapes, the order of
+  lost keys, a sweep of budgets (each list a prefix of its order, cut
+  exactly when short, within its share), the slow-masking stall, and
+  the mutants it found alive. README and CHANGELOG follow.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

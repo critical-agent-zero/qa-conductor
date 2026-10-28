@@ -1,0 +1,10 @@
+                                     7193877  2ec0bba  4a284f9  fix     
+tag, < in an attribute               masked   CLEAR    CLEAR    masked  
+namespaced tag, < in an attribute    masked   CLEAR    CLEAR    masked  
+custom element, < in an attribute    masked   CLEAR    CLEAR    masked  
+self-closing, < in an attribute      masked   CLEAR    CLEAR    masked  
+x%3dpassword=S                       masked   masked   CLEAR    masked  
+x%3Apassword: S                      masked   masked   CLEAR    masked  
+value%3aS--db-token=                 masked   masked   CLEAR    masked  
+state%3AStoken%22%3dtoken:           masked   masked   CLEAR    masked  
+exit 0

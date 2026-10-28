@@ -1,0 +1,104 @@
+DIV orders:unknown->pr-only (long in p1 true, pn true, limits undefined)
+DIV users:unknown->pr-only (long in p1 true, pn true, limits undefined)
+DIV accounts:unknown->pr-only (long in p1 false, pn true, limits undefined)
+DIV orders:unknown->differs (long in p1 false, pn true, limits undefined)
+DIV users:unknown->both (long in p1 false, pn false, limits undefined)
+DIV users:unknown->base-only (long in p1 false, pn false, limits undefined)
+DIV accounts:unknown->differs (long in p1 false, pn true, limits undefined)
+DIV users:unknown->differs (long in p1 false, pn true, limits {"maxBytes":600})
+DIV added_coll:unknown->pr-only (long in p1 true, pn true, limits undefined)
+UNEXPLAINED [["null|unverified","red"]]
+LOST red at old, not red at new: [["null|unverified","red"]] trusted=true limits=undefined long p1 true pn true
+  old [["users","unverified","red"],[null,"unverified","red"]]
+  new [["users","unverified","red"]]
+DIV accounts:unknown->both (long in p1 false, pn true, limits undefined)
+DIV orders:unknown->base-only (long in p1 false, pn false, limits {"maxCollections":1})
+UNEXPLAINED [["null|unverified","red"]]
+LOST red at old, not red at new: [["null|unverified","red"]] trusted=true limits=undefined long p1 true pn true
+  old [["users","unverified","red"],[null,"unverified","red"]]
+  new [["users","unverified","red"]]
+DIV accounts:unknown->base-only (long in p1 false, pn false, limits undefined)
+DIV added_coll:unknown->both (long in p1 true, pn true, limits {"maxCollections":1})
+UNEXPLAINED [["null|unverified","red"]]
+LOST red at old, not red at new: [["null|unverified","red"]] trusted=true limits=undefined long p1 true pn true
+  old [["orders","delete","red"],["accounts","unverified","red"],["orders","unverified","red"],["users","unverified","red"],[null,"unverified","red"]]
+  new [["orders","delete","red"],["accounts","unverified","red"],["orders","unverified","red"],["users","unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+LOST red at old, not red at new: [["null|unverified","red"]] trusted=false limits=undefined long p1 true pn true
+  old [["accounts","column-dropped","red"],["accounts","unverified","red"],["users","unverified","red"],[null,"unverified","red"]]
+  new [["accounts","column-dropped","red"],["accounts","unverified","red"],["users","unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+LOST red at old, not red at new: [["accounts|unverified","red"],["null|unverified","red"]] trusted=true limits=undefined long p1 true pn true
+  old [["accounts","unverified","red"],["orders","unverified","red"],["users","unverified","red"],[null,"unverified","red"]]
+  new [["accounts","dropped","red"],["orders","unverified","red"],["users","unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+LOST red at old, not red at new: [["null|unverified","red"]] trusted=false limits=undefined long p1 true pn true
+  old [["accounts","unverified","red"],["orders","unverified","red"],["users","unverified","red"],[null,"unverified","red"]]
+  new [["accounts","unverified","red"],["orders","unverified","red"],["users","unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+LOST red at old, not red at new: [["users|unverified","red"],["null|unverified","red"]] trusted=false limits=undefined long p1 false pn true
+  old [["users","unverified","red"],[null,"unverified","red"],["orders","cleared","amber"]]
+  new [["users","dropped","red"],["added_co","dropped","red"],["orders","cleared","amber"]]
+UNEXPLAINED [["null|unverified","red"]]
+LOST red at old, not red at new: [["null|unverified","red"]] trusted=false limits=undefined long p1 true pn true
+  old [["accounts","unverified","red"],[null,"unverified","red"]]
+  new [["accounts","unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+LOST red at old, not red at new: [["orders|unverified","red"],["null|unverified","red"]] trusted=true limits=undefined long p1 true pn true
+  old [["accounts","column-dropped","red"],["orders","unverified","red"],["users","unverified","red"],[null,"unverified","red"]]
+  new [["orders","dropped","red"],["accounts","column-dropped","red"],["users","unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+LOST red at old, not red at new: [["null|unverified","red"]] trusted=false limits=undefined long p1 true pn true
+  old [["orders","unverified","red"],[null,"unverified","red"]]
+  new [["orders","unverified","red"]]
+UNEXPLAINED [["added_coll|unverified","red"]]
+LOST red at old, not red at new: [["added_coll|unverified","red"]] trusted=false limits=undefined long p1 true pn true
+  old [["accounts","unverified","red"],["added_co","unverified","red"]]
+  new [["accounts","unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+LOST red at old, not red at new: [["null|unverified","red"]] trusted=false limits=undefined long p1 true pn true
+  old [["users","column-dropped","red"],[null,"unverified","red"],["users","unverified","amber"]]
+  new [["users","column-dropped","red"],["users","unverified","amber"]]
+UNEXPLAINED [["null|unverified","red"]]
+LOST red at old, not red at new: [["null|unverified","red"]] trusted=false limits={"maxCollections":1} long p1 false pn true
+  old [["accounts","mass-change","red"],[null,"unverified","red"],["accounts","cleared","amber"],["orders","unverified","amber"],["users","unverified","amber"]]
+  new [["accounts","mass-change","red"],["added_co","dropped","red"],["accounts","cleared","amber"],["orders","unverified","amber"],["users","unverified","amber"]]
+UNEXPLAINED [["null|unverified","red"]]
+LOST red at old, not red at new: [["null|unverified","red"]] trusted=true limits=undefined long p1 true pn true
+  old [["users","column-dropped","red"],["users","unverified","red"],[null,"unverified","red"]]
+  new [["users","column-dropped","red"],["users","unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+LOST red at old, not red at new: [["orders|unverified","red"],["null|unverified","red"]] trusted=false limits=undefined long p1 true pn true
+  old [["accounts","unverified","red"],["orders","unverified","red"],[null,"unverified","red"]]
+  new [["orders","dropped","red"],["accounts","unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["added_coll|unverified","red"]]
+DIV orders:unknown->both (long in p1 false, pn true, limits {"maxBytes":600})
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+UNEXPLAINED [["null|unverified","red"]]
+N=8000: red flags lost 43, divergence statuses changed 454
+exit 0

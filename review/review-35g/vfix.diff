@@ -1,0 +1,98 @@
+diff --git a/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/run/review-35g/regress/repo/lib/data-diff.mjs b/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/run/review-35g/regress/vfix/lib/data-diff.mjs
+index 05df643..c40157c 100644
+--- a/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/run/review-35g/regress/repo/lib/data-diff.mjs
++++ b/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/run/review-35g/regress/vfix/lib/data-diff.mjs
+@@ -227,29 +227,55 @@ export function createMasker({ key, rules }) {
+   const maskInText = (s, where) => {
+     const head = s.length > HELD_JSON_MAX ? s.slice(0, HELD_JSON_MAX) : s
+     const hidden = (tag, value) => `[secret ${mac(`${tag}:${where}\u0000${value}`, 8)}]`
+-    // In this order: a URL's credentials and a scheme's value first (as
+-    // before round 6), then an element's value, before a DSN's rule, whose
+-    // password may hold '>' and so could otherwise run past the element's
+-    const withUrls = head.replace(URL_USERINFO, (_, scheme, user, pw, token) => {
+-      if (token !== undefined) return `${scheme}${hidden('u', token)}@`
+-      // a user that is a token: one that looks like it, or one with no
+-      // password or GitHub's x-oauth-basic beside it
++    // PROTOTYPE (review): every rule reads the text as it is, and the union
++    // of what they hide is replaced, so no rule's replacement can hide
++    // another's match
++    const spans = []
++    const add = (tag, [a, b], empty = false) => { if (b > a || empty) spans.push([a, b, tag]) }
++    for (const m of head.matchAll(URL_USERINFO_D)) {
++      const [, , user, pw, token] = m
++      if (token !== undefined) { add('u', m.indices[4]); continue }
+       const oauth = /^x-oauth-basic$/i.test(pw)
+-      const userShown = user !== '' && (tokenLike(user) || pw === '' || oauth) ? hidden('u', user) : user
+-      return `${scheme}${userShown}:${pw === '' || oauth ? pw : hidden('u', pw)}@`
+-    })
+-    const masked = authValues(withUrls, value => hidden('a', value))
+-      // an element whose key, name, id or type looks secret: its value
+-      .replace(ATTR_TAG, tag => ([...tag.matchAll(ATTR_NAME)].some(m => SECRET_NAME.test(m[2] ?? m[3] ?? m[4]))
+-        ? tag.replace(ATTR_VALUE, (_, name, eq, dq, sq, bare) => {
+-          const value = dq ?? sq ?? bare
+-          const q = dq !== undefined ? '"' : sq !== undefined ? "'" : ''
+-          return `${name}${eq}${q}${hidden('x', value)}${q}`
+-        })
+-        : tag))
+-      .replace(DSN_USERINFO, (_, user, pw, rest) => `${user}:${hidden('d', pw)}@${rest}`)
+-      .replace(JWT, value => hidden('j', value))
+-    return head === s ? masked : masked + s.slice(HELD_JSON_MAX)
++      if (user !== '' && (tokenLike(user) || pw === '' || oauth)) add('u', m.indices[2])
++      if (!(pw === '' || oauth)) add('u', m.indices[3])
++    }
++    const re = new RegExp(AUTH_VALUE.source, 'gid')
++    for (let m = re.exec(head); m !== null; m = re.exec(head)) {
++      if (authToken(m[1], m[2])) add('a', m.indices[2])
++      re.lastIndex = m.index + m[1].length
++    }
++    for (const m of head.matchAll(DSN_USERINFO_D)) add('d', m.indices[2])
++    for (const m of head.matchAll(JWT)) add('j', [m.index, m.index + m[0].length])
++    // an element whose key, name, id or type looks secret: its value, read
++    // in the text as is and with what the rules above hide blanked out
++    let blanked = head
++    if (spans.length) {
++      const chars = head.split('')
++      for (const [a, b] of spans) for (let i = a; i < b; i++) chars[i] = 'x'
++      blanked = chars.join('')
++    }
++    for (const t of blanked === head ? [head] : [head, blanked]) {
++      for (const m of t.matchAll(ATTR_TAG)) {
++        const tag = m[0]
++        if (![...tag.matchAll(ATTR_NAME)].some(n => SECRET_NAME.test(n[2] ?? n[3] ?? n[4]))) continue
++        for (const v of tag.matchAll(ATTR_VALUE_D)) {
++          const k = v[3] !== undefined ? 3 : v[4] !== undefined ? 4 : 5
++          add('x', [m.index + v.indices[k][0], m.index + v.indices[k][1]], true)
++        }
++      }
++    }
++    if (!spans.length) return s
++    spans.sort((x, y) => x[0] - y[0] || y[1] - x[1])
++    const merged = []
++    for (const sp of spans) {
++      const last = merged[merged.length - 1]
++      if (last && sp[0] < last[1]) { if (sp[1] > last[1]) last[1] = sp[1]; if (sp[2] !== last[2]) last[2] = 'm' } else if (last && sp[0] === last[0] && sp[1] === last[1]) { /* same */ } else merged.push([...sp])
++    }
++    let out = ''
++    let at = 0
++    for (const [a, b, tag] of merged) { out += head.slice(at, a) + hidden(tag, head.slice(a, b)); at = b }
++    out += head.slice(at)
++    return head === s ? out : out + s.slice(HELD_JSON_MAX)
+   }
+   // A string as kept inside JSON (or as a cell): JSON it holds is read and
+   // masked too, up to HELD_JSON_DEPTH deep and HELD_JSON_MAX long, line by
+@@ -389,10 +415,13 @@ const PEM_KEY = /-----BEGIN [A-Z ]{0,64}PRIVATE KEY(?: BLOCK)?-----/
+ const URL_USERINFO = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,30}:\/\/)(?:([^\s/:@]{0,256}):([^\s/]{0,256})|([^\s/:@]{16,256}))@/gi
+ const AUTH_VALUE = /\b(bearer|basic|token)\s{1,4}([A-Za-z0-9._~+/=-]{8,})/gi
+ const DSN_USERINFO = /(?<![\w.-])([\w.-]{1,64}):([^\s/]{1,256})@((?:[a-z][\w-]{0,31})?\(|\/)/gi
++const URL_USERINFO_D = new RegExp(URL_USERINFO.source, 'gid')
++const DSN_USERINFO_D = new RegExp(DSN_USERINFO.source, 'gid')
+ const JWT = /(?<![\w-])eyJ[\w-]{4,}\.eyJ[\w-]{4,}\.[\w-]{4,}/g
+-const ATTR_TAG = /<[\w:.-]{1,64}\s[^<>]{0,1024}>/g
+-const ATTR_NAME = /\b(key|name|id|type)\s*=\s*(?:"([^"<>]{1,128})"|'([^'<>]{1,128})'|([^\s"'<>=\x60]{1,128}))/gi
++const ATTR_TAG = /<[\w:.-]{1,64}\s[^<>]*>/g
++const ATTR_NAME = /\b(key|name|id|type)\s*=\s*(?:"([^"<>]{1,128})"|'([^'<>]{1,128})'|(?=([^\s"'<>=\x60]{1,128})))/gi
+ const ATTR_VALUE = /\b(value)(\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'<>=\x60]+))/gi
++const ATTR_VALUE_D = new RegExp(ATTR_VALUE.source, 'gid')
+ // A user that looks like a token: a known prefix, or 16 characters with a
+ // digit.
+ const tokenLike = s => /^(?:gh[pousr]_|github_pat_|glpat-|xox[abpr]-|sk_live_|sk-)/.test(s) || (s.length >= 16 && /\d/.test(s))

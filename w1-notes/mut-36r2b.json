@@ -1,0 +1,11 @@
+[
+ {
+  "id": "S17 flags unsorted",
+  "file": "lib/data-capture.mjs",
+  "old": "  return within([...red, ...flags.filter(f => f.severity !== 'red')], LISTED_FLAGS, budget).out",
+  "new": "  return within(flags, LISTED_FLAGS, budget).out",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ }
+]

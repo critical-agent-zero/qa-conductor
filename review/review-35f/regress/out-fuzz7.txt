@@ -1,0 +1,2 @@
+N=40000 seed=7 mode=all: regressions 0 (vs 4a284f9 0, vs 7193877 0), fixed 14158
+/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/run/review-35f/regress/to.sh: line 12: 96542 Terminated: 15          ( sleep "$secs"; kill -TERM -"$pid" 2> /dev/null; sleep 3; kill -KILL -"$pid" 2> /dev/null )

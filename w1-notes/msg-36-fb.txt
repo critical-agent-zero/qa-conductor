@@ -1,0 +1,9 @@
+fix: the data answer leaves out the engine's fieldsBefore
+
+#35's round 5 gives each diff entry its before snapshot's declared
+fields, for flagChanges. The answer lists a collection's dropped and
+added fields, cut, but not those: up to 2,000 names a collection that no
+view draws.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

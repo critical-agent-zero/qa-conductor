@@ -1,0 +1,24 @@
+load before: 18:18  up 64 days, 23:09, 7 users, load averages: 92.04 114.13 112.25
+✔ sanitizePath keeps the shape of a path and drops every value in it (536.824142ms)
+✔ sanitizeMethod keeps a method of capitals, and nothing else (0.324148ms)
+✔ record keeps only the value-free fields, sanitized, and numbers every entry in one sequence with the marks (9.316047ms)
+✔ each pane keeps its last maxEntries requests, counting the ones it dropped (1.157803ms)
+✔ marks are value-free, one of each kind per pane per 100 ms, and at most maxMarks a pane (1.724448ms)
+✔ each pane's marks come from a budget that refills: using up the PR pane's leaves the base pane's alone, and a pause refills it (2.640527ms)
+✔ refusals count per pane by reason, and nothing else of them is kept (0.366283ms)
+✔ a read gives the requests and marks after a sequence number, in order, at most `limit` together (22.786951ms)
+✔ a reader that reads on from 0 until `more` is false gets everything once, however the marks fall (20.915565ms)
+✔ each pane keeps its last keptMarks marks, counting the ones it let go in marksDropped (12.035673ms)
+✔ a mark is never earlier than the one before it (0.318723ms)
+✔ every read names its log, the same for one log and another for the next (0.490534ms)
+✔ the default clock is monotonic: a step back of the wall clock changes nothing (123.048178ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 900.662297
+/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/run/review-35f/regress/to.sh: line 12: 12910 Terminated: 15          ( sleep "$secs"; kill -TERM -"$pid" 2> /dev/null; sleep 3; kill -KILL -"$pid" 2> /dev/null )
+rc=0

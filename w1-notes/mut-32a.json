@@ -1,0 +1,21 @@
+[
+  {"id": "F1 mapped not unwrapped", "file": "lib/forwarder.mjs", "old": "  if (g.slice(0, 5).every(x => x === 0) && g[5] === 0xffff) {", "new": "  if (false) {", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F2 zone kept", "file": "lib/forwarder.mjs", "old": ".replace(/^\\[|\\]$/g, '').split('%')[0]", "new": ".replace(/^\\[|\\]$/g, '')", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F3 no global check", "file": "lib/forwarder.mjs", "old": "  return GLOBAL_V6.check(ip, 'ipv6') ? null : 'not global unicast'", "new": "  return null", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F4 CGNAT open", "file": "lib/forwarder.mjs", "old": "['100.64.0.0', 10, 'shared (CGNAT, Tailscale)'],", "new": "", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F5 metadata open", "file": "lib/forwarder.mjs", "old": "['169.254.0.0', 16, 'link-local (cloud metadata)'],", "new": "", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F6 one private answer enough", "file": "lib/forwarder.mjs", "old": "  for (const address of addresses) {\n    const blocked = blockedAddress(address)", "new": "  for (const address of addresses.slice(0, 1)) {\n    const blocked = blockedAddress(address)", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F7 wildcard matches apex", "file": "lib/forwarder.mjs", "old": "(r.wildcard ? host.endsWith(`.${r.host}`) : host === r.host)", "new": "(r.wildcard ? host.endsWith(r.host) : host === r.host)", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F8 any port", "file": "lib/forwarder.mjs", "old": "rules.some(r => r.ports.includes(port) && ", "new": "rules.some(r => ", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F9 literal unlisted ok", "file": "lib/forwarder.mjs", "old": "    return listed(rules, name, port) ? { address: name } : { refused: `${name}:${port} is not on the allowlist` }", "new": "    return { address: name }", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F10 connect to name", "file": "lib/forwarder.mjs", "old": "  return { address: addresses[0] }", "new": "  return { address: name }", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F11 relookup at connect", "file": "lib/forwarder.mjs", "old": "      const upstream = connect(port, out.address)\n      const timer", "new": "      const again = await checkTarget(rules, hostName, port, lookup)\n      const upstream = connect(port, again.address ?? out.address)\n      const timer", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F12 refused connect anyway", "file": "lib/forwarder.mjs", "old": "      if (out.refused) return refuse(socket, 403, out.refused)", "new": "      if (out.refused) refuse(socket, 403, out.refused)", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F13 proxy headers forwarded", "file": "lib/forwarder.mjs", "old": "      for (const [k, v] of Object.entries(req.headers)) if (!HOP_BY_HOP.has(k.toLowerCase())) headers[k] = v", "new": "      for (const [k, v] of Object.entries(req.headers)) headers[k] = v", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F14 https absolute allowed", "file": "lib/forwarder.mjs", "old": "      if (!target || target.protocol !== 'http:') {", "new": "      if (!target) {", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F15 ip entry not checked", "file": "lib/forwarder.mjs", "old": "      if (blocked) throw new Error(`egress[${i}]: ${name} is ${blocked}, which is always refused`)", "new": "", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F16 no default ports", "file": "lib/forwarder.mjs", "old": "ports: port === null ? DEFAULT_PORTS : [port]", "new": "ports: port === null ? [443] : [port]", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F17 no log", "file": "lib/forwarder.mjs", "old": "      if (out.refused) log(`qa-egress refused ${normalHost(hostName)}:${port}: ${out.refused}`)", "new": "", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F18 bad config not exit", "file": "lib/forwarder.mjs", "old": "    err => { console.error(`qa-forwarder: ${err.message}`); process.exit(1) },", "new": "    err => { console.error(`qa-forwarder: ${err.message}`) },", "tests": ["test/forwarder.test.mjs"]},
+  {"id": "F19 short wildcard", "file": "lib/forwarder.mjs", "old": "const isHostname = h => h.length <= 253 && h.split('.').length >= 2 &&", "new": "const isHostname = h => h.length <= 253 &&", "tests": ["test/forwarder.test.mjs"]}
+]

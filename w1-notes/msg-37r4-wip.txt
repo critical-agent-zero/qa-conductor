@@ -1,0 +1,11 @@
+wip: #37 round 4 harness changes (note to self; fold before any PR push)
+
+On 5ba172c (merge of #36's 2b8379d). Harness: rank by first red flag,
+open by name (flags open their table), cut markers, folded-flag count,
+late-baseline keyed on baselines.pr === comparedAt, shared baseline
+time, UNREADABLE via hasOwn, plural panes, unlisted sentence once,
+divergence omitted from pane diffs, column-dropped count/fields text.
+Tests not yet updated (8 harness tests fail on open-by-name etc.).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

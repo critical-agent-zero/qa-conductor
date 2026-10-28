@@ -1,0 +1,26 @@
+fix: the data engine scans backslash runs in linear time and never takes a left-out collection for added
+
+Round 3 of #35's review.
+
+- The key scan never starts a match inside a run of backslashes, so 256
+  KB of them take milliseconds, not 48 s; a key right after one
+  backslash still counts. HTML-escaped quotes count too.
+- A snapshot says how many collections it left out (`omitted`), and a
+  collection missing from one that left some out is `unknown`, so a red
+  unverified, never added or dropped.
+- The unverified flags of collections only the PR pane has are one flag.
+  Flags are ordered red first, then the base pane's collections, then the
+  destructive kinds.
+- JSON text encoded twice says so (`enc: 2`). More values are masked:
+  empty-user and '@' passwords, a token alone in a URL, any-case
+  Bearer/Basic/Token values that look like tokens, Name/Value pairs, XML
+  with a namespace or attributes; prose after "Basic" is kept.
+- The masker caches no name over 128 characters. Collection names over
+  200 characters are left out, keys of more than 32 fields dropped, and a
+  collection's key and declared fields are capped and charged to its
+  bytes.
+- README and CHANGELOG to match, with the both-cut amber case and
+  volatile presence for timestamps.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

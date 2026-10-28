@@ -1,0 +1,13 @@
+ok    pw= plain                            "[text with a secret-looking key, 12 characters, e8a6a243]"
+ok    user_pw= plain                       "[text with a secret-looking key, 17 characters, 6413aa27]"
+ok    {"pw": …} JSON text in prose         "[text with a secret-looking key, 21 characters, 59406169]"
+ok    pw after a real &                    "[text with a secret-looking key, 16 characters, a65ceae8]"
+ok    pw after %26                         "[text with a secret-looking key, 34 characters, a42d4f40]"
+ok    %22pw%22%3A                          "[text with a secret-looking key, 34 characters, 1f8edcb0]"
+ok    %22password%22%3A (control)          "[text with a secret-looking key, 40 characters, fe1da7cd]"
+ok    pin after %26                        "[text with a secret-looking key, 20 characters, f65f1793]"
+ok    _auth after %0A (npmrc, encoded)     "[text with a secret-looking key, 38 characters, 0a07f2ea]"
+ok    auth after \n (escaped npmrc)        "[text with a secret-looking key, 27 characters, 8589ebfe]"
+ok    pw after \n                          "[text with a secret-looking key, 17 characters, 07381306]"
+ok    password after \n (control)          "[text with a secret-looking key, 23 characters, 393ffe04]"
+exit 0

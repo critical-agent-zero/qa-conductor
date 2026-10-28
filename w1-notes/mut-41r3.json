@@ -1,0 +1,6 @@
+[
+ {"id": "L1", "file": "README.md", "old": "(deny network-outbound (remote ip (string-append \"*:\" (param \"BASE_APP\"))))", "new": "(deny network-outbound (remote ip (string-append \"localhost:\" (param \"BASE_APP\"))))", "tests": ["test/docs.test.mjs"]},
+ {"id": "L2", "file": "README.md", "old": "(deny network-outbound (remote ip (string-append \"*:\" (param \"HARNESS\"))))", "new": "(deny network-outbound (remote ip (string-append \"127.0.0.1:\" (param \"HARNESS\"))))", "tests": ["test/docs.test.mjs"]},
+ {"id": "L3", "file": "README.md", "old": "(deny network-outbound (remote ip (string-append \"*:\" (param \"BASE_DB\"))))\n", "new": "", "tests": ["test/docs.test.mjs"]},
+ {"id": "L4", "file": "test/docs.test.mjs", "old": "        if (outcome !== want) odd.push(", "new": "        if (false) odd.push(", "tests": ["test/docs.test.mjs"]}
+]

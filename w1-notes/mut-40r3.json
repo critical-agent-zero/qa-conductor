@@ -1,0 +1,91 @@
+[
+ {
+  "id": "R1",
+  "file": "lib/docker.mjs",
+  "old": "      let failure = null\n      for (const name of names) {\n        try {\n          await run(['rm', '-f', '-v', name])\n        } catch (err) {\n          if (!onlyMissing(err, /no such container/i)) failure ??= err\n        }\n      }\n      if (failure) throw failure",
+  "new": "      if (!names.length) return\n      try {\n        await run(['rm', '-f', '-v', ...names])\n      } catch (err) {\n        if (!onlyMissing(err, /no such container/i)) throw err\n      }",
+  "tests": [
+   "test/docker.test.mjs",
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "R2",
+  "file": "lib/docker.mjs",
+  "old": "          if (!onlyMissing(err, /no such container/i)) failure ??= err",
+  "new": "          if (!onlyMissing(err, /no such container/i)) throw err",
+  "tests": [
+   "test/docker.test.mjs",
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "G1",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "  const isolatedGateway = engine !== null && engine >= 28",
+  "new": "  const isolatedGateway = engine !== null && engine >= 29",
+  "tests": [
+   "test/docker.test.mjs",
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "G1b",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      const isolatedGateway = engine !== null && engine >= 28",
+  "new": "      const isolatedGateway = engine !== null && engine >= 29",
+  "tests": [
+   "test/docker.test.mjs",
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "G2",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "        .catch(err => (isolatedGateway && !exists(err) ? docker.createNetwork(net, { internal: true }) : Promise.reject(err)))\n",
+  "new": "",
+  "tests": [
+   "test/docker.test.mjs",
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "G3",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "          if (isolatedGateway && !(await docker.networkGatewayIsolated(net).catch(() => false))) {",
+  "new": "          if (false) {",
+  "tests": [
+   "test/docker.test.mjs",
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "G4",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "  const at = text.search(/^Server:/m)\n  if (at === -1) return null\n",
+  "new": "  const at = 0\n",
+  "tests": [
+   "test/docker.test.mjs",
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "N1",
+  "file": "lib/docker.mjs",
+  "old": "  /^exit status \\d+$/,",
+  "new": "  /exit status/,",
+  "tests": [
+   "test/docker.test.mjs",
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "F1",
+  "file": "lib/forwarder.mjs",
+  "old": "        res.setTimeout(idleMs, () => reset(res.socket))\n        upRes.pipe(res)",
+  "new": "        upRes.pipe(res)",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ }
+]

@@ -1,0 +1,38 @@
+better than 4ed6449: d_colon_in_pw
+better than 4ed6449: d_colon_end_pw
+better than 4ed6449: d_colon_start_pw
+better than 4ed6449: d_colon_unix
+better than 4ed6449: d_colon_udp
+better than 4ed6449: d_colon_in_url_q
+better than 4ed6449: d_colon_and_at
+better than 4ed6449: a_minified_after
+better than 4ed6449: a_minified_after2
+corpus: worse 0, better than 4ed6449 9
+fuzz 60000: fix shows what a head hid 15; fix hides what 4ed6449 showed 259
+in  "<input type=password value=Basic Zq9SeCr3tVal>@/db\"@/"
+fix "<input type=password value=[secret 33789537] Zq9SeCr3tVal>@/db\"@/"
+4a  "<input type=password value=Basic [secret 083c0251]>@/db\"@/"
+4e  "<input type=password value=[secret 33789537] [secret 083c0251]>@/db\"@/"
+in  "<x id='secret' value='u:'>!\"Zq9SeCr3tVal@tcp(h);https://u:"
+fix "<x id='secret' value='[secret 248354ce]'>!\"Zq9SeCr3tVal@tcp(h);https://u:"
+4a  "<x id='secret' value='u:[secret a257e1a8]@tcp(h);https://u:"
+4e  "<x id='secret' value='u:[secret a257e1a8]@tcp(h);https://u:"
+in  "(<input type=password value=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.root:\"><'>Zq9SeCr3tValroot:@tcp(h)"
+fix "(<input type=password value=[secret 256e622d]\"><'>Zq9SeCr3tValroot:@tcp(h)"
+4a  "(<input type=password value=[secret 489debf9]:[secret 33031e94]@tcp(h)"
+4e  "(<input type=password value=[secret c42ec876] 489debf9]:\"><'>Zq9SeCr3tValroot:@tcp(h)"
+in  "https://<input type=password value=:Bearer Zq9SeCr3tVal\">x@tcp(h)::"
+fix "https://<input type=password value=[secret 0df393be] Zq9SeCr3tVal\">x@tcp(h)::"
+4a  "https://<input type=password value=:Bearer [secret 083c0251]\">x@tcp(h)::"
+4e  "https://<input type=password value=[secret 0df393be] [secret 083c0251]\">x@tcp(h)::"
+in  ")x<x id='secret' value='https://u:<input type=password value=Basic Zq9SeCr3tVal /><b>@/db"
+fix ")x<x id='secret' value='https://u:<input type=password value=[secret 33789537] Zq9SeCr3tVal /><b>@/db"
+4a  ")x<x id='secret' value='https://u:<input type=password value=Basic [secret 083c0251] /><b>@/db"
+4e  ")x<x id='secret' value='https://u:<input type=password value=[secret 33789537] [secret 083c0251] /><b>@/db"
+in  "#eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.<input type=password value=Basic Zq9SeCr3tVal'\"><add key=\"DbPassword\" value=\"@tcp6(h)"
+fix "#eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.<input type=password value=[secret 33789537] Zq9SeCr3tVal'\"><add key=\"DbPassword\" value=\"@tcp6(h)"
+4a  "#eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.<input type=password value=Basic [secret 083c0251]'\"><add key=\"DbPassword\" value=\"@tcp6(h)"
+4e  "#eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.<input type=password value=[secret 33789537] [secret 083c0251]'\"><add key=\"DbPassword\" value=\"@tcp6(h)"
+4ed6449: 256 KB of 'a:' in 51 ms
+fix: 256 KB of 'a:' in 217 ms
+/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/run/review-35f/regress/to.sh: line 12: 13718 Terminated: 15          ( sleep "$secs"; kill -TERM -"$pid" 2> /dev/null; sleep 3; kill -KILL -"$pid" 2> /dev/null )

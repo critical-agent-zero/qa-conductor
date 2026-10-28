@@ -1,0 +1,22 @@
+fix: the Data panel draws tables in the answer's order, opens them by name, and says when the answer's size cut a list
+
+Round 4 of #37's review:
+- Tables rank as the data answer ranks them: a red flag first, by its
+  first red flag's place in the engine's order (the base pane's tables,
+  and what loses rows, before the PR's own), then rows moved, an amber
+  flag, any other change, the rest. So padding a PR adds, flagged or not,
+  can't push users out of the 300 drawn.
+- A flag on a collection opens it, and the open collection is kept by
+  name, so the next answer keeps it open wherever it ranks.
+- A list or a collection the answer's size cut says so.
+- "and N more flags" counts a folded flag as its collections.
+- A late PR baseline is keyed on baselines.pr === comparedAt with no PR
+  error, so both its states say so, and the header draws the panes'
+  shared baseline time.
+- Nits: "the BASE and PR panes have none"; the too-big sentence drawn
+  once; UNREADABLE looked up as an own property; a divergence entry
+  whose pane diff says it was left out says so; column-dropped's count,
+  seeded count and fields.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

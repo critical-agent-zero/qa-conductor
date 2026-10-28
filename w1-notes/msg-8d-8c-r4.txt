@@ -1,0 +1,4 @@
+Merge #8 PR C (2b8379d, its round 4 with PR B's) into PR D
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

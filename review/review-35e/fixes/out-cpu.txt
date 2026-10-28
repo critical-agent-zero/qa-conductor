@@ -1,0 +1,16 @@
+plain words                                  new     7.1 ms  old     4.0 ms  x  1.8  per 32 MB (128 cells) new ~0.9 s  kept {"t":"long","s":"lorem ipsum lorem ipsum lorem ipsum lorem i
+<a  (tag, fixed this round)                  new     7.8 ms  old    87.4 ms  x  0.1  per 32 MB (128 cells) new ~1.0 s  kept {"t":"long","s":"<a <a <a <a <a <a <a <a <a <a <a <a <a <a <
+<a:a                                         new    19.8 ms  old    64.9 ms  x  0.3  per 32 MB (128 cells) new ~2.5 s  kept {"t":"long","s":"<a:a <a:a <a:a <a:a <a:a <a:a <a:a <a:a <a:
+a: (Go DSN start at every word)              new   163.3 ms  old    22.0 ms  x  7.4  per 32 MB (128 cells) new ~20.9 s  kept {"t":"long","s":"a:a:a:a:a:a:a:a:a:a:a:a:a:a:a:a:a:a:a:a:a:a
+a:b (DSN, longer)                            new    17.6 ms  old    13.5 ms  x  1.3  per 32 MB (128 cells) new ~2.2 s  kept {"t":"long","s":"ab:cd ab:cd ab:cd ab:cd ab:cd ab:cd ab:cd a
+mysql  (lazy {0,256}? per client name)       new     7.0 ms  old     3.8 ms  x  1.8  per 32 MB (128 cells) new ~0.9 s  kept {"t":"long","s":"mysql mysql mysql mysql mysql mysql mysql m
+mysql -x                                     new    34.3 ms  old     3.1 ms  x 10.9  per 32 MB (128 cells) new ~4.4 s  kept {"t":"long","s":"mysql -x mysql -x mysql -x mysql -x mysql -
+<a b="1"  (ATTR_TAG, no >)                   new    17.8 ms  old    42.1 ms  x  0.4  per 32 MB (128 cells) new ~2.3 s  kept {"t":"long","s":"<a b=\"1\" <a b=\"1\" <a b=\"1\" <a b=\"1\"
+<a key="pw" value="x"> (attr HMAC each)      new    98.1 ms  old    15.0 ms  x  6.5  per 32 MB (128 cells) new ~12.6 s  kept {"t":"long","s":"<a key=\"pw\" value=\"[secret b0deb32d]\"><
+JWT each 24 chars                            new    64.1 ms  old     4.1 ms  x 15.7  per 32 MB (128 cells) new ~8.2 s  kept {"t":"long","s":"[secret b2dbd518] [secret b2dbd518] [secret
+--a  (flag each)                             new    12.8 ms  old     1.5 ms  x  8.4  per 32 MB (128 cells) new ~1.6 s  kept {"t":"long","s":"--a --a --a --a --a --a --a --a --a --a --a
+x%3D (percent sep)                           new    11.4 ms  old     1.9 ms  x  6.0  per 32 MB (128 cells) new ~1.5 s  kept {"t":"long","s":"x%3Dx%3Dx%3Dx%3Dx%3Dx%3Dx%3Dx%3Dx%3Dx%3Dx%3
+key + 32 spaces, no =                        new     3.1 ms  old     1.3 ms  x  2.3  per 32 MB (128 cells) new ~0.4 s  kept {"t":"long","s":"a                                a         
+a://:@ (empty user and password)             new    35.9 ms  old    13.0 ms  x  2.8  per 32 MB (128 cells) new ~4.6 s  kept {"t":"long","s":"a://:@a://:@a://:@a://:@a://:@a://:@a://:@a
+Basic abcdefgh (auth check each)             new    21.8 ms  old     6.9 ms  x  3.1  per 32 MB (128 cells) new ~2.8 s  kept {"t":"long","s":"Basic abcdefgh Basic abcdefgh Basic abcdefg
+exit=0

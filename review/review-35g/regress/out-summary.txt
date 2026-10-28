@@ -1,0 +1,20 @@
+sum-boundary-21.json         cases  299135 regress  5216 mask   187 byOld {'7193877': 4311, '2ec0bba': 4824, '4ed6449': 907, '4a284f9': 680} ms 118420
+sum-grammar-31.json          cases  262953 regress   519 mask   468 byOld {'7193877': 48, '2ec0bba': 474, '4a284f9': 23, '4ed6449': 35} ms 48956
+sum-grammar-32.json          cases  262968 regress   500 mask   451 byOld {'7193877': 45, '2ec0bba': 454, '4a284f9': 29, '4ed6449': 34} ms 65275
+sum-long-42.json             cases   99858 regress 21712 mask 21260 byOld {'7193877': 3286, '4a284f9': 9025, '4ed6449': 21259, '2ec0bba': 3293} ms 140909
+sum-mix-11.json              cases  291687 regress   450 mask    54 byOld {'7193877': 327, '2ec0bba': 412, '4a284f9': 70, '4ed6449': 82} ms 89930
+sum-mix-12.json              cases  291686 regress   432 mask    73 byOld {'7193877': 296, '2ec0bba': 404, '4ed6449': 56, '4a284f9': 68} ms 145687
+total cases 1508287
+    18  A* scheme rescan / P2/P3                           masked at [7193877]
+     1  A* scheme rescan / P2/P3                           masked at [4a284f9]
+     1  A* scheme rescan / P2/P3                           masked at [4a284f9,4ed6449]
+    61  E* element vs DSN/scheme order                     masked at [4ed6449]
+    37  E* element vs DSN/scheme order                     masked at [4a284f9,4ed6449]
+    17  E* element vs DSN/scheme order                     masked at [4a284f9]
+    13  E* element vs DSN/scheme order                     masked at [7193877]
+ 14682  E1 tag over 1024 raw (JWT/DSN in sibling attr)     masked at [4ed6449]
+ 10716  E1 tag over 1024 raw (JWT/DSN in sibling attr)     masked at [4a284f9,4ed6449]
+     9  P4? escape hex digit as key letter                 masked at [2ec0bba,7193877]
+     2  P4? escape hex digit as key letter                 masked at [7193877]
+  1138  P5 short scheme value (by design since 7193877)    masked at [2ec0bba]
+     1  other                                              masked at [4a284f9]

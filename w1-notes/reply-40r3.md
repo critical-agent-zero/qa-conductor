@@ -1,0 +1,87 @@
+**Round 2's lows and nits (comment 6341612759), item by item, plus owner decision A (CI on a real runtime): all in `8a03d2d`, plus `5d2df65`, a one-line README fix (the note under the proxy env now says the PR pane gets `--dns` on Podman too). CI is green on both.** It is on `main` at `561bd84`. `git diff --name-status 561bd84..8a03d2d` lists only this PR's files: the 12 from round 2, plus `.github/workflows/ci.yml`, `test/integration/docker-internal.test.mjs` and `test/package.test.mjs`.
+
+**Owner decision A: the internal network on a real runtime, in CI.** A new `docker-integration` job runs `test/integration/docker-internal.test.mjs` on Linux, against Docker Engine and against Podman through its Docker-compatible socket (`d8c6a58`).
+- It boots both panes on the topology and checks:
+  - the probe's `isolated`;
+  - that the PR pane reaches neither the host's loopback, the base pane's database nor `169.254.169.254`, with controls from the base pane;
+  - DNS, and the proxy's refusals;
+  - a fallback refused under `QA_REQUIRE_ISOLATION=1`;
+  - that teardown and sweep leave nothing.
+- The test runs only when `QA_DOCKER_IT=1` asks, and the job fails on any skip.
+
+Its first runs found three things. Each is now fixed or stated, and pinned in the job (`825afb0`):
+1. **A sweep on a clean host failed.** The docker CLI on Ubuntu writes `exit status 1` after its error, so a name already gone read as a failure. That line is now treated as noise, like Podman's banner.
+2. **Podman's DNS does forward an internal network's outside names** (Podman 4.9). Round 1's review said Podman answers none, and I wrote that into the README and judgment call L. CI disproved it, so both are corrected.
+   - Podman's PR containers now get `--dns 192.0.2.1` too.
+   - A `--dns` there replaces Podman's own DNS, so the names the pane needs (`qa-pg-pr`, `qa-egress`) go in its hosts files (`--add-host`).
+   - The job checks that an outside name fails and that both names resolve.
+3. **A host service listening on `0.0.0.0` is reachable from the PR pane** at the PR network's gateway, which is the host's own address on that bridge.
+   - The probe reports it as `reachable`, naming the address, and the README states the limit.
+   - The job pins both ways: `reachable` for `0.0.0.0`, and `isolated` with the host's listeners on `127.0.0.1` only.
+
+**Low, a plain-HTTP answer could hold the PR-side socket for ever.** Fixed.
+- Once the answer's headers are written, `res.setTimeout(idleMs, () => reset(res.socket))` bounds the PR's side too. Node holds a socket's timeout off while what is queued on it still moves, so a slow reader that still reads isn't cut.
+- I armed it at the headers, not before `req.pipe(upstream)`. Before the answer starts, the PR's side is idle while it waits on the host, and the host side's timer already covers that: a host that never answers still gets a `502`, not a reset.
+- **Test:** 24 answers from 800,000 to 988,000 bytes, sent in parallel to PRs that never read, with `idleMs` 300. Every host side ends, then every PR side is let go: `getConnections` reaches 0. The mutant without the timer is killed.
+- The README now covers it: "So is an answer the host has finished but the PR has stopped reading."
+
+**Low, the podman-docker shim still gave `unknown`.** The verdict is fixed; teardown under the shim is a follow-up, and it fails closed.
+- **The endpoint:** `docker.endpoint({ podman })`. When `docker version` names Podman and the context gives no endpoint, the endpoint is Podman's own: `CONTAINER_HOST`, else the connection `CONTAINER_CONNECTION` names, else the default one from `podman system connection list --format json`. With no connection it is `'local'`, since Podman then runs its containers on this host. (The shim's `context inspect` is Podman's, which prints nothing or fails on the template.)
+  - A `ssh://` default (Podman machine) still gives `unknown`, as any daemon elsewhere does.
+  - The docker CLI against Podman's socket still uses its context.
+  - `createDocker` takes an `env` option (default `process.env`) for those two variables.
+- **The gateways:** a scratch CI leg that drove Podman's own CLI through a shim script found that Podman's `network inspect` has no `.IPAM`. So `networkGateways` would still have left the verdict at `unknown` there. It now reads Podman's format, `{{range .Subnets}}{{.Gateway}} {{end}}`, when Docker's fails on `.IPAM`; any other failure is still one.
+- **What that run showed:** with both fixes, the integration test under the shim passed every check up to teardown, the probe's `isolated` included.
+- **Teardown under the shim, the follow-up:** Podman's own `rm -f -v a b c`, with one name that doesn't exist, exited 0 but removed none of the containers. The pane's `network rm` then fails ("has associated containers"), so `teardown` rejects: it fails closed, and `sweep` removes the containers by id. Fixing that, and a CI leg for the shim, come in a follow-up rather than holding this push.
+- **Tests:**
+  - `endpoint` under the shim: an empty context, a failing one, `CONTAINER_HOST`, `CONTAINER_CONNECTION` (and one that isn't listed), the default connection, none, and no list. Also the docker CLI against Podman's socket, and Docker's CLI unchanged.
+  - The shim test now answers `context inspect` as the shim does: `isolated` for a local Podman, `unknown` for a machine's `ssh://` default.
+  - `networkGateways`' fallback, and that a missing network is still a failure.
+
+**Low, the triage tail never showed the forwarder's refusals.** Fixed.
+- The container entry passes `log: line => console.log(line)` to `createForwarder`, and writes its fatal errors to stdout too.
+- The test that runs the file as the container does now sends a refused `CONNECT` and finds `qa-egress refused evil.example:443: …` on stdout, with nothing on stderr. A bad config's error is read from stdout as well.
+- The README says the refusal goes to stdout, so triage shows it.
+
+**Low, an aborted boot could assign the shared `topology`, and its undo ran without a live check.** Fixed as proposed.
+- `const t = await internalNetwork(signal); live(signal); topology = t`.
+- The setup's catch starts with `if (err?.name === 'AbortError' || signal?.aborted) throw aborted()`, so an aborted boot's undo never touches names the next session may own.
+- **Test, from your drive3:**
+  - Boot A is held in its last `docker version` and aborted.
+  - Boot B falls back, since its forwarder's name is taken.
+  - Then A's call answers. A rejects with `AbortError`, and B's verdict still ends "egress isn't restricted: …" with no `internal`.
+  - A second case holds boot C in the join, aborts it, then fails the join: C makes no docker call after that.
+
+**Low, the end-to-end idle tests passed with `main`'s timers.** Changed as proposed: `idleMs` 1000, and the reader takes one chunk every 300 ms, on the tunnel and on plain HTTP. Your mutants, on Node 24 here:
+- **Killed:**
+  - I14, `main`'s naive timer on plain HTTP;
+  - I15, naive timers on both sides of the tunnel;
+  - I15b, the host side only.
+- **Survive here, on macOS:**
+  - I15c, a naive timer on the tunnel's PR side alone;
+  - I16, the idle timer armed on the host side.
+
+  On loopback both stay alive in these tests, for two reasons:
+  - Node's own timeout rule spares a socket whose write queue still moves, which a slow reader's does.
+  - With a slow host, the PR side reads again each time the host takes a chunk.
+
+  They differ from the fix only when a host drains in pieces too small to finish a write within `idleMs`, which loopback's buffers don't produce reliably. The idle timer's own rules for that case stay pinned with stand-in sockets.
+
+**Low, plain HTTP's failure after the headers was untested.** New test: a host sends the headers and 1,000 bytes of a close-delimited body to an HTTP/1.0 client, then either resets or stalls past `idleMs` 300. Both reach the client as `ECONNRESET`, never a clean end. Mutant R3 (`res.destroy()` put back) is killed.
+
+**Nits:**
+- **Untested readiness branches.** New tests:
+  - (a) a forwarder that says `starting` twice, then ready, is up (`isolated`, `internal: true`);
+  - (b) an abort while polling rejects with `AbortError`: no fallback, no call after the abort, and nothing logged;
+  - (c) a `docker version` that fails after readiness still gives the PR pane's containers `--dns 192.0.2.1`, and no hosts entries;
+  - (d) `logged()` records only `error` now, so `log.log` in place of `log.error` fails the fallback test.
+
+  Each of those mutants is killed: the deadline ignored, no live check, `?? 'podman'`, and `log.log`.
+- **The CVE version list:** the README and the comment now say "any Engine without the fix (23.0.11, 25.0.5, 26.0.0 and later)".
+- **The inbound forward's client-error reset:** new test. A client that resets partway through a request reaches the app as `ECONNRESET`. Mutant R1 is killed.
+- **"5 minutes":** the README now says "after 5 minutes, or up to about 10 where each side waits on the other, since the timer then looks twice".
+- **Lookalike slashes:** left as they are. It fails closed for the host that was meant, and only an operator writes entries.
+
+**Tests:** 811 passed and 0 failed on Node 24 and on Node 22 (`node --test --test-force-exit`; the 3 integration tests skip locally without `QA_DOCKER_IT=1`). CI on `8a03d2d`: green: test (22), test (24), and docker-integration on Docker Engine and on Podman.
+
+**Mutation:** 22 hand mutants for this round, 20 killed. The two survivors are I15c and I16, above.

@@ -1,0 +1,13 @@
+ADDED-IN-TEST cell:r6_dsn_pa_ss ["root:pa:ssZq9SeCr3tVal@tcp(127.0.0.1:3306)/app","Zq9SeCr3tVal"]
+ADDED-IN-TEST cell:r6_dsn_pw_colon ["root:Zq9SeCr3tVal:@tcp(db)/app","Zq9SeCr3tVal"]
+ADDED-IN-TEST cell:r6_dsn_colon_pw ["root::Zq9SeCr3tVal@tcp(db)/app","Zq9SeCr3tVal"]
+ADDED-IN-TEST cell:r6_dsn_colon_mid ["root:Zq9Se:Cr3tVal@tcp(db)/app","Zq9Se","Cr3tVal"]
+ADDED-IN-TEST cell:r6_elem_style_media ["<input type=\"password\" name=\"pw\" value=\"Zq9SeCr3tVal\" style=\"width:100%\"><style>@media(max-width:1px){}</style>","Zq9SeCr3tVal"]
+ADDED-IN-TEST cell:r6_elem_hidden_supports ["<input type=\"hidden\" name=\"api_token\" value=\"Zq9SeCr3tVal\" style=\"display:none\"><style>@supports(x:y){}</style>","Zq9SeCr3tVal"]
+ADDED-IN-TEST cell:r6_elem_mailto ["<x id=\"secret\" value=\"Zq9SeCr3tVal\" href=\"mailto:a@b.c\">x</x>","Zq9SeCr3tVal"]
+ADDED-IN-TEST cell:r6_elem_slash ["<input type=\"password\" value=\"Zq9SeCr3tVal\" style=\"a:b\">x@/y","Zq9SeCr3tVal"]
+ADDED-IN-TEST cell:r6_auth_after_word ["x Bearer //bearer  Zq9SeCr3tValmysql://u:%26value\t=","Zq9SeCr3tVal"]
+ADDED-IN-TEST cell:r6_elem_unquoted_bearer ["<input type=password value=Bearer Zq9SeCr3tVal:\"/>","Zq9SeCr3tVal"]
+ADDED-IN-TEST cell:r6_elem_unquoted_basic [";<input type=password value=Basic Zq9SeCr3tVal,x\"/>","Zq9SeCr3tVal"]
+35f cells 203 rows 43 | test cells 214 rows 43
+exit 0

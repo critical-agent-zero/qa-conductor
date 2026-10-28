@@ -1,0 +1,15 @@
+fix: a sweep on a clean host succeeds, and Podman's PR pane gets no DNS out either
+
+What the internal network's first run on a real runtime found:
+- The docker CLI on Ubuntu runners writes "exit status 1" after its
+  error. rmNetwork and rmForce then read a network or container that was
+  already gone as a failure, so sweep() failed on a clean host. That line
+  is noise now, like Podman's banner and warnings.
+- Podman 4.9's DNS answers an internal network's outside names. So
+  Podman's PR containers get --dns 192.0.2.1 too. A --dns replaces
+  Podman's own DNS there, so the names the pane needs (qa-pg-pr,
+  qa-egress) go in its hosts files, from the new docker.addressOn.
+  runMigrate, runApp and runProbe take `hosts`.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

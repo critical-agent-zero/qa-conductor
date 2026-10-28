@@ -1,0 +1,8 @@
+regex x3 on "<a "                    (261000 chars): new 7 ms, fix 99 ms, old7193877 268 ms
+regex x3 on "<a:a "                  (260000 chars): new 5 ms, fix 65 ms, old7193877 155 ms
+regex x3 on "<a b=\"1\" "            (261000 chars): new 5 ms, fix 17 ms, old7193877 90 ms
+regex x3 on "<aaaaaaaaaaaaaaaaaaaaaa (260000 chars): new 6 ms, fix 5 ms, old7193877 12 ms
+regex x3 on "<a:bbbbbbbbbbbbbbbbbbbb (260000 chars): new 5 ms, fix 6 ms, old7193877 4 ms
+sanitizeSnapshot, the test's 24 cells, new: 288 ms CPU; kinds long/long
+sanitizeSnapshot, the test's 24 cells, fix: 472 ms CPU; kinds long/long
+exit 0

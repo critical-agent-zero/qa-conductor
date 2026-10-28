@@ -1,0 +1,17 @@
+probe_elem_35f       2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 CLEAR | 4ed6449 CLEAR | 4033285 CLEAR | elem-first ok
+   4033285 "<input type=\"password\" value=\"Zq9SeCr3tVal\" data-u=\"https://a:[secret 2375a3f6]@host</b>"
+port_then_email      2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 CLEAR | 4ed6449 CLEAR | 4033285 CLEAR | elem-first ok
+   4033285 "<input type=\"password\" name=\"pw\" value=\"Zq9SeCr3tVal\" data-api=\"http://api:[secret b8c22424]@corp.com</small>"
+placeholder_port     2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 CLEAR | 4ed6449 CLEAR | 4033285 CLEAR | elem-first ok
+   4033285 "<input name=\"api_key\" value=\"Zq9SeCr3tVal\" placeholder=\"https://host:[secret 9579f7a3]@example.com</p>"
+hidden_token_link    2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 CLEAR | 4ed6449 CLEAR | 4033285 CLEAR | elem-first ok
+   4033285 "<input type=\"hidden\" name=\"csrf_token\" value=\"Zq9SeCr3tVal\" data-href=\"https://example.com:[secret ea85094c]@example.com</span>"
+add_key_conn         2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 CLEAR | 4ed6449 CLEAR | 4033285 CLEAR | elem-first ok
+   4033285 "<add key=\"DbPassword\" value=\"Zq9SeCr3tVal\" uri=\"redis://cache:[secret ce41735e]@corp</x>"
+space_before_at      2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 ok | 4ed6449 ok | 4033285 ok | elem-first ok
+   4033285 "<input type=\"password\" value=\"[secret f46643a8]\" data-api=\"http://api:8080\"> help@corp.com"
+slash_after_port     2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 ok | 4ed6449 ok | 4033285 ok | elem-first ok
+   4033285 "<input type=\"password\" value=\"[secret f46643a8]\" data-api=\"http://api:8080/v1\"><small>help@corp.com</small>"
+no_at_after          2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 ok | 4ed6449 ok | 4033285 ok | elem-first ok
+   4033285 "<input type=\"password\" value=\"[secret f46643a8]\" data-api=\"http://api:8080\"><small>help</small>"
+exit 0

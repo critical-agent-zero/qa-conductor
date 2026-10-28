@@ -1,0 +1,42 @@
+e1_jwt_attr      2ec0bba:CLEAR  7193877:CLEAR  4a284f9:masked 4ed6449:masked 4033285:CLEAR  vfix:masked  len=1113
+   head: "<input type=\"password\" value=\"Zq9SeCr3tVal\" data-x=\"[secret c1302430]\">"
+e1_jwt_attr_min  2ec0bba:CLEAR  7193877:CLEAR  4a284f9:CLEAR  4ed6449:masked 4033285:CLEAR  vfix:masked  len=1088
+   head: "<i type=password value=Zq9SeCr3tVal a=[secret 9aa1f80d]>"
+e1_add_jwt       2ec0bba:CLEAR  7193877:CLEAR  4a284f9:masked 4ed6449:masked 4033285:CLEAR  vfix:masked  len=1113
+   head: "<add key=\"ClientSecret\" value=\"Zq9SeCr3tVal\" note=\"[secret c1302430]\"/>"
+e1_dsn_attrs     2ec0bba:CLEAR  7193877:CLEAR  4a284f9:masked 4ed6449:masked 4033285:CLEAR  vfix:masked  len=1124
+   head: "<add key=\"DbPassword\" value=\"Zq9SeCr3tVal\" a=\"u:[secret 25cf7a88]@tcp(h)\" b=\"u:[secret 25cf7a88]@tcp(h)\" c=\"u:[secret 25cf7a88]@tcp(h)\" d=\"u:[secret 25cf7a88]@tcp(h)\"/>"
+e2_dsn_lt        2ec0bba:CLEAR  7193877:CLEAR  4a284f9:masked 4ed6449:masked 4033285:CLEAR  vfix:masked  len=66
+   head: "<add key=\"DbPassword\" value=\"Zq9SeCr3tVal\" note=\"u:[secret caa2f7fe]@tcp(h)/d\"/>"
+e2_dsn_gt        2ec0bba:CLEAR  7193877:CLEAR  4a284f9:masked 4ed6449:masked 4033285:masked vfix:masked  len=65
+   head: "<input type=\"password\" value=\"[secret f46643a8]\" data-c=\"app:[secret 76e17536]@/db\">"
+e3_unquoted      2ec0bba:CLEAR  7193877:CLEAR  4a284f9:masked 4ed6449:masked 4033285:CLEAR  vfix:masked  len=59
+   head: "<input type=password value=[secret e3477516]>Zq9SeCr3tVal@tcp(db)/app"
+e3_slash         2ec0bba:CLEAR  7193877:CLEAR  4a284f9:CLEAR  4ed6449:masked 4033285:CLEAR  vfix:masked  len=41
+   head: "<x name=secret value=[secret 336bb4e4]>Zq9SeCr3tVal@/db"
+a1_rescan        2ec0bba:CLEAR  7193877:CLEAR  4a284f9:masked 4ed6449:masked 4033285:CLEAR  vfix:masked  len=37
+   head: "Bearer ab/token [secret 448ac1b8] Zq9SeCr3tVal"
+a1_rescan_hdr    2ec0bba:CLEAR  7193877:CLEAR  4a284f9:masked 4ed6449:masked 4033285:CLEAR  vfix:masked  len=59
+   head: "Authorization header: Bearer ab/token [secret 448ac1b8] Zq9SeCr3tVal"
+p1_empty_type    2ec0bba:CLEAR  7193877:CLEAR  4a284f9:masked 4ed6449:CLEAR  4033285:CLEAR  vfix:masked  len=50
+   head: "<input type= name=\"password\" value=\"Zq9SeCr3tVal\">"
+p1_key_key       2ec0bba:CLEAR  7193877:CLEAR  4a284f9:masked 4ed6449:CLEAR  4033285:CLEAR  vfix:masked  len=47
+   head: "<add key=key=\"ApiToken\" value=\"Zq9SeCr3tVal\" />"
+p2_basic_bearer  2ec0bba:CLEAR  7193877:masked 4a284f9:CLEAR  4ed6449:CLEAR  4033285:CLEAR  vfix:masked  len=27
+   head: "Basic [secret 3a096317] Zq9SeCr3tVal"
+p2_basic_token   2ec0bba:CLEAR  7193877:CLEAR  4a284f9:CLEAR  4ed6449:CLEAR  4033285:CLEAR  vfix:masked  len=29
+   head: "Basic [secret efdf5bec] Zq9SeCr3tVal"
+p3_scheme_dsn    2ec0bba:CLEAR  7193877:CLEAR  4a284f9:masked 4ed6449:CLEAR  4033285:CLEAR  vfix:masked  len=52
+   head: "x/token //bearer [secret a3387246]:Zq9SeCr3tVal:[secret d5c8336d]@tcp(h)/d"
+p4_hex_key       2ec0bba:masked 7193877:masked 4a284f9:CLEAR  4ed6449:CLEAR  4033285:CLEAR  vfix:CLEAR   len=25
+   head: "A%3API_KEY='Zq9SeCr3tVal'"
+p4_hex_dsn       2ec0bba:masked 7193877:masked 4a284f9:CLEAR  4ed6449:CLEAR  4033285:CLEAR  vfix:CLEAR   len=23
+   head: "x%3DSN_URL=Zq9SeCr3tVal"
+p5_short         2ec0bba:masked 7193877:CLEAR  4a284f9:CLEAR  4ed6449:CLEAR  4033285:CLEAR  vfix:CLEAR   len=17
+   head: "Bearer abcdefGHIJ"
+r1_key_value     2ec0bba:CLEAR  7193877:CLEAR  4a284f9:CLEAR  4ed6449:masked 4033285:CLEAR  vfix:CLEAR 
+   head: {"key":"smtp_password","value":"Zq9SeCr3tVal"}
+r1_all_columns   2ec0bba:CLEAR  7193877:CLEAR  4a284f9:CLEAR  4ed6449:masked 4033285:CLEAR  vfix:CLEAR 
+   head: {"id":1,"name":"STRIPE_SECRET_KEY","value":"Zq9SeCr3tVal"}
+r1_k_v           2ec0bba:CLEAR  7193877:CLEAR  4a284f9:CLEAR  4ed6449:masked 4033285:CLEAR  vfix:CLEAR 
+   head: {"k":"api_token","v":"Zq9SeCr3tVal"}

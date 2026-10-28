@@ -1,0 +1,29 @@
+[
+ {
+  "id": "V10 http dials after gone",
+  "file": "lib/forwarder.mjs",
+  "old": "      if (gone) return\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V13 reset ignored",
+  "file": "lib/forwarder.mjs",
+  "old": "      socket.on('error', () => upstream?.destroy())\n",
+  "new": "      socket.on('error', () => {})\n",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "V16 close ignored",
+  "file": "lib/forwarder.mjs",
+  "old": "      socket.on('close', () => upstream?.destroySoon())\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ }
+]

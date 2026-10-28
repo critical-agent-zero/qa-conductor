@@ -1,0 +1,31 @@
+== known misses, status per head 2ec0bba 7193877 4a284f9 4ed6449 4033285
+MASKED-SOMEWHERE cell:scheme_short_alpha          ok    CLEAR CLEAR CLEAR CLEAR  "send Token abcdefghij to it"
+miss-all        cell:attr_tag_lt                 CLEAR CLEAR CLEAR CLEAR CLEAR  "<add key=\"DbPassword\" note=\"a<b\" value=\"Zq9SeCr3tVal\" />"
+miss-all        cell:np_input_gt_in_value        CLEAR CLEAR CLEAR CLEAR CLEAR  "<input type=\"password\" value=\"a>Zq9SeCr3tVal\">"
+miss-all        cell:t_open_eol                  CLEAR CLEAR CLEAR CLEAR CLEAR  "<password"
+miss-all        cell:t_close_only                CLEAR CLEAR CLEAR CLEAR CLEAR  "Zq9SeCr3tVal</password>"
+miss-all        cell:t_close_ns_only             CLEAR CLEAR CLEAR CLEAR CLEAR  "Zq9SeCr3tVal</wsse:Password>"
+miss-all        cell:t_dbl_ns                    CLEAR CLEAR CLEAR CLEAR CLEAR  "<a:b:password>Zq9SeCr3tVal</a:b:password>"
+miss-all        cell:t_html_escaped              CLEAR CLEAR CLEAR CLEAR CLEAR  "&lt;password&gt;Zq9SeCr3tVal&lt;/password&gt;"
+miss-all        cell:t_pct_escaped               CLEAR CLEAR CLEAR CLEAR CLEAR  "%3Cpassword%3EZq9SeCr3tVal%3C%2Fpassword%3E"
+miss-all        cell:t_json_escaped              CLEAR CLEAR CLEAR CLEAR CLEAR  "\\u003cpassword\\u003eZq9SeCr3tVal\\u003c/password\\u003e"
+miss-all        cell:t_bang                      CLEAR CLEAR CLEAR CLEAR CLEAR  "<!password>Zq9SeCr3tVal"
+miss-all        cell:t_question                  CLEAR CLEAR CLEAR CLEAR CLEAR  "<?password Zq9SeCr3tVal?>"
+miss-all        cell:p_5b                        CLEAR CLEAR CLEAR CLEAR CLEAR  "user%5Bpassword%5D=Zq9SeCr3tVal"
+miss-all        cell:p_dbl_pct                   CLEAR CLEAR CLEAR CLEAR CLEAR  "q=%2522password%2522%253A%2522Zq9SeCr3tVal"
+miss-all        cell:p_dbl_pct_amp               CLEAR CLEAR CLEAR CLEAR CLEAR  "q=a%253D1%2526password%253DZq9SeCr3tVal"
+miss-all        cell:p_smart_quote               CLEAR CLEAR CLEAR CLEAR CLEAR  "%E2%80%9Cpassword%E2%80%9D: Zq9SeCr3tVal"
+miss-all        cell:p_pin_hexlike               CLEAR CLEAR CLEAR CLEAR CLEAR  "%26pinpin=Zq9SeCr3tVal"
+miss-all        cell:p_bs_u                      CLEAR CLEAR CLEAR CLEAR CLEAR  "a\\u0026pw=Zq9SeCr3tVal"
+miss-all        cell:p_bs_x                      CLEAR CLEAR CLEAR CLEAR CLEAR  "a\\x26pw=Zq9SeCr3tVal"
+miss-all        cell:p_unicode_esc               CLEAR CLEAR CLEAR CLEAR CLEAR  "\\u0022password\\u0022: Zq9SeCr3tVal"
+miss-all        cell:d_slash_pw                  CLEAR CLEAR CLEAR CLEAR CLEAR  "root:pa/Zq9SeCr3tVal@tcp(h)/a"
+miss-all        cell:a_value_empty_then          CLEAR CLEAR CLEAR CLEAR CLEAR  "<add key=\"DbPassword\" value=\"[secret 723f7afa]\" note=\"Zq9SeCr3tVal\"/>"
+miss-all        row:r_settings_KEY_VALUE7        CLEAR CLEAR CLEAR CLEAR CLEAR  {"ID":1,"KEY":"DbPassword","VALUE":"Zq9SeCr3tVal","a":1,"b":2,"c":3,"d":4}
+miss-all        row:r_settings_loose_wide        CLEAR CLEAR CLEAR CLEAR CLEAR  {"autoload":true,"created_at":"y","group":"mail","id":1,"k":"smtp_password","updated_at":"x","v":"Zq9SeCr3tVal"}
+miss-all        row:r_option_name                CLEAR CLEAR CLEAR CLEAR CLEAR  {"id":1,"option_name":"mailserver_pass","option_value":"Zq9SeCr3tVal"}
+miss-all        row:r_setting_value              CLEAR CLEAR CLEAR CLEAR CLEAR  {"id":1,"setting":"smtp_password","value":"Zq9SeCr3tVal"}
+== non-misses CLEAR at some head (info)
+regressions (CLEAR at new head, ok at an old head): [ 'cell:scheme_short_alpha' ]
+cases 257 non-miss 231 known 26
+exit 0

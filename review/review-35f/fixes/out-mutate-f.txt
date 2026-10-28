@@ -1,0 +1,159 @@
+killed ["name and value pairs: any name-like key may name one, and a "] ["The input was expected to not match the regular ex"] 19s | A pair: strict needs Name (not Key)
+killed ["name and value pairs: any name-like key may name one, and a "] ["The input was expected to not match the regular ex"] 19s | A pair: strict needs name (not key)
+SURVIVED [] [] 14s | A tally: merge drops earlier items
+killed ["flags: dropped columns of the same number but other names ar"] ["Expected values to be strictly deep-equal:"] 14s | A tally: merge drops new items
+killed ["flags: dropped columns of the same number but other names ar"] ["big:delete big:unverified zz:mass-change"] 12s | A order: unverified with columns
+killed ["flags: dropped columns of the same number but other names ar"] ["b:delete c:delete a:column-dropped a:mass-change b"] 12s | A order: key-lost not a loss
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex"] 19s | A attr: name case-sensitive
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex"] 20s | A attr: no id
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex"] 12s | A attr: value case-sensitive
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex"] 11s | A attr: value double quotes only
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["pgp"] 12s | A pem: RSA only
+SURVIVED [] [] 12s | A attr: tag needs a space-free name
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["dump"] 12s | A mysql: mysql only
+SURVIVED [] [] 13s | A mysql: case-sensitive
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input did not match the regular expression /^h"] 13s | A authToken: basic case-sensitive
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["single"] 14s | A flag: double dash only
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["apos"] 11s | A quote: percent only %22
+SURVIVED [] [] 11s | A key: 31 spaces
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex"] 8s | A dsn: tcp only
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input did not match the regular expression /^h"] 8s | A url: oauth case-sensitive
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["gh"] 9s | A tokenLike: no gh prefix
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["pat"] 10s | A tokenLike: no github_pat
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["xox"] 10s | A tokenLike: no slack
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["sk"] 10s | A tokenLike: no sk
+killed ["flags: dropped columns of the same number but other names ar"] ["Expected values to be strictly deep-equal:"] 9s | A cols: shared when base dropped any
+killed ["a key right after a percent-escape or a backslash escape cou"] ["eq"] 9s | B key: no percent start
+SURVIVED [] [] 10s | B key: percent start only after %3a/%3d
+killed ["a key right after a percent-escape or a backslash escape cou"] ["eq"] 10s | B key: percent start only after digits
+killed ["a key right after a percent-escape or a backslash escape cou"] ["eq"] 11s | B key: percent start after one hex
+killed ["a key right after a percent-escape or a backslash escape cou"] ["amp"] 11s | B strip: none
+killed ["a key right after a percent-escape or a backslash escape cou"] ["escaped"] 10s | B strip: percent only
+killed ["a key right after a percent-escape or a backslash escape cou"] ["amp"] 10s | B strip: backslash only
+killed ["a key right after a percent-escape or a backslash escape cou"] ["npmrc"] 8s | B strip: hex case-sensitive
+killed ["a key right after a percent-escape or a backslash escape cou"] ["amp"] 8s | B strip: one hex digit
+killed ["a key right after a percent-escape or a backslash escape cou"] ["tab"] 11s | B strip: n only
+SURVIVED [] [] 11s | B strip: n and t (no r)
+killed ["a secret-named tag is masked whatever its attributes hold, a"] ["hint"] 14s | B tag: back to [^<>] attributes
+killed ["a key right after a percent-escape or a backslash escape cou"] ["escaped"] 15s | B strip: any char after %
+killed ["more values masked: URLs with an empty user, an @ in the pas","the tag scan is linear in text dense with tags: 24 cells of ","a secret-named tag is masked whatever its attributes hold, a"] ["The input was expected to not match the regular ex","a"] 10s | B tag: no whitespace
+killed ["a secret-named tag is masked whatever its attributes hold, a"] ["slash"] 10s | B tag: no slash
+killed ["more values masked: URLs with an empty user, an @ in the pas","the tag scan is linear in text dense with tags: 24 cells of ","a secret-named tag is masked whatever its attributes hold, a"] ["The input was expected to not match the regular ex","a"] 17s | B tag: no namespace
+killed ["text masking finds keys in escaped quotes, double-encoded JS","a secret-named tag is masked whatever its attributes hold, a"] ["The input was expected to not match the regular ex","bare"] 17s | B tag: no >
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["tab"] 9s | B flag: space and = only
+SURVIVED [] [] 9s | B flag: whitespace only
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex"] 9s | B dsn: no @ in password
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["pgp"] 9s | B pem: no BLOCK
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex"] 9s | B dsn: no @/
+SURVIVED [] [] 9s | B dsn: network required
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex"] 8s | B dsn: tcp6 not a network (no digits)
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex"] 8s | B dsn: tcp/udp/unix only
+killed ["more values masked: a token as a URL's user, a short base64 ","more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex","The input was expected to not match the regular ex"] 6s | B dsn: password shown
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex"] 6s | B attr: name single-quoted ignored
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex"] 6s | B attr: name unquoted ignored
+SURVIVED [] [] 6s | B attr: value dq without apostrophe
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex"] 6s | B attr: value sq without quote
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex"] 6s | B attr: value unquoted ignored
+killed ["more values masked: a token as a URL's user, a short base64 ","more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex","The input was expected to not match the regular ex"] 6s | B attr: value shown
+killed ["more shapes: DSN variants, attributes quoted either way or n"] ["The input was expected to not match the regular ex"] 6s | B attr: name quoted only
+killed ["more secrets: names, URL credentials, Bearer values, name an","name and value pairs: any name-like key may name one, and a "] ["a pair whose name isn't secret-looking is kept","Expected values to be strictly equal:"] 7s | B pair: first name-like key only
+SURVIVED [] [] 7s | B pair: last secret name (equivalent: digest only)
+SURVIVED [] [] 7s | B row pair: first value field only
+killed ["name and value pairs: any name-like key may name one, and a "] ["The input was expected to not match the regular ex"] 7s | B row pair: none
+SURVIVED [] [] 6s | B row pair: softDelete field masked too
+killed ["name and value pairs: any name-like key may name one, and a "] ["Expected values to be strictly equal:"] 6s | B row pair: cleared value masked
+killed ["a collection's dropped columns name the ones the base pane d"] ["Expected values to be strictly deep-equal:"] 5s | B diff: fieldsBefore null
+SURVIVED [] [] 5s | B diff: fieldsBefore from after
+killed ["a collection's dropped columns name the ones the base pane d"] ["Expected values to be strictly deep-equal:"] 7s | B cols: seeded from the PR diff
+killed ["a flag is amber only when the base made the same change: the"] ["Expected values to be strictly deep-equal:"] 7s | B cols: seeded unsorted
+SURVIVED [] [] 6s | B cols: others unsorted
+killed ["a collection's dropped columns name the ones the base pane d"] ["Expected values to be strictly deep-equal:"] 7s | B cols: others first
+killed ["comparing two wide declared field lists is linear in diffSna","a collection's dropped columns name the ones the base pane d"] ["615 ms","Expected values to be strictly deep-equal:"] 26s | B cols: seeded count wrong
+killed ["a flag is amber only when the base made the same change: the","1,600 columns dropped from one collection are one flag: a us","a collection's dropped columns name the ones the base pane d"] ["Expected values to be strictly deep-equal:","Expected values to be strictly deep-equal:"] 26s | B cols: six names
+killed ["flags: dropped columns of the same number but other names ar"] ["zz:column-dropped zz:mass-change users:unverified "] 7s | B order: no leftOut
+SURVIVED [] [] 7s | B order: leftOut only when omitted
+killed ["flags: dropped columns of the same number but other names ar"] ["zz:column-dropped zz:mass-change users:unverified "] 7s | B order: leftOut only when the PR diff lacks it
+SURVIVED [] [] 7s | B order: leftOut only after side
+SURVIVED [] [] 7s | B order: leftOut for the PR-only fold
+killed ["flagChanges: deletes, emptied and dropped collections, dropp","what loses data is listed before column and mass-change flag","flags: dropped columns of the same number but other names ar"] ["Expected values to be strictly deep-equal:","Expected values to be strictly deep-equal:"] 7s | B order: column-dropped a loss
+---
+killed ["n   A pair: strict needs name (not key)
+killed ["n   A pair: strict needs Name (not Key)
+SURVIVED [   A tally: merge drops earlier items
+killed ["f   A tally: merge drops new items
+killed ["f   A order: key-lost not a loss
+killed ["f   A order: unverified with columns
+killed ["m   A attr: no id
+killed ["m   A attr: name case-sensitive
+killed ["m   A attr: value case-sensitive
+killed ["m   A attr: value double quotes only
+SURVIVED [   A attr: tag needs a space-free name
+killed ["m   A pem: RSA only
+killed ["m   A mysql: mysql only
+SURVIVED [   A mysql: case-sensitive
+killed ["m   A authToken: basic case-sensitive
+killed ["m   A flag: double dash only
+killed ["m   A quote: percent only %22
+SURVIVED [   A key: 31 spaces
+killed ["m   A dsn: tcp only
+killed ["m   A url: oauth case-sensitive
+killed ["m   A tokenLike: no gh prefix
+killed ["m   A tokenLike: no github_pat
+killed ["m   A tokenLike: no slack
+killed ["m   A tokenLike: no sk
+killed ["f   A cols: shared when base dropped any
+killed ["a   B key: no percent start
+SURVIVED [   B key: percent start only after %3a/%3d
+killed ["a   B key: percent start only after digits
+killed ["a   B key: percent start after one hex
+killed ["a   B strip: none
+killed ["a   B strip: percent only
+killed ["a   B strip: backslash only
+killed ["a   B strip: hex case-sensitive
+killed ["a   B strip: one hex digit
+killed ["a   B strip: n only
+SURVIVED [   B strip: n and t (no r)
+killed ["a   B strip: any char after %
+killed ["a   B tag: back to [^<>] attributes
+killed ["a   B tag: no slash
+killed ["m   B tag: no whitespace
+killed ["t   B tag: no >
+killed ["m   B tag: no namespace
+killed ["m   B flag: space and = only
+SURVIVED [   B flag: whitespace only
+killed ["m   B pem: no BLOCK
+killed ["m   B dsn: no @ in password
+killed ["m   B dsn: no @/
+SURVIVED [   B dsn: network required
+killed ["m   B dsn: tcp/udp/unix only
+killed ["m   B dsn: tcp6 not a network (no digits)
+killed ["m   B dsn: password shown
+killed ["m   B attr: name single-quoted ignored
+killed ["m   B attr: name unquoted ignored
+SURVIVED [   B attr: value dq without apostrophe
+killed ["m   B attr: value sq without quote
+killed ["m   B attr: value unquoted ignored
+killed ["m   B attr: value shown
+killed ["m   B attr: name quoted only
+killed ["m   B pair: first name-like key only
+SURVIVED [   B pair: last secret name (equivalent: digest only)
+killed ["n   B row pair: none
+SURVIVED [   B row pair: first value field only
+SURVIVED [   B row pair: softDelete field masked too
+killed ["n   B row pair: cleared value masked
+killed ["a   B diff: fieldsBefore null
+SURVIVED [   B diff: fieldsBefore from after
+killed ["a   B cols: seeded from the PR diff
+killed ["a   B cols: seeded unsorted
+SURVIVED [   B cols: others unsorted
+killed ["a   B cols: others first
+killed ["c   B cols: seeded count wrong
+killed ["a   B cols: six names
+killed ["f   B order: no leftOut
+SURVIVED [   B order: leftOut only when omitted
+killed ["f   B order: leftOut only when the PR diff lacks it
+SURVIVED [   B order: leftOut only after side
+SURVIVED [   B order: leftOut for the PR-only fold
+killed ["f   B order: column-dropped a loss
+total 78 survived 17 skipped 0
+exit 0

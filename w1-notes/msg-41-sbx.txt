@@ -1,0 +1,13 @@
+test: the sandbox docs test tries every named port over both families, and fails rather than skips when asked
+
+- Each of the five ports the profile names listens on 127.0.0.1 and ::1,
+  and is tried over 127.0.0.1, ::1 and localhost; a sixth must connect.
+- The profile's (param …) names must be the ones the README's wiring
+  passes (conductorPorts, basePorts) and its check's -D flags name.
+- Under a sandbox already, sandbox-exec can't nest (exit 71,
+  "sandbox_apply: Operation not permitted"): the test skips there, and
+  where there is no sandbox-exec, unless QA_REQUIRE_SANDBOX=1 asks for
+  it, when it fails instead.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

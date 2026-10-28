@@ -1,0 +1,4 @@
+Merge main (561bd84, with #34, #38 and #39) into #8 PR B
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

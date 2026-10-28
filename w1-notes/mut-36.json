@@ -1,0 +1,263 @@
+[
+ {
+  "id": "Q1",
+  "file": "lib/data-capture.mjs",
+  "old": "    const size = entrySize(name, rest)\n    if (size > budget.left) { stopped = true; break }\n    budget.left -= size\n    let cut = false",
+  "new": "    let cut = false",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "Q2",
+  "file": "lib/data-capture.mjs",
+  "old": "  return { collections, collectionsCount: Object.keys(diff.collections).length, ...(stopped ? { cut: true } : {}) }",
+  "new": "  return { collections, collectionsCount: Object.keys(diff.collections).length }",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "Q3",
+  "file": "lib/data-capture.mjs",
+  "old": "    const { changes, ...rest } = div.collections[name]\n    const size = entrySize(name, rest)\n    if (size > budget.left) { stopped = true; break }\n    budget.left -= size\n",
+  "new": "    const { changes, ...rest } = div.collections[name]\n",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "Q4",
+  "file": "lib/data-capture.mjs",
+  "old": "      } catch {\n        try {\n          cached = { id, json: JSON.stringify(view({ isolation }, { lists: false })) }\n        } catch (error) {\n          cached = { id, error }\n        }\n      }",
+  "new": "      } catch (error) {\n        cached = { id, error }\n      }",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "Q5",
+  "file": "lib/data-capture.mjs",
+  "old": "flags: [unlisted(), ...flags.filter(f => f.severity === 'red').slice(0, FALLBACK_FLAGS)], flagsCount: { red: red + 1,",
+  "new": "flags: [unlisted(), ...flags.filter(f => f.severity === 'red').slice(0, FALLBACK_FLAGS)], flagsCount: { red,",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "Q6",
+  "file": "lib/data-capture.mjs",
+  "old": "flags: [unlisted(), ...flags.filter(f => f.severity === 'red').slice(0, FALLBACK_FLAGS)]",
+  "new": "flags: [unlisted()]",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "Q7",
+  "file": "lib/data-capture.mjs",
+  "old": "  return text.length > ERROR_TEXT ? `${text.slice(0, ERROR_TEXT)}\u2026` : text",
+  "new": "  return text",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "Q8",
+  "file": "lib/data-capture.mjs",
+  "old": "const listedProblems = problems => problems.slice(0, LISTED_PROBLEMS)",
+  "new": "const listedProblems = problems => problems",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R1",
+  "file": "lib/data-capture.mjs",
+  "old": "const rankOf = (flagged, name, moved, changed) => (flagged.get(name) === 'red' ? 0 : moved ? 1 : flagged.has(name) ? 2 : changed ? 3 : 4)",
+  "new": "const rankOf = (flagged, name, moved, changed) => (moved ? 1 : changed ? 3 : 4)",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R2",
+  "file": "lib/data-capture.mjs",
+  "old": "const rankOf = (flagged, name, moved, changed) => (flagged.get(name) === 'red' ? 0 : moved ? 1 : flagged.has(name) ? 2 : changed ? 3 : 4)",
+  "new": "const rankOf = (flagged, name, moved, changed) => (flagged.has(name) ? 0 : moved ? 1 : changed ? 3 : 4)",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R3",
+  "file": "lib/data-capture.mjs",
+  "old": "    if (f.kind === 'unverified' && f.collection !== null && ++named > LISTED_UNVERIFIED) {",
+  "new": "    if (false) {",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R4",
+  "file": "lib/data-capture.mjs",
+  "old": "  if (rest.length) out.splice(foldAt, 0,",
+  "new": "  if (rest.length) out.push(",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R5",
+  "file": "lib/data-capture.mjs",
+  "old": "names: rest.slice(0, 5), folded: true })",
+  "new": "names: rest.slice(0, 4), folded: true })",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "R6",
+  "file": "lib/data-capture.mjs",
+  "old": "      const prOut = listed(pr, budget, flagged)\n      const divOut = base && pr ? listedDivergence(divergence(base, pr), budget, flagged) : null\n      const baseOut = listed(base, budget, flagged)",
+  "new": "      const baseOut = listed(base, budget, flagged)\n      const prOut = listed(pr, budget, flagged)\n      const divOut = base && pr ? listedDivergence(divergence(base, pr), budget, flagged) : null",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S1",
+  "file": "lib/data-capture.mjs",
+  "old": "    const bootAligned = !(boot.base && boot.pr) || (bootRun.base === readyRun && bootRun.pr === readyRun)",
+  "new": "    const bootAligned = both(boot, bootRun)",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S2",
+  "file": "lib/data-capture.mjs",
+  "old": "    if (reads.some(r => r.snap)) baselineAt = at\n",
+  "new": "    baselineAt = at\n",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S3",
+  "file": "lib/data-capture.mjs",
+  "old": "      if (!base && !pr && why === null) return null",
+  "new": "      if (!base && !pr) return null",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S4",
+  "file": "lib/data-capture.mjs",
+  "old": "      boot: span(boot.base, boot.pr, bootAligned, runs > 0 ? 'failed' : null),",
+  "new": "      boot: span(boot.base, boot.pr, bootAligned, null),",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S5",
+  "file": "lib/data-capture.mjs",
+  "old": "[unreadable(base ? why ?? 'failed' : 'neither')]",
+  "new": "[unreadable(base ? 'failed' : 'neither')]",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S6",
+  "file": "lib/data-capture.mjs",
+  "old": "[unreadable(base ? why ?? 'failed' : 'neither')]",
+  "new": "[unreadable(why ?? 'failed')]",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S7",
+  "file": "lib/data-capture.mjs",
+  "old": "          fresh[pane] = Boolean(snap && !baseline[pane])\n",
+  "new": "          fresh[pane] = false\n",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S8",
+  "file": "lib/data-capture.mjs",
+  "old": "    if (errors.boot[pane]?.endsWith(LATE)) errors.boot[pane] =",
+  "new": "    if (false) errors.boot[pane] =",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "U1",
+  "file": "lib/data-capture.mjs",
+  "old": "    const { out, cut } = within(changes, LISTED, budget)",
+  "new": "    const { out, cut } = within(changes, Infinity, budget)",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "U2",
+  "file": "lib/data-capture.mjs",
+  "old": "changes: out, changesCount: changes.length,",
+  "new": "changes: out, changesCount: out.length,",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "U3",
+  "file": "lib/data-capture.mjs",
+  "old": "changes: out, changesCount: changes.length, ...(cut ? { cut: true } : {}) })",
+  "new": "changes: out, changesCount: changes.length })",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "U4",
+  "file": "lib/data-capture.mjs",
+  "old": "    const { out, cut } = within(changes, LISTED, budget)",
+  "new": "    const { out, cut } = within(changes, LISTED, { left: Infinity })",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "U5",
+  "file": "lib/data-capture.mjs",
+  "old": "  return within([...out, ...flags.filter(f => f.severity !== 'red')], LISTED_FLAGS, budget).out",
+  "new": "  return within([...out, ...flags.filter(f => f.severity !== 'red')], LISTED_FLAGS, { left: Infinity }).out",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "U6",
+  "file": "lib/data-capture.mjs",
+  "old": "      const budget = { left: Math.floor(viewBytes / 2) }",
+  "new": "      const budget = { left: viewBytes }",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "U7",
+  "file": "lib/data-capture.mjs",
+  "old": "          panes.forEach((pane, i) => { settle(pane, reads[i].snap, run, at); fresh[pane] = false })",
+  "new": "          panes.forEach((pane, i) => { settle(pane, reads[i].snap, run - 1, at); fresh[pane] = false })",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ }
+]

@@ -1,0 +1,27 @@
+R = '/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/w1/repo/'
+
+
+def edit(path, pairs):
+    s = open(R + path).read()
+    for a, b in pairs:
+        assert s.count(a) == 1, (path, a[:90])
+        s = s.replace(a, b, 1)
+    open(R + path, 'w').write(s)
+
+
+edit('README.md', [
+    ("""- **`ready`:** once both panes are signed in, before the reviewer's first request. It is the baseline. A pane whose ready read failed keeps its `seeded` snapshot, and its first later snapshot is its baseline, so its boot span still shows; why its ready read failed stays in `errors.boot`.""",
+     """- **`ready`:** once both panes are signed in, before the reviewer's first request. It is the baseline. A pane whose ready read failed keeps its `seeded` snapshot, and its first later snapshot is its baseline, so its boot span still shows; why its ready read failed stays in `errors.boot`. That pane's spans then cover another window than the other pane's: they say so (`aligned: false`), are incomplete, and nothing in the base pane excuses a PR change there. A Re-baseline aligns the session span again; the boot span stays as it was."""),
+    ("""**Re-baseline** (`{rebaseline: true}`) makes now the baseline, after a manual sign-in, say: both panes, or, when either read fails, neither. `GET /api/data` gives both spans: each pane's diff, their divergence, and the PR's flags, `trusted` or `advisory` by the session's isolation verdict.""",
+     """**Re-baseline** (`{rebaseline: true}`) makes now the baseline, after a manual sign-in, say: both panes, or, when either read fails, neither. `GET /api/data` gives both spans: each pane's diff, their divergence, and the PR's flags, `trusted` or `advisory` by the session's isolation verdict. A span whose PR pane couldn't be read (a read that failed or hung, which PR code can cause with a lock) has a red `unreadable` flag: its changes are unknown, never none."""),
+    ("""| `GET /api/data` | the ready session's [data checks](#data-checks): `{available, active, trust, baselineAt, rebaselined, comparedAt, errors, problems, boot, session}`. `available` is `false` with no inspector, and `active` is `false` with no session ready. `boot` and `session` are each `{complete, base, pr, divergence, flags}`, or `null` before a snapshot. `base` and `pr` are each pane's diff, `null` for a pane with none, and `complete` is `false` then. A diff lists at most 50 rows of each kind a collection, and divergence 50 changes, with whole `counts` (`changesCount`); an answer lists at most about 4 MB of rows in all. `errors` says, per pane, why one has no data: `boot` for the open, seeded and ready reads, which a later success never erases, and `session` for the latest read. Values are masked where they may be secret. The answer is built once for each state and trust. `no-store`, and reading it is no activity |""",
+     """| `GET /api/data` | the ready session's [data checks](#data-checks): `{available, active, trust, baselineAt, baselines, rebaselined, comparedAt, errors, problems, boot, session}`. `available` is `false` with no inspector, and `active` is `false` with no session ready. `baselines` is each pane's baseline time. `boot` and `session` are each `{complete, aligned, flags, flagsCount, base, pr, divergence}`, or `null` before a snapshot. `base` and `pr` are each pane's diff, `null` for a pane with none; `aligned` is `false` when the panes' windows differ (one's ready read failed); `complete` is `false` in either case. The answer is bounded, at about 6 MB: a diff lists at most 1,000 collections, the changed first, with `collectionsCount`, and 50 rows of each kind, 50 dropped and 50 added fields a collection, with whole `counts`; divergence 50 changes a collection (`changesCount`); and a span at most 500 flags, red first, with whole `flagsCount` (`{red, amber}`). All of those lists share 2 MB a span; a collection the budget cut says `cut: true`. `errors` says, per pane, why one has no data: `boot` for the open, seeded and ready reads, each reason kept, and `session` for the latest read. Values are masked where they may be secret. The answer is built once for each state and trust, and one that fails to build fails again at once until the state changes. `no-store`, and reading it is no activity |"""),
+])
+
+edit('CHANGELOG.md', [
+    ("""  - **It never fails a boot:** an inspector that throws, hangs past 30 s or returns nonsense leaves its pane without data and says why, and a call that times out is told to stop. A pane whose ready read failed keeps its seeded snapshot until a later one gives it a baseline.""",
+     """  - **It never fails a boot:** an inspector that throws, hangs past 30 s or returns nonsense leaves its pane without data and says why, and a call that times out is told to stop. A pane whose ready read failed keeps its seeded snapshot until a later one gives it a baseline; its spans then say their windows differ, and nothing in the base excuses a PR change there. A span whose PR pane couldn't be read has a red `unreadable` flag."""),
+    ("""  - **One answer stays small:** it lists at most 50 rows of each kind a collection and 50 divergence changes, about 4 MB of rows in all, with whole counts, and is built once for each state.""",
+     """  - **One answer stays small, about 6 MB at most:** 1,000 collections a diff, 50 rows, changes and fields of each kind a collection, and 500 flags a span, red first, within 2 MB a span, with whole counts. It is built once for each state."""),
+])
+print('ok')

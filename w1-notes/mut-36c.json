@@ -1,0 +1,1 @@
+[{"id": "C1", "file": "lib/data-diff.mjs", "old": "maxCells: 500_000,", "new": "maxCells: 1e12,", "tests": ["--test-name-pattern=the event loop is never held long", "test/server.test.mjs"]}]

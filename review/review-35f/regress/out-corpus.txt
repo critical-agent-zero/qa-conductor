@@ -1,0 +1,297 @@
+                                      2ec0b 71938 4a284 4ed64
+ok         empty_user                 CLEAR ok    ok    ok     "cache at redis://:[secret d17dd0c8]@cache:6379/0"
+ok         at_in_pw                   CLEAR ok    ok    ok     "postgres://app:[secret c5a51bd2]@db:5432/app"
+ok         u_alone                    CLEAR ok    ok    ok     "git remote https://[secret 3c78cc46]@github.com/o/r.git"
+ok         u_user_x_oauth             CLEAR CLEAR ok    ok     "git remote https://[secret 3c78cc46]:x-oauth-basic@github.com/o/r.git"
+ok         u_user_empty_pw            CLEAR CLEAR ok    ok     "https://[secret 3c78cc46]:@github.com/o/r.git"
+ok         scheme_lower               CLEAR ok    ok    ok     "sent header bearer [secret 69d91241] ok"
+ok         scheme_upper               CLEAR ok    ok    ok     "BEARER [secret 69d91241]"
+ok         scheme_mixed               CLEAR ok    ok    ok     "BeArEr [secret 69d91241]"
+ok         basic_short_b64            ok    CLEAR ok    ok     "[text with a secret-looking key, 26 characters, 49a6bb1f]"
+ok         basic_b64_pad              ok    ok    ok    ok     "[text with a secret-looking key, 30 characters, 4cb2c148]"
+ok         basic_header_only          ok    CLEAR ok    ok     "Authorization header: Basic [secret 9d7368cc]"
+CLEAR-all  scheme_short_alpha         ok    CLEAR CLEAR CLEAR  "send Token abcdefghij to it"
+ok         wsse                       CLEAR ok    ok    ok     "[text with a secret-looking key, 91 characters, 81390635]"
+ok         xml_attr                   CLEAR ok    ok    ok     "[text with a secret-looking key, 46 characters, a7cca893]"
+ok         html_quot                  CLEAR ok    ok    ok     "[text with a secret-looking key, 62 characters, ed62f2c7]"
+ok         html_34                    CLEAR ok    ok    ok     "[text with a secret-looking key, 58 characters, 57bbe149]"
+ok         html_x22                   CLEAR ok    ok    ok     "[text with a secret-looking key, 62 characters, b8061000]"
+ok         html_X22_upper             CLEAR CLEAR ok    ok     "[text with a secret-looking key, 62 characters, d41bf753]"
+ok         html_QUOT_upper            CLEAR CLEAR ok    ok     "[text with a secret-looking key, 62 characters, 205a0603]"
+ok         html_Quot_mixed            CLEAR CLEAR ok    ok     "[text with a secret-looking key, 51 characters, 3d09f41f]"
+ok         html_apos                  CLEAR ok    ok    ok     "[text with a secret-looking key, 50 characters, 711bf941]"
+ok         html_x27                   CLEAR ok    ok    ok     "[text with a secret-looking key, 50 characters, effa8b90]"
+ok         newline_key                ok    ok    ok    ok     "[text with a secret-looking key, 26 characters, 8df9bbe1]"
+ok         win_path_key               ok    ok    ok    ok     "[text with a secret-looking key, 25 characters, a6e60d7f]"
+ok         spaced                     ok    ok    ok    ok     "[text with a secret-looking key, 26 characters, be0ccf3b]"
+ok         url_userinfo               ok    ok    ok    ok     "postgres://app:[secret 188f69a7]@db:5432/x"
+ok         url_empty_user             CLEAR ok    ok    ok     "redis://:[secret 188f69a7]@cache:6379"
+ok         token_user_with_pw         CLEAR CLEAR ok    ok     "https://[secret 3c78cc46]:[secret 9b2c4cf9]@github.com/o/r.git"
+ok         bearer                     ok    ok    ok    ok     "Authorization header was Bearer [secret 35ddd18f]"
+ok         basic_b64_bot              ok    ok    ok    ok     "[text with a secret-looking key, 45 characters, b405f29c]"
+ok         basic_lower_b64            ok    ok    ok    ok     "[text with a secret-looking key, 33 characters, 1357513d]"
+ok         key_eq                     ok    ok    ok    ok     "[text with a secret-looking key, 21 characters, 0d008860]"
+ok         esc_quotes                 ok    ok    ok    ok     "[text with a secret-looking key, 32 characters, 74eaad1e]"
+ok         tag_ns                     CLEAR ok    ok    ok     "[text with a secret-looking key, 52 characters, fa441ad2]"
+ok         yaml                       ok    ok    ok    ok     "[text with a secret-looking key, 29 characters, 541a3b95]"
+ok         mysql_backtick             CLEAR CLEAR ok    ok     "[text with a secret-looking key, 59 characters, 5df75e90]"
+ok         md_inline                  CLEAR CLEAR ok    ok     "[text with a secret-looking key, 24 characters, a88174d0]"
+ok         cli_flag_space             CLEAR CLEAR ok    ok     "[text with a secret-looking key, 41 characters, 3b0b3dbf]"
+ok         cli_flag_eq                ok    ok    ok    ok     "[text with a secret-looking key, 27 characters, 15582608]"
+ok         cli_db_token               ok    ok    ok    ok     "[text with a secret-looking key, 27 characters, 738d79ba]"
+ok         cli_single_dash            CLEAR CLEAR ok    ok     "[text with a secret-looking key, 27 characters, a3e589e6]"
+ok         cli_p_glued                CLEAR CLEAR ok    ok     "[text with a secret-looking key, 31 characters, 0be807c9]"
+ok         mysqldump_p                CLEAR CLEAR ok    ok     "[text with a secret-looking key, 44 characters, 198d7efe]"
+ok         go_dsn                     CLEAR CLEAR ok    ok     "root:[secret 594209aa]@tcp(127.0.0.1:3306)/app"
+ok         go_dsn_unix                CLEAR CLEAR ok    ok     "root:[secret 594209aa]@unix(/tmp/mysql.sock)/app"
+ok         go_dsn_udp                 CLEAR CLEAR ok    ok     "u:[secret 594209aa]@udp(1.2.3.4)"
+ok         jwt                        CLEAR CLEAR ok    ok     "[secret a0ec92ec]"
+ok         form_body                  CLEAR CLEAR ok    ok     "[text with a secret-looking key, 54 characters, 11aea7a5]"
+ok         pct_json                   CLEAR CLEAR ok    ok     "[text with a secret-looking key, 51 characters, bfb52cd6]"
+ok         pct_json_lower             CLEAR CLEAR ok    ok     "[text with a secret-looking key, 51 characters, 914507ac]"
+ok         pct_json_2nd               CLEAR CLEAR ok    ok     "[text with a secret-looking key, 71 characters, e172be0b]"
+ok         pct_dbl_query              CLEAR CLEAR ok    ok     "[text with a secret-looking key, 52 characters, b38d5cbe]"
+ok         pct_q                      CLEAR CLEAR ok    ok     "[text with a secret-looking key, 43 characters, a6bd0757]"
+ok         pct_at_start               CLEAR CLEAR ok    ok     "[text with a secret-looking key, 23 characters, f95b7ae6]"
+ok         pct_at_start_lower         CLEAR CLEAR ok    ok     "[text with a secret-looking key, 23 characters, 5587f27e]"
+ok         pct_after_eq               CLEAR CLEAR ok    ok     "[text with a secret-looking key, 41 characters, 53ed6c6a]"
+ok         dotnet_add                 CLEAR CLEAR ok    ok     "<add key=\"DbPassword\" value=\"[secret f46643a8]\" />"
+ok         dotnet_add_value_first     CLEAR CLEAR ok    ok     "<add value=\"[secret f46643a8]\" key=\"DbPassword\"/>"
+ok         dotnet_single              CLEAR CLEAR ok    ok     "<add key='DbPassword' value='[secret f46643a8]' />"
+ok         dotnet_multiline           CLEAR CLEAR ok    ok     "<add\n  key=\"DbPassword\"\n  value=\"[secret f46643a8]\"\n/>"
+ok         dotnet_amp                 CLEAR CLEAR ok    ok     "<add key=\"DbPassword\" value=\"[secret 71270d06]\" />"
+ok         spring_prop                CLEAR CLEAR ok    ok     "<property name=\"password\" value=\"[secret f46643a8]\"/>"
+ok         html_input                 CLEAR CLEAR ok    ok     "<input type=\"password\" name=\"pw\" value=\"[secret f46643a8]\">"
+ok         aligned10                  CLEAR CLEAR ok    ok     "[text with a secret-looking key, 32 characters, ef4e7152]"
+ok         sp32                       CLEAR CLEAR ok    ok     "[text with a secret-looking key, 54 characters, 06eb7b4f]"
+ok         sp31                       CLEAR CLEAR ok    ok     "[text with a secret-looking key, 53 characters, 202af333]"
+ok         tab_eq                     ok    ok    ok    ok     "[text with a secret-looking key, 24 characters, 302ebbf6]"
+ok         pem                        CLEAR CLEAR ok    ok     "[text with a secret-looking key, 90 characters, 5942654b]"
+ok         pem_openssh                CLEAR CLEAR ok    ok     "[text with a secret-looking key, 86 characters, ab073ea5]"
+ok         pem_enc                    CLEAR CLEAR ok    ok     "[text with a secret-looking key, 90 characters, 537cc85f]"
+ok         pem_pkcs8                  CLEAR CLEAR ok    ok     "[text with a secret-looking key, 70 characters, 1732ed58]"
+fixed      tag_attr_lt                CLEAR ok    CLEAR ok     "[text with a secret-looking key, 44 characters, 28ac81ec]"
+fixed      tag_attr_lt_ns             CLEAR ok    CLEAR ok     "[text with a secret-looking key, 54 characters, 821b9825]"
+fixed      tag_attr_lt_jsx            CLEAR ok    CLEAR ok     "[text with a secret-looking key, 46 characters, 7fb0d304]"
+fixed      tag_attr_lt_html           CLEAR ok    CLEAR ok     "[text with a secret-looking key, 46 characters, 773be472]"
+fixed      tag_custom_lt              CLEAR ok    CLEAR ok     "[text with a secret-looking key, 53 characters, 25be8344]"
+CLEAR-all  attr_tag_lt                CLEAR CLEAR CLEAR CLEAR  "<add key=\"DbPassword\" note=\"a<b\" value=\"Zq9SeCr3tVal\" />"
+fixed      pct_eq_then_key            ok    ok    CLEAR ok     "[text with a secret-looking key, 25 characters, 027a5b88]"
+fixed      pct_colon_then_key         ok    ok    CLEAR ok     "[text with a secret-looking key, 26 characters, ab7f1314]"
+fixed      pct_value_db_token         ok    ok    CLEAR ok     "[text with a secret-looking key, 31 characters, e64c23bb]"
+fixed      pct_state_token            ok    ok    CLEAR ok     "[text with a secret-looking key, 37 characters, 19cf2d8d]"
+fixed      pct_eq_then_key_json       CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 24 characters, 89895c08]"
+ok         pct_amp_form               CLEAR CLEAR ok    ok     "[text with a secret-looking key, 50 characters, eea16ff3]"
+fixed      pgp_private                CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 86 characters, bfe19323]"
+fixed      flag_tab                   CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 41 characters, 1f0d221a]"
+ok         flag_newline               CLEAR ok    ok    ok     "[text with a secret-looking key, 24 characters, cc32e527]"
+ok         auth_lower_token           CLEAR ok    ok    ok     "token [secret 083c0251]"
+ok         auth_alpha16               ok    ok    ok    ok     "Bearer [secret e3d29e5d]"
+ok         jwt_in_json_str            CLEAR CLEAR ok    ok     {"t":"json","s":"{\"note\":\"token is [secret edda20e4]\"}"}
+ok         ndjson                     ok    ok    ok    ok     "{\"a\":1}\n{\"password\":\"[secret 5d4f384e]\"}"
+ok         ndjson_bad_first           ok    ok    ok    ok     "not json\n{\"password\":\"[secret 5d4f384e]\"}"
+ok         dbl                        ok    ok    ok    ok     {"t":"json","s":"{\"password\":\"[secret 5d4f384e]\"}","enc":2}
+ok         triple                     ok    ok    ok    ok     "[text with a secret-looking key, 45 characters, 8e2fec97]"
+ok         triple_in_text             ok    ok    ok    ok     "[text with a secret-looking key, 73 characters, d6aa707b]"
+ok         npm_auth                   CLEAR CLEAR ok    ok     "[text with a secret-looking key, 57 characters, afb15f0d]"
+ok         key_backtick_space         CLEAR CLEAR ok    ok     "[text with a secret-looking key, 29 characters, 8991bfd3]"
+ok         pct_27                     CLEAR CLEAR ok    ok     "[text with a secret-looking key, 29 characters, 2d9fae09]"
+ok         w_pw_plain                 CLEAR CLEAR ok    ok     "[text with a secret-looking key, 12 characters, e6f5cb47]"
+ok         w_user_pw                  CLEAR CLEAR ok    ok     "[text with a secret-looking key, 17 characters, 4b526089]"
+ok         w_pw_json_prose            CLEAR CLEAR ok    ok     "[text with a secret-looking key, 21 characters, 4a9043c6]"
+ok         w_pw_amp                   CLEAR CLEAR ok    ok     "[text with a secret-looking key, 16 characters, c7831281]"
+fixed      w_pw_pct26                 CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 34 characters, f098a161]"
+fixed      w_pw_pct22                 CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 34 characters, 2fdcb3e9]"
+fixed      w_pin_pct26                CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 20 characters, dcf73a55]"
+fixed      w_auth_pct0a               CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 38 characters, 37be3ff1]"
+fixed      w_auth_bsn                 CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 27 characters, 2c402542]"
+fixed      w_pw_bsn                   CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 17 characters, 9ff2a318]"
+fixed      w_psk_bst                  CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 18 characters, 9da471b2]"
+fixed      np_add_single_dq_inside    CLEAR CLEAR CLEAR ok     "<add key='DbPassword' value='[secret 477494d1]'/>"
+CLEAR-all  np_input_gt_in_value       CLEAR CLEAR CLEAR CLEAR  "<input type=\"password\" value=\"a>Zq9SeCr3tVal\">"
+fixed      np_add_unquoted            CLEAR CLEAR CLEAR ok     "<add key=\"DbPassword\" value=[secret f46643a8] />"
+ok         np_add_long_attr           ok    ok    ok    ok     {"t":"long","s":"<add key=\"DbPassword\" description=\"ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ok         np_putty                   ok    ok    ok    ok     "[text with a secret-looking key, 78 characters, b198b55d]"
+fixed      t_self_close               CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 23 characters, d5667d08]"
+ok         t_self_close_sp            CLEAR ok    ok    ok     "[text with a secret-looking key, 24 characters, f6becb74]"
+fixed      t_self_close_ns            CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 28 characters, f953d6ff]"
+fixed      t_apikey_self              CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 21 characters, e4654e01]"
+ok         t_split_lines              CLEAR ok    ok    ok     "[text with a secret-looking key, 45 characters, d12c5e71]"
+ok         t_split_ns                 CLEAR ok    ok    ok     "[text with a secret-looking key, 63 characters, c20b595e]"
+ok         t_tab                      CLEAR ok    ok    ok     "[text with a secret-looking key, 34 characters, d0296e16]"
+ok         t_crlf                     CLEAR ok    ok    ok     "[text with a secret-looking key, 35 characters, 4f935e6e]"
+ok         t_nbsp                     CLEAR ok    ok    ok     "[text with a secret-looking key, 39 characters, c47b867f]"
+fixed      t_no_gt                    CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 22 characters, a1ea808b]"
+CLEAR-all  t_open_eol                 CLEAR CLEAR CLEAR CLEAR  "<password"
+CLEAR-all  t_close_only               CLEAR CLEAR CLEAR CLEAR  "Zq9SeCr3tVal</password>"
+CLEAR-all  t_close_ns_only            CLEAR CLEAR CLEAR CLEAR  "Zq9SeCr3tVal</wsse:Password>"
+ok         t_ns_secret_only           ok    ok    ok    ok     "[text with a secret-looking key, 37 characters, 0cf0121d]"
+CLEAR-all  t_dbl_ns                   CLEAR CLEAR CLEAR CLEAR  "<a:b:password>Zq9SeCr3tVal</a:b:password>"
+ok         t_upper                    ok    ok    ok    ok     "[text with a secret-looking key, 33 characters, a2d1701d]"
+ok         t_long_attrs               ok    ok    ok    ok     "[text with a secret-looking key, 394 characters, 1aa280e6]"
+ok         t_gt_in_attr               CLEAR ok    ok    ok     "[text with a secret-looking key, 44 characters, f0ba8cfd]"
+fixed      t_attr_quote_lt            CLEAR ok    CLEAR ok     "[text with a secret-looking key, 38 characters, c079cb97]"
+CLEAR-all  t_html_escaped             CLEAR CLEAR CLEAR CLEAR  "&lt;password&gt;Zq9SeCr3tVal&lt;/password&gt;"
+CLEAR-all  t_pct_escaped              CLEAR CLEAR CLEAR CLEAR  "%3Cpassword%3EZq9SeCr3tVal%3C%2Fpassword%3E"
+CLEAR-all  t_json_escaped             CLEAR CLEAR CLEAR CLEAR  "\\u003cpassword\\u003eZq9SeCr3tVal\\u003c/password\\u003e"
+ok         t_cdata                    ok    ok    ok    ok     "[text with a secret-looking key, 45 characters, e223343c]"
+ok         t_dash_name                ok    ok    ok    ok     "[text with a secret-looking key, 39 characters, b975897c]"
+ok         t_dot_name                 ok    ok    ok    ok     "[text with a secret-looking key, 37 characters, e3e196c8]"
+CLEAR-all  t_bang                     CLEAR CLEAR CLEAR CLEAR  "<!password>Zq9SeCr3tVal"
+CLEAR-all  t_question                 CLEAR CLEAR CLEAR CLEAR  "<?password Zq9SeCr3tVal?>"
+ok         p_any_hex                  ok    ok    ok    ok     "[text with a secret-looking key, 25 characters, b2935893]"
+ok         p_2f                       ok    ok    ok    ok     "[text with a secret-looking key, 25 characters, 6a79c3ef]"
+CLEAR-all  p_5b                       CLEAR CLEAR CLEAR CLEAR  "user%5Bpassword%5D=Zq9SeCr3tVal"
+ok         p_5b_rb                    ok    ok    ok    ok     "[text with a secret-looking key, 29 characters, 17c7a4ce]"
+CLEAR-all  p_dbl_pct                  CLEAR CLEAR CLEAR CLEAR  "q=%2522password%2522%253A%2522Zq9SeCr3tVal"
+CLEAR-all  p_dbl_pct_amp              CLEAR CLEAR CLEAR CLEAR  "q=a%253D1%2526password%253DZq9SeCr3tVal"
+CLEAR-all  p_smart_quote              CLEAR CLEAR CLEAR CLEAR  "%E2%80%9Cpassword%E2%80%9D: Zq9SeCr3tVal"
+fixed      p_pin_3d                   CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 20 characters, 1c2ced14]"
+fixed      p_pw_3a                    CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 20 characters, 82e7d30f]"
+fixed      p_auth_0a                  CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 21 characters, a9eccec6]"
+fixed      p_auth_0d0a                CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 27 characters, 943a0a48]"
+fixed      p_psk_09                   CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 22 characters, 056090bc]"
+fixed      p_pw_20                    CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 21 characters, 73647b28]"
+fixed      p_pw_2b                    CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 21 characters, 30432719]"
+ok         p_pw_22_upper              CLEAR CLEAR ok    ok     "[text with a secret-looking key, 29 characters, 2be6e305]"
+fixed      p_auth_upper               CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 22 characters, dfbe7360]"
+CLEAR-all  p_pin_hexlike              CLEAR CLEAR CLEAR CLEAR  "%26pinpin=Zq9SeCr3tVal"
+fixed      p_bs_r                     CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 18 characters, 5bec019b]"
+fixed      p_bs_bs_n                  CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 19 characters, b5f6d994]"
+CLEAR-all  p_bs_u                     CLEAR CLEAR CLEAR CLEAR  "a\\u0026pw=Zq9SeCr3tVal"
+CLEAR-all  p_bs_x                     CLEAR CLEAR CLEAR CLEAR  "a\\x26pw=Zq9SeCr3tVal"
+ok         p_amp_entity               CLEAR CLEAR ok    ok     "[text with a secret-looking key, 21 characters, 0a56bd76]"
+ok         p_html_num                 CLEAR CLEAR ok    ok     "[text with a secret-looking key, 21 characters, a3729afc]"
+fixed      p_pct_then_quote           CLEAR CLEAR CLEAR ok     "[text with a secret-looking key, 26 characters, a8b282c7]"
+CLEAR-all  p_unicode_esc              CLEAR CLEAR CLEAR CLEAR  "\\u0022password\\u0022: Zq9SeCr3tVal"
+ok         d_tcp                      CLEAR CLEAR ok    ok     "root:[secret 594209aa]@tcp(127.0.0.1:3306)/app"
+fixed      d_tcp6                     CLEAR CLEAR CLEAR ok     "root:[secret 594209aa]@tcp6([::1]:3306)/app"
+fixed      d_cloudsql                 CLEAR CLEAR CLEAR ok     "root:[secret 594209aa]@cloudsql(proj:region:inst)/app"
+fixed      d_slash                    CLEAR CLEAR CLEAR ok     "root:[secret 594209aa]@/app"
+fixed      d_paren                    CLEAR CLEAR CLEAR ok     "root:[secret 594209aa]@(localhost)/app"
+ok         d_upper                    CLEAR CLEAR ok    ok     "root:[secret 594209aa]@TCP(h)/app"
+fixed      d_at_in_pw                 CLEAR CLEAR CLEAR ok     "root:[secret aef003b7]@tcp(127.0.0.1:3306)/app"
+REGRESSION d_colon_in_pw              CLEAR CLEAR ok    CLEAR  "root:Zq9Se:[secret a7f1ce1f]@tcp(127.0.0.1:3306)/app"
+REGRESSION d_colon_end_pw             CLEAR CLEAR ok    CLEAR  "root:Zq9SeCr3tVal:@tcp(127.0.0.1:3306)/app"
+REGRESSION d_colon_start_pw           CLEAR CLEAR ok    CLEAR  "root::Zq9SeCr3tVal@tcp(127.0.0.1:3306)/app"
+REGRESSION d_colon_unix               CLEAR CLEAR ok    CLEAR  "app:Zq9Se:[secret a7f1ce1f]@unix(/tmp/m.sock)/db"
+REGRESSION d_colon_udp                CLEAR CLEAR ok    CLEAR  "app:Zq9Se:[secret a7f1ce1f]@udp(h:1)/db"
+REGRESSION d_colon_in_url_q           CLEAR CLEAR ok    CLEAR  "dsn root:Zq9Se:[secret a7f1ce1f]@tcp(db:3306)/app?parseTime=true"
+CLEAR-all  d_colon_and_at             CLEAR CLEAR CLEAR CLEAR  "root:Zq9:[secret 0fdb97ff]@tcp(h)/a"
+CLEAR-all  d_slash_pw                 CLEAR CLEAR CLEAR CLEAR  "root:pa/Zq9SeCr3tVal@tcp(h)/a"
+ok         d_space_before             CLEAR CLEAR ok    ok     "connecting root:[secret 594209aa]@tcp(h)/a now"
+ok         d_quoted                   CLEAR CLEAR ok    ok     "\"root:[secret 594209aa]@tcp(h)/a\""
+ok         d_json_val                 CLEAR CLEAR ok    ok     {"t":"json","s":"{\"conn\":\"root:[secret 594209aa]@tcp(h)/a\"}"}
+ok         d_env_line                 CLEAR CLEAR ok    ok     "MYSQL=root:[secret 594209aa]@tcp(h)/a"
+ok         d_after_semicolon          CLEAR CLEAR ok    ok     "x;root:[secret 594209aa]@tcp(h)/a"
+ok         a_upper_names              CLEAR CLEAR ok    ok     "<add KEY='DbPassword' VALUE='[secret f46643a8]'/>"
+ok         a_id                       CLEAR CLEAR ok    ok     "<x id=\"password\" value=\"[secret f46643a8]\">"
+fixed      a_type_unquoted            CLEAR CLEAR CLEAR ok     "<input type=password value=[secret f46643a8]>"
+fixed      a_name_unquoted            CLEAR CLEAR CLEAR ok     "<input name=password value=[secret f46643a8]>"
+ok         a_spaces_eq                CLEAR CLEAR ok    ok     "<add key = \"DbPassword\" value = \"[secret f46643a8]\" />"
+fixed      a_apostrophe               CLEAR CLEAR CLEAR ok     "<add key=\"DbPassword\" value=\"[secret 8888ae8c]\" />"
+ok         a_mixed_quote_name         CLEAR CLEAR ok    ok     "<add key=\"DbPassword' value=\"[secret f46643a8]\" />"
+fixed      a_name_with_apos           CLEAR CLEAR CLEAR ok     "<add key=\"Db'Password\" value=\"[secret f46643a8]\" />"
+ok         a_two_values               CLEAR CLEAR ok    ok     "<add key=\"DbPassword\" value=\"[secret f46643a8]\" value2=\"x\"/>"
+ok         a_data_value               CLEAR CLEAR ok    ok     "<add key=\"DbPassword\" data-value=\"[secret f85aa21e]\" value=\"[secret f46643a8]\"/>"
+ok         a_tab_sep                  CLEAR CLEAR ok    ok     "<add\tkey=\"DbPassword\"\tvalue=\"[secret f46643a8]\"/>"
+ok         a_ns_elem                  CLEAR CLEAR ok    ok     "<x:add key=\"DbPassword\" value=\"[secret f46643a8]\"/>"
+CLEAR-all  a_value_empty_then         CLEAR CLEAR CLEAR CLEAR  "<add key=\"DbPassword\" value=\"[secret 723f7afa]\" note=\"Zq9SeCr3tVal\"/>"
+REGRESSION a_minified_after           CLEAR CLEAR ok    CLEAR  "<input type=\"password\" value=\"Zq9SeCr3tVal\" class=\"a:[secret 3ed52a90]@y(z)</td>"
+REGRESSION a_minified_after2          CLEAR CLEAR ok    CLEAR  "<input type=\"password\" value=\"Zq9SeCr3tVal\" style=\"color:[secret 96a115a9]@/b</b>"
+ok         a_value_colon              CLEAR CLEAR ok    ok     "<input type=\"password\" value=\"ab:[secret ff1f415e]@/</i>"
+ok         a_selfclose_then_dsn       CLEAR CLEAR ok    ok     "<add key=\"DbPassword\" value=\"[secret f46643a8]\" x=\"a:b\"/>@/"
+ok         a_then_dsn_tag             CLEAR CLEAR ok    ok     "<add key=\"DbPassword\" value=\"[secret f46643a8]\" note=\"t:1\"><add key=\"Dsn\" value=\"[secret bf7767c3]\"/>"
+ok         col_pw                     CLEAR CLEAR ok    ok     {"id":1,"pw":{"t":"secret","d":"11f5e6a5c7b51ab1"}}
+ok         col_psk                    CLEAR CLEAR ok    ok     {"id":1,"psk":{"t":"secret","d":"624f06648c7fab4f"}}
+ok         col_auth                   CLEAR CLEAR ok    ok     {"auth":{"t":"secret","d":"9847095b1fe82df9"},"id":1}
+ok         col__auth                  CLEAR CLEAR ok    ok     {"_auth":{"t":"secret","d":"fb7c8f8cedf2721e"},"id":1}
+ok         col_Auth                   CLEAR CLEAR ok    ok     {"Auth":{"t":"secret","d":"41e2df218853d653"},"id":1}
+ok         col_auth_token             ok    ok    ok    ok     {"auth_token":{"t":"secret","d":"a363b7be1bd6eb61"},"id":1}
+ok         docker_auths               CLEAR CLEAR ok    ok     {"config":{"t":"json","s":"{\"auths\":{\"ghcr.io\":{\"auth\":\"[secret 05c1a967]\"}}}"},"id":1}
+ok         json_user_pw               CLEAR CLEAR ok    ok     {"creds_json":{"t":"json","s":"{\"user\":\"admin\",\"pw\":\"[secret f89f532c]\"}"},"id":1}
+ok         aws_name                   CLEAR ok    ok    ok     {"doc":{"t":"json","s":"[{\"Name\":\"db-password\",\"Value\":\"[secret abedd173]\"}]"},"id":1}
+ok         aws_key                    CLEAR ok    ok    ok     {"doc":{"t":"json","s":"[{\"Key\":\"api_token\",\"Value\":\"[secret 740fff28]\"}]"},"id":1}
+ok         field_val                  CLEAR ok    ok    ok     {"doc":{"t":"json","s":"[{\"field\":\"password\",\"val\":\"[secret 6b594e21]\"}]"},"id":1}
+ok         k_v                        CLEAR ok    ok    ok     {"doc":{"t":"json","s":"[{\"k\":\"password\",\"v\":\"[secret ceb7b8b0]\"}]"},"id":1}
+ok         NAME_VALUE                 CLEAR ok    ok    ok     {"doc":{"t":"json","s":"[{\"NAME\":\"password\",\"VALUE\":\"[secret 73e1eb44]\"}]"},"id":1}
+ok         pair7                      ok    CLEAR ok    ok     {"doc":{"t":"json","s":"[{\"name\":\"password\",\"value\":\"[secret 1bfbd7e8]\",\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5}]"},"id":1}
+ok         har                        ok    CLEAR ok    ok     {"doc":{"t":"json","s":"[{\"name\":\"session\",\"value\":\"[secret 08ae919f]\",\"path\":\"/\",\"domain\":\"x.test\",\"expires\":null,\"httpOnly\":true
+ok         ssm                        CLEAR CLEAR ok    ok     {"doc":{"t":"json","s":"{\"Parameter\":{\"Name\":\"/prod/db-password\",\"Type\":\"SecureString\",\"Value\":\"[secret 908483d8]\",\"Version\":1,\"LastM
+ok         pair_two_values            CLEAR CLEAR ok    ok     {"doc":{"t":"json","s":"[{\"name\":\"password\",\"value\":\"[secret 68460e6b]\",\"v\":\"[secret 9d34dc72]\"}]"},"id":1}
+fixed      pair_name_second           ok    CLEAR CLEAR ok     {"doc":{"t":"json","s":"[{\"field\":\"x\",\"name\":\"password\",\"value\":\"[secret e3fab9ea]\"}]"},"id":1}
+fixed      pair_k_first               ok    CLEAR CLEAR ok     {"doc":{"t":"json","s":"[{\"k\":\"id\",\"key\":\"api_token\",\"value\":\"[secret 84e756a9]\"}]"},"id":1}
+ok         pair_name_null             ok    ok    ok    ok     {"doc":{"t":"json","s":"[{\"name\":null,\"key\":\"password\",\"value\":\"[secret e3fab9ea]\"}]"},"id":1}
+ok         pair_name_num              ok    ok    ok    ok     {"doc":{"t":"json","s":"[{\"name\":7,\"key\":\"password\",\"value\":\"[secret e3fab9ea]\"}]"},"id":1}
+ok         pair_value_obj             ok    ok    ok    ok     {"doc":{"t":"json","s":"[{\"name\":\"password\",\"value\":\"[secret 27c02c8a]\"}]"},"id":1}
+ok         raw_headers                ok    ok    ok    ok     {"doc":{"t":"json","s":"[\"Authorization\",\"[secret 04febe80]\",\"[secret d244d5c7]\",\"[secret 7ff7c6e0]\"]"},"id":1}
+ok         k8s_env                    ok    ok    ok    ok     {"doc":{"t":"json","s":"{\"env\":[{\"name\":\"DB_PASSWORD\",\"value\":\"[secret 39e1e290]\"},{\"name\":\"HOST\",\"value\":\"db\"}]}"},"id":1}
+fixed      key_mail_smtp              ok    CLEAR CLEAR ok     {"doc":{"t":"json","s":"[{\"key\":\"mail.smtp\",\"name\":\"Password\",\"value\":\"[secret dd1559a5]\"}]"},"id":1}
+fixed      k_row17                    ok    CLEAR CLEAR ok     {"doc":{"t":"json","s":"[{\"k\":\"row-17\",\"name\":\"password\",\"value\":\"[secret e3fab9ea]\"}]"},"id":1}
+fixed      setting42                  ok    CLEAR CLEAR ok     {"doc":{"t":"json","s":"{\"key\":\"setting_42\",\"name\":\"SMTP password\",\"value\":\"[secret f6dd3212]\",\"updated\":1}"},"id":1}
+ok         pair_key10                 ok    CLEAR ok    ok     {"doc":{"t":"json","s":"[{\"key\":\"password\",\"value\":\"[secret e3fab9ea]\",\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5,\"f\":6,\"g\":7,\"h\":8,\"i\":9
+ok         pair_Key5                  CLEAR CLEAR ok    ok     {"doc":{"t":"json","s":"[{\"Key\":\"api_token\",\"Value\":\"[secret 84e756a9]\",\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5}]"},"id":1}
+fixed      r_settings_key             CLEAR CLEAR CLEAR ok     {"id":1,"key":"smtp_password","value":{"t":"secret","d":"650b30cb52c5d630"}}
+fixed      r_settings_name            CLEAR CLEAR CLEAR ok     {"id":1,"name":"STRIPE_SECRET_KEY","value":{"t":"secret","d":"650b30cb52c5d630"}}
+fixed      r_settings_kv              CLEAR CLEAR CLEAR ok     {"k":"api_token","v":{"t":"secret","d":"71a1d216b0500b8b"}}
+fixed      r_settings_field_val       CLEAR CLEAR CLEAR ok     {"field":"pw","id":1,"val":{"t":"secret","d":"ba94a260235cdc36"}}
+fixed      r_settings_KeyValue        CLEAR CLEAR CLEAR ok     {"Id":1,"Key":"DbPassword","Value":{"t":"secret","d":"e80df5a7418d615b"}}
+CLEAR-all  r_settings_KEY_VALUE7      CLEAR CLEAR CLEAR CLEAR  {"ID":1,"KEY":"DbPassword","VALUE":"Zq9SeCr3tVal","a":1,"b":2,"c":3,"d":4}
+fixed      r_settings_wide            CLEAR CLEAR CLEAR ok     {"autoload":true,"created_at":"y","group":"mail","id":1,"key":"smtp_password","note":"n","type":"string","updated_at":"x","value":{"t":"secret","d":"6
+CLEAR-all  r_settings_loose_wide      CLEAR CLEAR CLEAR CLEAR  {"autoload":true,"created_at":"y","group":"mail","id":1,"k":"smtp_password","updated_at":"x","v":"Zq9SeCr3tVal"}
+ok         r_settings_value_json      ok    ok    ok    ok     {"id":1,"key":"smtp","value":{"t":"json","s":"{\"password\":\"[secret 761c03ec]\"}"}}
+fixed      r_settings_value_text      CLEAR CLEAR CLEAR ok     {"id":1,"key":"dsn_note","value":{"t":"secret","d":"988c26e9448ebf46"}}
+CLEAR-all  r_option_name              CLEAR CLEAR CLEAR CLEAR  {"id":1,"option_name":"mailserver_pass","option_value":"Zq9SeCr3tVal"}
+CLEAR-all  r_setting_value            CLEAR CLEAR CLEAR CLEAR  {"id":1,"setting":"smtp_password","value":"Zq9SeCr3tVal"}
+fixed      r_value_number             CLEAR CLEAR CLEAR ok     {"id":1,"key":"pin","value":{"t":"secret","d":"35114dccb191ccfb"}}
+ok         r_value_buffer             ok    ok    ok    ok     {"id":1,"key":"secret","value":{"t":"secret","d":"8cdb86ec82e3f354"}}
+{ ok: 152, 'CLEAR-all': 27, fixed: 59, REGRESSION: 8 }
+--- REGRESSION d_colon_in_pw
+ in "root:Zq9Se:Cr3tVal@tcp(127.0.0.1:3306)/app"
+ 2ec0bba "root:Zq9Se:Cr3tVal@tcp(127.0.0.1:3306)/app"
+ 7193877 "root:Zq9Se:Cr3tVal@tcp(127.0.0.1:3306)/app"
+ 4a284f9 "root:[secret 97b3fda8]@tcp(127.0.0.1:3306)/app"
+ 4ed6449 "root:Zq9Se:[secret a7f1ce1f]@tcp(127.0.0.1:3306)/app"
+--- REGRESSION d_colon_end_pw
+ in "root:Zq9SeCr3tVal:@tcp(127.0.0.1:3306)/app"
+ 2ec0bba "root:Zq9SeCr3tVal:@tcp(127.0.0.1:3306)/app"
+ 7193877 "root:Zq9SeCr3tVal:@tcp(127.0.0.1:3306)/app"
+ 4a284f9 "root:[secret 3e08ba37]@tcp(127.0.0.1:3306)/app"
+ 4ed6449 "root:Zq9SeCr3tVal:@tcp(127.0.0.1:3306)/app"
+--- REGRESSION d_colon_start_pw
+ in "root::Zq9SeCr3tVal@tcp(127.0.0.1:3306)/app"
+ 2ec0bba "root::Zq9SeCr3tVal@tcp(127.0.0.1:3306)/app"
+ 7193877 "root::Zq9SeCr3tVal@tcp(127.0.0.1:3306)/app"
+ 4a284f9 "root:[secret eb6ef300]@tcp(127.0.0.1:3306)/app"
+ 4ed6449 "root::Zq9SeCr3tVal@tcp(127.0.0.1:3306)/app"
+--- REGRESSION d_colon_unix
+ in "app:Zq9Se:Cr3tVal@unix(/tmp/m.sock)/db"
+ 2ec0bba "app:Zq9Se:Cr3tVal@unix(/tmp/m.sock)/db"
+ 7193877 "app:Zq9Se:Cr3tVal@unix(/tmp/m.sock)/db"
+ 4a284f9 "app:[secret 97b3fda8]@unix(/tmp/m.sock)/db"
+ 4ed6449 "app:Zq9Se:[secret a7f1ce1f]@unix(/tmp/m.sock)/db"
+--- REGRESSION d_colon_udp
+ in "app:Zq9Se:Cr3tVal@udp(h:1)/db"
+ 2ec0bba "app:Zq9Se:Cr3tVal@udp(h:1)/db"
+ 7193877 "app:Zq9Se:Cr3tVal@udp(h:1)/db"
+ 4a284f9 "app:[secret 97b3fda8]@udp(h:1)/db"
+ 4ed6449 "app:Zq9Se:[secret a7f1ce1f]@udp(h:1)/db"
+--- REGRESSION d_colon_in_url_q
+ in "dsn root:Zq9Se:Cr3tVal@tcp(db:3306)/app?parseTime=true"
+ 2ec0bba "dsn root:Zq9Se:Cr3tVal@tcp(db:3306)/app?parseTime=true"
+ 7193877 "dsn root:Zq9Se:Cr3tVal@tcp(db:3306)/app?parseTime=true"
+ 4a284f9 "dsn root:[secret 97b3fda8]@tcp(db:3306)/app?parseTime=true"
+ 4ed6449 "dsn root:Zq9Se:[secret a7f1ce1f]@tcp(db:3306)/app?parseTime=true"
+--- REGRESSION a_minified_after
+ in "<input type=\"password\" value=\"Zq9SeCr3tVal\" class=\"a:b\"><td>x@y(z)</td>"
+ 2ec0bba "<input type=\"password\" value=\"Zq9SeCr3tVal\" class=\"a:b\"><td>x@y(z)</td>"
+ 7193877 "<input type=\"password\" value=\"Zq9SeCr3tVal\" class=\"a:b\"><td>x@y(z)</td>"
+ 4a284f9 "<input type=\"password\" value=\"[secret f46643a8]\" class=\"a:b\"><td>x@y(z)</td>"
+ 4ed6449 "<input type=\"password\" value=\"Zq9SeCr3tVal\" class=\"a:[secret 3ed52a90]@y(z)</td>"
+--- REGRESSION a_minified_after2
+ in "<input type=\"password\" value=\"Zq9SeCr3tVal\" style=\"color:red\"><b>a@/b</b>"
+ 2ec0bba "<input type=\"password\" value=\"Zq9SeCr3tVal\" style=\"color:red\"><b>a@/b</b>"
+ 7193877 "<input type=\"password\" value=\"Zq9SeCr3tVal\" style=\"color:red\"><b>a@/b</b>"
+ 4a284f9 "<input type=\"password\" value=\"[secret f46643a8]\" style=\"color:red\"><b>a@/b</b>"
+ 4ed6449 "<input type=\"password\" value=\"Zq9SeCr3tVal\" style=\"color:[secret 96a115a9]@/b</b>"
+/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/run/review-35f/regress/to.sh: line 12: 69569 Terminated: 15          ( sleep "$secs"; kill -TERM -"$pid" 2> /dev/null; sleep 3; kill -KILL -"$pid" 2> /dev/null )

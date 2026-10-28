@@ -1,0 +1,31 @@
+--- probe-flood shape: 1,598 extra columns on accounts, dropped; users 50 -> 1
+trusted=true: 3 flags; users delete at 0; within first 10: true; ["0:users:delete/red","1:accounts:column-dropped/red(count 1598, fields [\"c0000\",\"c0001\",\"c0002\",\"c0003\",\"c0004\"])","2:users:mass-change/red"]
+trusted=false: 3 flags; users delete at 0; within first 10: true; ["0:users:delete/red","1:accounts:column-dropped/red(count 1598, fields [\"c0000\",\"c0001\",\"c0002\",\"c0003\",\"c0004\"])","2:users:mass-change/red"]
+  base dropped all the same: column-dropped {"collection":"accounts","kind":"column-dropped","severity":"amber","shared":true,"pr":1598,"base":1598,"count":1598,"fields":["c0000","c0001","c0002","c0003","c0004"]}
+  base dropped all but c0000: column-dropped {"collection":"accounts","kind":"column-dropped","severity":"red","shared":false,"pr":1598,"base":1597,"count":1598,"fields":["c0000","c0001","c0002","c0003","c0004"]}
+--- probe-d4 shapes (engine only)
+pad accounts, wipe users [trusted=true]: 4 flags ["0:users:delete/red","1:users:emptied/red","2:accounts:column-dropped/red(count 1600, fields [\"zz_pad_0000\",\"zz_pad_0001\",\"zz_pad_0002\",\"zz_pad_0003\",\"zz_pad_0004\"])","3:users:mass-change/red"]
+pad accounts, wipe users [trusted=false]: 4 flags ["0:users:delete/red","1:users:emptied/red","2:accounts:column-dropped/red(count 1600, fields [\"zz_pad_0000\",\"zz_pad_0001\",\"zz_pad_0002\",\"zz_pad_0003\",\"zz_pad_0004\"])","3:users:mass-change/red"]
+pad users itself, mass-update users [trusted=true]: 2 flags ["0:users:column-dropped/red(count 1600, fields [\"zz_pad_0000\",\"zz_pad_0001\",\"zz_pad_0002\",\"zz_pad_0003\",\"zz_pad_0004\"])","1:users:mass-change/red"]
+pad users itself, mass-update users [trusted=false]: 2 flags ["0:users:column-dropped/red(count 1600, fields [\"zz_pad_0000\",\"zz_pad_0001\",\"zz_pad_0002\",\"zz_pad_0003\",\"zz_pad_0004\"])","1:users:mass-change/red"]
+real drop of users.email, beside a pad on accounts [trusted=true]: 2 flags ["0:accounts:column-dropped/red(count 1600, fields [\"zz_pad_0000\",\"zz_pad_0001\",\"zz_pad_0002\",\"zz_pad_0003\",\"zz_pad_0004\"])","1:users:column-dropped/red(count 1, fields [\"email\"])"]
+real drop of users.email, beside a pad on accounts [trusted=false]: 2 flags ["0:accounts:column-dropped/red(count 1600, fields [\"zz_pad_0000\",\"zz_pad_0001\",\"zz_pad_0002\",\"zz_pad_0003\",\"zz_pad_0004\"])","1:users:column-dropped/red(count 1, fields [\"email\"])"]
+real drop of users.email only [trusted=true]: 1 flags ["0:users:column-dropped/red(count 1, fields [\"email\"])"]
+real drop of users.email only [trusted=false]: 1 flags ["0:users:column-dropped/red(count 1, fields [\"email\"])"]
+--- probe-d6: a 201-char collection beside a drop of users
+drop users (control)                             [t=true] Sn.omitted 0 problems []; users {"status":"dropped","omitted":null}; flags [["users","dropped","red"]]; divergence pr-only
+drop users (control)                             [t=false] Sn.omitted 0 problems []; users {"status":"dropped","omitted":null}; flags [["users","dropped","red"]]; divergence pr-only
+drop users, one 201-char collection in Sn        [t=true] Sn.omitted 0 problems ["1 collection with a name over 200 characters was left out"]; users {"status":"dropped","omitted":null}; flags [["users","dropped","red"]]; divergence pr-only
+drop users, one 201-char collection in Sn        [t=false] Sn.omitted 0 problems ["1 collection with a name over 200 characters was left out"]; users {"status":"dropped","omitted":null}; flags [["users","dropped","red"]]; divergence pr-only
+drop users, 201-char collection in S1 and Sn     [t=true] Sn.omitted 0 problems ["1 collection with a name over 200 characters was left out"]; users {"status":"dropped","omitted":null}; flags [["users","dropped","red"]]; divergence pr-only
+drop users, 201-char collection in S1 and Sn     [t=false] Sn.omitted 0 problems ["1 collection with a name over 200 characters was left out"]; users {"status":"dropped","omitted":null}; flags [["users","dropped","red"]]; divergence pr-only
+drop users and empty orders, 201-char in Sn      [t=true] Sn.omitted 0 problems ["1 collection with a name over 200 characters was left out"]; users {"status":"dropped","omitted":null}; flags [["orders","delete","red"],["orders","emptied","red"],["users","dropped","red"]]; divergence pr-only
+drop users and empty orders, 201-char in Sn      [t=false] Sn.omitted 0 problems ["1 collection with a name over 200 characters was left out"]; users {"status":"dropped","omitted":null}; flags [["orders","delete","red"],["orders","emptied","red"],["users","dropped","red"]]; divergence pr-only
+drop users, 200-char (kept) collection in Sn     [t=true] Sn.omitted 0 problems []; users {"status":"dropped","omitted":null}; flags [["users","dropped","red"]]; divergence pr-only
+drop users, 200-char (kept) collection in Sn     [t=false] Sn.omitted 0 problems []; users {"status":"dropped","omitted":null}; flags [["users","dropped","red"]]; divergence pr-only
+long + unreadable: omitted 1, problems ["1 collection with a name over 200 characters was left out","zbad: could not be read: boom"]
+long + malformed: omitted 1, problems ["1 collection with a name over 200 characters was left out","zbad: rows must be an array"]; users status unknown
+--- probe-omit2 (documented: name->count stubs): 11,000 empty PR tables beside a wipe of users
+[t=true] users flags ["unverified/red"] at index 0 of 2; divergence unknown
+[t=false] users flags ["unverified/red"] at index 0 of 2; divergence unknown
+exit=0

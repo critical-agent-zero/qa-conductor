@@ -1,0 +1,29 @@
+[
+ {
+  "id": "P1",
+  "file": "lib/data-diff.mjs",
+  "old": "(?:(?<![\\w.-])|(?<=%[0-9a-f]{2}))",
+  "new": "(?:(?<![\\w.-]))",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "D2",
+  "file": "lib/data-diff.mjs",
+  "old": "([^\\s/:]{1,256})@((?:",
+  "new": "([^\\s@/:]{1,256})@((?:",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "D3",
+  "file": "lib/data-diff.mjs",
+  "old": "([^\\s/:]{1,256})@((?:",
+  "new": "([^\\s/]{1,256})@((?:",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ }
+]

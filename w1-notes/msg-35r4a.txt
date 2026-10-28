@@ -1,0 +1,18 @@
+fix: the data engine's work is bounded by cells, flagging is linear, and what loses data is listed first
+
+For #36's round 4, whose findings live in this engine:
+- LIMITS.maxCells (500,000): a snapshot's cells (its rows' fields) are
+  shared fairly like its bytes, counted before a row is read. Past its
+  share a collection is cut short, so only its count is compared and it
+  is flagged unverified. Masking, diffing and flagging take time in
+  proportion to the cells, on the conductor's event loop.
+- tally() merged each flag's items with a spread copy, quadratic in a
+  field's rows: 10,000 rows with 100 fields cleared took 22 s to flag.
+  It merges in place now.
+- Within a severity and the base pane's collections, the kinds that lose
+  data (delete, emptied, dropped, key-lost) come before column-dropped and
+  mass-change, so 600 renamed columns can't push a delete out of a
+  capped list.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

@@ -1,0 +1,5 @@
+[
+ {"id": "S1", "file": "README.md", "old": "(deny network-outbound (remote ip (string-append \"localhost:\" (param \"BASE_APP\"))))\n", "new": "", "tests": ["test/docs.test.mjs"]},
+ {"id": "S2", "file": "README.md", "old": "(deny network-outbound (remote ip (string-append \"localhost:\" (param \"BASE_DB\"))))", "new": "(deny network-outbound (remote ip (string-append \"127.0.0.1:\" (param \"BASE_DB\"))))", "tests": ["test/docs.test.mjs"]},
+ {"id": "S3", "file": "README.md", "old": "(allow default)\n", "new": "(allow default)\n(deny network-outbound)\n", "tests": ["test/docs.test.mjs"]}
+]

@@ -1,0 +1,146 @@
+[
+ {
+  "id": "V1",
+  "file": "lib/data-capture.mjs",
+  "old": "const bytesOf = value => Buffer.byteLength(JSON.stringify(value))",
+  "new": "const bytesOf = value => JSON.stringify(value).length",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "V2",
+  "file": "lib/data-capture.mjs",
+  "old": "  if (red.has(name)) return [0, order.get(name)]",
+  "new": "  if (red.has(name)) return [0, 0]",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "V3",
+  "file": "lib/data-capture.mjs",
+  "old": "  if (red.has(name)) return [0, order.get(name)]",
+  "new": "  if (order.has(name)) return [0, order.get(name)]",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "V4",
+  "file": "lib/data-capture.mjs",
+  "old": "  return [moved ? 1 : order.has(name) ? 2 : changed ? 3 : 4, 0]",
+  "new": "  return [moved ? 1 : order.has(name) ? 2 : changed ? 4 : 4, 0]",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "V5",
+  "file": "lib/data-capture.mjs",
+  "old": "const byRank = (x, y) => x.rank[0] - y.rank[0] || x.rank[1] - y.rank[1] ||",
+  "new": "const byRank = (x, y) => x.rank[0] - y.rank[0] ||",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "V6",
+  "file": "lib/data-capture.mjs",
+  "old": "  for (let tier = 0; tier <= 4 && !stopped; tier++) {\n    for (const list of lists) {\n      while (!stopped && list.done < list.todo.length && list.todo[list.done].rank[0] === tier) {",
+  "new": "  for (let tier = 0; tier <= 0 && !stopped; tier++) {\n    for (const list of lists) {\n      while (!stopped && list.done < list.todo.length) {",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "V7",
+  "file": "lib/data-capture.mjs",
+  "old": "...(stopped && list.done < list.todo.length ? { cut: true } : {})",
+  "new": "...(false ? { cut: true } : {})",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "V8",
+  "file": "lib/data-capture.mjs",
+  "old": "    if (sessionMemo?.version !== version) {",
+  "new": "    if (true) {",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "V9",
+  "file": "lib/data-capture.mjs",
+  "old": "      if (!bootSpans.has(bootKey)) {",
+  "new": "      if (true) {",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "V10",
+  "file": "lib/data-capture.mjs",
+  "old": "    const bootKey = `${bootVersion} ${runs > 0} ${trust}`",
+  "new": "    const bootKey = `${bootVersion} ${runs > 0}`",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "V11",
+  "file": "lib/data-capture.mjs",
+  "old": "    bootVersion++\n    const at = now()",
+  "new": "    const at = now()",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "V12",
+  "file": "lib/data-capture.mjs",
+  "old": "[unreadable(why === 'baseline' ? 'baseline' : base ? why ?? 'failed' : 'neither')]",
+  "new": "[unreadable(base ? why ?? 'failed' : 'neither')]",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "V13",
+  "file": "lib/data-capture.mjs",
+  "old": "      const listedFlagsOut = listedFlags(flags, budget)\n      const out = listedLists(",
+  "new": "      const out = listedLists(",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "V14",
+  "file": "lib/data-capture.mjs",
+  "old": "const divergenceMoved = c => c.changes.length > 0 || [c.counts.base, c.counts.pr].some(n => n.inserted + n.updated + n.deleted > 0)",
+  "new": "const divergenceMoved = c => c.changes.length > 0",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "V15",
+  "file": "lib/data-capture.mjs",
+  "old": "const rowsChanged = c => c.inserted.length + c.updated.length + c.deleted.length + c.fieldsDropped.length + c.fieldsAdded.length > 0 || c.keyLost",
+  "new": "const rowsChanged = c => c.inserted.length + c.updated.length + c.deleted.length > 0",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "V16",
+  "file": "lib/data-capture.mjs",
+  "old": "        if (f.severity === 'red') reds.add(f.collection)",
+  "new": "        reds.add(f.collection)",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ }
+]

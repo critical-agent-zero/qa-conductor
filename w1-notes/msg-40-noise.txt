@@ -1,0 +1,13 @@
+fix: a clean host's sweep no longer fails on the docker CLI's "exit status 1" line
+
+The docker CLI on CI's Ubuntu runners adds "exit status 1" after its
+error, so rmNetwork and rmForce read a network or container already gone
+as a failure, and sweep() failed on a clean host. The integration test
+found it. The line is noise now, like Podman's banner and warnings.
+
+The README's internal-network section says where it is checked: Linux
+Docker Engine and Podman in CI, Docker Desktop and Podman machine by hand
+(#43). Its check by hand now reads curl's exit code.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

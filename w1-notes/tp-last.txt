@@ -1,0 +1,10 @@
+✔ the event loop is never held long while a Snapshot now reads a PR store of 6 million cells, nor while its answer is built (1562.631648ms)
+ℹ the longest hold: 489 ms
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1748.155427

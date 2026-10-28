@@ -1,0 +1,2 @@
+N=8000: red flags lost 0, divergence statuses changed 0
+exit 0

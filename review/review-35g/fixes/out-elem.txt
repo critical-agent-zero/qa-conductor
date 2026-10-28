@@ -1,0 +1,25 @@
+style ":" then @media( (minified CSS)
+  2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 masked | 4ed6449 CLEAR | 4033285 masked
+  4033285 "<input type=\"password\" name=\"pw\" value=\"[secret f46643a8]\" style=\"width:[secret 588b7434]@media(max-width:600px){input{width:50%}}</style>"
+style ":" then @supports(
+  2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 masked | 4ed6449 CLEAR | 4033285 masked
+  4033285 "<input type=\"hidden\" name=\"api_token\" value=\"[secret f46643a8]\" style=\"display:[secret 0eb782c9]@supports(display:grid){a{b:c}}</style>"
+class ":" then @/ (webpack alias)
+  2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 masked | 4ed6449 CLEAR | 4033285 masked
+  4033285 "<input type=\"password\" value=\"[secret f46643a8]\" class=\"sm:[secret cd8a128f]@/components</b>"
+mailto then @x(
+  2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 masked | 4ed6449 CLEAR | 4033285 masked
+  4033285 "<x id=\"secret\" value=\"[secret f46643a8]\" href=\"mailto:[secret 8d3713dc]@y(z)</i>"
+same, @tcp( (4a284f9 had it)
+  2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 CLEAR | 4ed6449 CLEAR | 4033285 masked
+  4033285 "<input type=\"password\" value=\"[secret f46643a8]\" style=\"color:[secret 96a115a9]@tcp(h)</b>"
+URL rule eats it (pre-existing)
+  2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 CLEAR | 4ed6449 CLEAR | 4033285 CLEAR
+  4033285 "<input type=\"password\" value=\"Zq9SeCr3tVal\" data-u=\"https://a:[secret 2375a3f6]@host</b>"
+self-closing (control)
+  2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 masked | 4ed6449 masked | 4033285 masked
+  4033285 "<add key=\"DbPassword\" value=\"[secret f46643a8]\" x=\"a:b\"/>@/"
+space before @ (control)
+  2ec0bba CLEAR | 7193877 CLEAR | 4a284f9 masked | 4ed6449 masked | 4033285 masked
+  4033285 "<input type=\"password\" value=\"[secret f46643a8]\" style=\"color:red\"> @media(x)"
+exit 0

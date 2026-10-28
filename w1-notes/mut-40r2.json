@@ -1,0 +1,92 @@
+[
+ {
+  "id": "P1",
+  "file": "lib/forwarder.mjs",
+  "old": "        res.setTimeout(idleMs, () => reset(res.socket))\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "R3",
+  "file": "lib/forwarder.mjs",
+  "old": "        if (res.headersSent) return reset(res.socket)",
+  "new": "        if (res.headersSent) return res.destroy()",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "R1",
+  "file": "lib/forwarder.mjs",
+  "old": "      client.on('error', () => reset(upstream))",
+  "new": "      client.on('error', () => upstream.destroy())",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "I14",
+  "file": "lib/forwarder.mjs",
+  "old": "      upstream.on('socket', socket => idleTimer(socket, res.socket, idleMs, () => upstream.destroy(new Error('idle')), { waiting: () => Boolean(upRes?.isPaused() || res.writableNeedDrain) }))",
+  "new": "      upstream.setTimeout(idleMs, () => upstream.destroy(new Error('idle')))",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "I15",
+  "file": "lib/forwarder.mjs",
+  "old": "        idleTimer(socket, upstream, idleMs, () => { reset(socket); reset(upstream) })",
+  "new": "        socket.setTimeout(idleMs, () => { reset(socket); reset(upstream) }); upstream.setTimeout(idleMs, () => { reset(socket); reset(upstream) })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "I15b",
+  "file": "lib/forwarder.mjs",
+  "old": "        idleTimer(socket, upstream, idleMs, () => { reset(socket); reset(upstream) })",
+  "new": "        upstream.setTimeout(idleMs, () => { reset(socket); reset(upstream) })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "I15c",
+  "file": "lib/forwarder.mjs",
+  "old": "        idleTimer(socket, upstream, idleMs, () => { reset(socket); reset(upstream) })",
+  "new": "        socket.setTimeout(idleMs, () => { reset(socket); reset(upstream) })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "I16",
+  "file": "lib/forwarder.mjs",
+  "old": "        idleTimer(socket, upstream, idleMs, () => { reset(socket); reset(upstream) })",
+  "new": "        idleTimer(upstream, socket, idleMs, () => { reset(socket); reset(upstream) })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "L1",
+  "file": "lib/forwarder.mjs",
+  "old": "  createForwarder(config, { log: line => console.log(line) }).then(",
+  "new": "  createForwarder(config).then(",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "L2",
+  "file": "lib/forwarder.mjs",
+  "old": "    err => { console.log(`qa-forwarder: ${err.message}`); process.exit(1) },",
+  "new": "    err => { console.error(`qa-forwarder: ${err.message}`); process.exit(1) },",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ }
+]

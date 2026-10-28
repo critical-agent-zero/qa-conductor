@@ -1,0 +1,10 @@
+CANDIDATE ",\n    userTok: 'https://abcdef0123456789:pw-secret-1@h/x',\n    noPw: 'https://deployuser:@h/x',\n    oauthUser: 'http
+  shown now: x-oauth-basic
+  old ",\n    userTok: 'https://abcdef0123456789:[secret ff85563c]@h/x',\n    noPw: 'https://deployuser:@h/x',\n    oauthUser:
+  new {"t":"long","s":",\n    userTok: 'https://[secret 887cdddb]:[secret ff85563c]@h/x',\n    noPw: 'https://[secret c7e67fca
+CANDIDATE ",\n    userTok: 'https://abcdef0123456789:pw-secret-1@h/x',\n    noPw: 'https://deployuser:@h/x',\n    oauthUser: 'http
+  shown now: x-oauth-basic
+  old ",\n    userTok: 'https://abcdef0123456789:[secret 5e26f81e]@h/x',\n    noPw: 'https://deployuser:@h/x',\n    oauthUser:
+  new {"t":"long","s":",\n    userTok: 'https://[secret d7cb81f8]:[secret 5e26f81e]@h/x',\n    noPw: 'https://[secret 79b569dd
+2220 literals, 4440 cells, 2 candidates
+exit 0

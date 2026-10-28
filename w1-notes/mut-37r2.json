@@ -1,0 +1,173 @@
+[
+ {
+  "id": "T1 badge ignores flagsCount",
+  "file": "public/harness.js",
+  "old": "    if (span.flagsCount && Number.isSafeInteger(span.flagsCount.red)) return span.flagsCount.red\n",
+  "new": "",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T2 no unreadable text",
+  "file": "public/harness.js",
+  "old": "  if (f.kind === 'unreadable') return 'The PR pane couldn\\'t be read for this span, so its changes are unknown.'\n",
+  "new": "",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T3 no pr no flags",
+  "file": "public/harness.js",
+  "old": "  if (total || !span.pr) {",
+  "new": "  if (total) {",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T4 separators raw",
+  "file": "public/harness.js",
+  "old": "const CONTROLS = /[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]/gu",
+  "new": "const CONTROLS = /[\\p{Cc}\\p{Cf}]/gu",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T4b separators raw drawn",
+  "file": "public/harness.js",
+  "old": "const OTHER_CONTROLS = /(?![\\u2068\\u2069])[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]/gu",
+  "new": "const OTHER_CONTROLS = /(?![\\u2068\\u2069])[\\p{Cc}\\p{Cf}]/gu",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T5 cut digest shown",
+  "file": "public/harness.js",
+  "old": "  if (cell.t === 'long') return `${isolated(hideCutDigests(String(cell.s)))}",
+  "new": "  if (cell.t === 'long') return `${isolated(hideDigests(String(cell.s)))}",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T6 pr missing as excuse",
+  "file": "public/harness.js",
+  "old": "  if (!span.pr) out.push(node('p', 'dataErr', 'Incomplete: the PR pane has no data for this span, so its changes are unknown.'))",
+  "new": "  if (!span.pr) out.push(node('p', 'dataErr', 'Incomplete: the PR pane has no data for this span, so nothing it did can excuse a change.'))",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T7 no unaligned line",
+  "file": "public/harness.js",
+  "old": "  if (span.aligned === false) {",
+  "new": "  if (false) {",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T8 one baseline",
+  "file": "public/harness.js",
+  "old": "  if (b && b.base && b.pr && b.base !== b.pr) return",
+  "new": "  if (false) return",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T9 more from list",
+  "file": "public/harness.js",
+  "old": "  const total = Math.max(flagTotal(span), flags.length)",
+  "new": "  const total = flags.length",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T10 class from data",
+  "file": "public/harness.js",
+  "old": "node('li', `flag ${f.severity === 'red' ? 'red' : 'amber'}`, flagText(f))",
+  "new": "node('li', `flag ${f.severity}`, flagText(f))",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T11 after window",
+  "file": "public/harness.js",
+  "old": "const after = p < end ? marks[p] : null",
+  "new": "const after = p < marks.length ? marks[p] : null",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T12 tie higher seq",
+  "file": "public/harness.js",
+  "old": "a.at - b.at || a.seq - b.seq)\n  const groups",
+  "new": "a.at - b.at || b.seq - a.seq)\n  const groups",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T13 secret field raw",
+  "file": "public/harness.js",
+  "old": "`${isolated(f.field)}: (secret, changed)`",
+  "new": "`${f.field}: (secret, changed)`",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T14 session error raw",
+  "file": "public/harness.js",
+  "old": "`${paneName(pane)}: ${isolated(session)}`",
+  "new": "`${paneName(pane)}: ${drawnText(session)}`",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T15 problem raw",
+  "file": "public/harness.js",
+  "old": "`${paneName(pane)}: ${isolated(problem)}`",
+  "new": "`${paneName(pane)}: ${drawnText(problem)}`",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T16 json raw",
+  "file": "public/harness.js",
+  "old": "  if (cell.t === 'json') return isolated(hideDigests(String(cell.s)))",
+  "new": "  if (cell.t === 'json') return hideDigests(String(cell.s))",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T17 failed read unguarded",
+  "file": "public/harness.js",
+  "old": "    } catch (err) {\n      if (S.mounted !== mounted) return\n",
+  "new": "    } catch (err) {\n",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ },
+ {
+  "id": "T18 polls twice",
+  "file": "public/harness.js",
+  "old": "    if (want && !A.timer) {",
+  "new": "    if (want) {",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ }
+]

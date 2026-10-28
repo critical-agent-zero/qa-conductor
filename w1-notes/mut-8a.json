@@ -1,0 +1,22 @@
+[
+  {"id": "M1 nearest flipped", "file": "lib/action-log.mjs", "old": "next.at - t < t - marks[before].at", "new": "next.at - t > t - marks[before].at", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M2 tie to next", "file": "lib/action-log.mjs", "old": "next.at - t < t - marks[before].at", "new": "next.at - t <= t - marks[before].at", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M3 since strict", "file": "lib/action-log.mjs", "old": "entry.at >= since", "new": "entry.at > since", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M4 no again", "file": "lib/action-log.mjs", "old": "const again = from > 0 ? all.filter(entry => entry.seq <= from && entry.at >= since) : []", "new": "const again = []", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M5 limit uncapped", "file": "lib/action-log.mjs", "old": "Math.min(limit, MAX_READ)", "new": "limit", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M6 cap total", "file": "lib/action-log.mjs", "old": "markCount[pane] >= maxMarks", "new": "marks.length >= maxMarks", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M7 known all", "file": "lib/action-log.mjs", "old": "const known = marks.findLastIndex(m => m.seq <= until) + 1", "new": "const known = marks.length", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M8 digits 8", "file": "lib/action-log.mjs", "old": "length >= 7) return ':number'", "new": "length >= 8) return ':number'", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M9 plain @ only", "file": "lib/action-log.mjs", "old": "if (/@|＠|%40/i.test(segment) || /@|＠/.test(s)) return ':email'", "new": "if (/@/.test(s)) return ':email'", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M10 bare query part kept", "file": "lib/action-log.mjs", "old": "if (eq === -1) return '…'", "new": "if (eq === -1) return part", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M11 clock not held", "file": "lib/action-log.mjs", "old": "const at = Math.max(now(), marks.at(-1)?.at ?? -Infinity)", "new": "const at = now()", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M12 gap per pane", "file": "lib/action-log.mjs", "old": "const kind = `${pane} ${type}`", "new": "const kind = pane", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M13 marksDropped shared", "file": "lib/action-log.mjs", "old": "{ marksDropped[pane]++; return null }", "new": "{ marksDropped.base++; return null }", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M14 more never", "file": "lib/action-log.mjs", "old": "const more = fresh.length > page.length", "new": "const more = false", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M15 until global", "file": "lib/action-log.mjs", "old": "const until = more ? page.at(-1).seq : seq", "new": "const until = seq", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M16 eq segment kept", "file": "lib/action-log.mjs", "old": "if (eq !== -1) return `${shownKey(segment.slice(0, eq))}=…`", "new": "", "tests": ["test/action-log.test.mjs"]},
+  {"id": "M17 server limit ignored", "file": "lib/server.mjs", "old": "read(after, { limit })", "new": "read(after)", "tests": ["test/server.test.mjs"]},
+  {"id": "M18 mark no-store dropped", "file": "lib/server.mjs", "old": "{ recorded: actions.mark(pane, type) !== null }, NO_STORE)", "new": "{ recorded: actions.mark(pane, type) !== null })", "tests": ["test/server.test.mjs"]},
+  {"id": "M19 harness throttle per pane", "file": "public/harness.js", "old": "const kind = `${pane} ${type}`\n    if (now - (lastMark", "new": "const kind = pane\n    if (now - (lastMark", "tests": ["test/harness.test.mjs"]},
+  {"id": "M20 recorder late bound", "file": "lib/server.mjs", "old": "const log = actions\n        return log === null ? null : entry => log.record(role, entry)", "new": "return actions === null ? null : entry => actions?.record(role, entry)", "tests": ["test/server.test.mjs"]}
+]

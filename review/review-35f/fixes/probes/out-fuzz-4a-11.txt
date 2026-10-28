@@ -1,0 +1,6 @@
+N=40000 seed=11: regressions 1, fixed 564
+---
+in   "a://Bearer &QUOT;a%22:Zq9SeCr3tValroot:@tcp(h)<a "
+old  "a://Bearer &QUOT;a%22:[secret a1c828c4]@tcp(h)<a "
+new  "a://Bearer &QUOT;a%22:Zq9SeCr3tValroot:@tcp(h)<a "
+exit 0

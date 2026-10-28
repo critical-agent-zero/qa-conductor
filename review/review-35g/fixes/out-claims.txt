@@ -1,0 +1,38 @@
+case                         4033285      7193877      2ec0bba      4a284f9      4ed6449      vfix35f(elem mut:element- mut:auth-con
+elem_unquoted_bearer         ok           ok           ok           ok           ok           CLEAR        CLEAR        ok          
+   4033285: "<input type=password value=[secret cb1d992e] [secret 083c0251]:\"/>"
+   elem-first: "<input type=password value=[secret cb1d992e] Zq9SeCr3tVal:\"/>" 
+   vfix: "<input type=password value=[secret cb1d992e] Zq9SeCr3tVal:\"/>"
+elem_unquoted_basic          ok           ok           ok           ok           ok           CLEAR        CLEAR        ok          
+   4033285: ";<input type=password value=[secret 33789537] [secret 083c0251],x\"/>"
+   elem-first: ";<input type=password value=[secret 33789537] Zq9SeCr3tVal,x\"/>" 
+   vfix: ";<input type=password value=[secret 33789537] Zq9SeCr3tVal,x\"/>"
+elem_unquoted_bearer_plain   ok           ok           ok           ok           ok           CLEAR        CLEAR        ok          
+   4033285: "<input type=password value=[secret cb1d992e] [secret 083c0251]>"
+   elem-first: "<input type=password value=[secret cb1d992e] Zq9SeCr3tVal>" 
+   vfix: "<input type=password value=[secret cb1d992e] Zq9SeCr3tVal>"
+elem_quoted_bearer           ok           ok           ok           ok           ok           ok           ok           ok          
+   4033285: "<input type=\"password\" value=\"[secret 9d659291]\">"
+elem_name_auth_unquoted      ok           ok           ok           ok           ok           CLEAR        CLEAR        ok          
+   4033285: "<input name=authorization value=[secret cb1d992e] [secret 69d91241]>"
+auth_after_word              ok           ok           CLEAR        CLEAR        CLEAR        CLEAR        ok           CLEAR       
+   4033285: "x Bearer //bearer [secret dab98821]://u:%26value\t="
+auth_after_word_plain        ok           ok           CLEAR        CLEAR        CLEAR        CLEAR        ok           CLEAR       
+   4033285: "x Bearer //bearer [secret 69d91241] y"
+auth_prose_then_token        ok           ok           ok           ok           ok           ok           ok           ok          
+   4033285: "Token expired; got Bearer [secret 69d91241]"
+auth_prose_word_token        ok           ok           ok           ok           ok           ok           ok           ok          
+   4033285: "Basic introduction Bearer [secret 69d91241]"
+auth_nontoken_then_basic     ok           ok           CLEAR        CLEAR        CLEAR        CLEAR        ok           CLEAR       
+   4033285: "Basic abcdefgh.basic [secret 69d91241]"
+auth_value_holds_scheme      ok           ok           CLEAR        CLEAR        CLEAR        CLEAR        ok           CLEAR       
+   4033285: "Bearer a.b.c.d.e.token [secret 69d91241]"
+auth_two_spaces_nontoken     CLEAR        CLEAR        CLEAR        CLEAR        CLEAR        CLEAR        CLEAR        CLEAR       
+   4033285: "token [secret eef0cf18] abcdefghij123456"
+auth_8char_nontoken_then     ok           ok           ok           ok           ok           ok           ok           ok          
+   4033285: "Bearer abcdefgh Bearer [secret 69d91241]"
+prose_kept_1                 CLEAR        CLEAR        CLEAR        CLEAR        CLEAR        CLEAR        CLEAR        CLEAR       
+   4033285: "Token expired again"
+prose_kept_2                 CLEAR        CLEAR        ok           CLEAR        CLEAR        CLEAR        CLEAR        CLEAR       
+   4033285: "Basic introduction to the topic"
+exit 0

@@ -1,0 +1,31 @@
+test: the internal network on a real runtime, in CI on Docker Engine and Podman
+
+A docker-integration job runs test/integration/docker-internal.test.mjs
+on Linux, against Docker Engine and against Podman through its
+Docker-compatible socket. It boots both panes on the topology and checks:
+- a sweep on a clean host succeeds;
+- with the host's listeners on 127.0.0.1, the probe says isolated and
+  internal: true;
+- the PR pane reaches neither the host's loopback, the base pane's
+  database, nor 169.254.169.254 (with controls from the base pane);
+- a listener on 0.0.0.0 is reachable at the PR network's gateway, and
+  the probe says reachable, naming it;
+- outside names don't resolve, and qa-pg-pr and qa-egress do (on
+  Podman, from the hosts file);
+- the proxy refuses an unlisted host and metadata, and lets a listed
+  address through;
+- a forwarder that can't start falls back, and QA_REQUIRE_ISOLATION=1
+  refuses the session;
+- teardown and sweep leave nothing.
+
+The test runs only when QA_DOCKER_IT=1 asks: it creates and removes the
+qa-* containers and networks. Asked, it fails rather than skips when no
+runtime answers, and the job fails on any skip.
+
+The README says where the topology is checked: in CI on Linux, and by
+hand on Docker Desktop and Podman machine (#43). Its check by hand reads
+curl's exit code. It also states the limit the run found: the host's own
+address on the PR pane's bridge.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

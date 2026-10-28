@@ -1,0 +1,28 @@
+base=79 args=30000 1
+N=30000 seed=1: regressions 0, fixed 7181
+exit 0
+base=79 args=40000 11 notaglt pct
+N=40000 seed=11: regressions 0, fixed 13934
+exit 0
+base=79 args=40000 7 notaglt
+N=40000 seed=7: regressions 0, fixed 10108
+exit 0
+base=79 args=40000 23
+N=40000 seed=23: regressions 0, fixed 9431
+exit 0
+base=4a args=30000 1
+N=30000 seed=1: regressions 0, fixed 1039
+exit 0
+base=4a args=40000 11 notaglt pct
+N=40000 seed=11: regressions 1, fixed 564
+---
+in   "a://Bearer &QUOT;a%22:Zq9SeCr3tValroot:@tcp(h)<a "
+old  "a://Bearer &QUOT;a%22:[secret a1c828c4]@tcp(h)<a "
+new  "a://Bearer &QUOT;a%22:Zq9SeCr3tValroot:@tcp(h)<a "
+exit 0
+base=4a args=40000 7 notaglt
+N=40000 seed=7: regressions 0, fixed 169
+exit 0
+base=4a args=40000 23
+N=40000 seed=23: regressions 0, fixed 1443
+exit 0

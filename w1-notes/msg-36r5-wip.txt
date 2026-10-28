@@ -1,0 +1,12 @@
+wip: #36 round 5 (note to self; fold before any PR push)
+
+On f9c79a5. Done: one queue across lists; seeded-first rank (seeded red,
+seeded moved, seeded amber, PR-own red, ...); inAnswerOrder (seeded
+flags first, row-losing before key-lost); ownOf without a base diff;
+takeAll (raw reads before masking); reason case C via baseRead. Capture
+tests 40/40. Left: new tests (both no-base cases, amber seeded, mutant
+assertions N4 N7 N12 N15 N23 N24 M11 M24, reason C), server test 20 ms
+race, README/body wording, merge #35 r6.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

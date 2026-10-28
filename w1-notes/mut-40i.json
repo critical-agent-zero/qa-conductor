@@ -1,0 +1,1 @@
+[{"id": "I1", "file": "lib/forwarder.mjs", "old": "idleTimer(socket, upstream, idleMs, () => { reset(socket); reset(upstream) })", "new": "socket.setTimeout(idleMs, () => { reset(socket); reset(upstream) })", "tests": ["test/forwarder.test.mjs"]}]

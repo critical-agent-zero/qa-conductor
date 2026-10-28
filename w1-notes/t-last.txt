@@ -1,0 +1,48 @@
+✔ seeded opens a probe for the pane with its db and takes S0; ready takes S1 and the boot span (12.543596ms)
+✔ snapshot gives the session span against the baseline; rebaseline makes now the baseline; neither is an event (9.971618ms)
+✔ an inspector that throws, hangs or returns nonsense fails nothing: its pane says why (2.014974ms)
+✔ a pane with no data leaves the other pane's flags, red, with nothing to excuse them (1.174969ms)
+✔ a hanging open or snapshot times out and is told to stop; a probe that comes too late is closed (104.723099ms)
+✔ an aborted boot calls the inspector no more (2.151349ms)
+✔ a pane whose ready read failed keeps its S0: its first later snapshot is its baseline, its boot span shows, and its error stays (3.835236ms)
+✔ a pane whose Snapshot now fails has no session span, not a stale one; a re-baseline is both panes or neither (3.007975ms)
+✔ close closes each probe once, drops the snapshots, and a snapshot racing it answers 409 at once (4.332333ms)
+✔ concurrent snapshots share one run; a re-baseline while one runs answers 409 (0.91731ms)
+✔ the view lists at most 50 rows and changes a list, with whole counts; viewJson is built once for each state and trust (17.140954ms)
+✔ a pane whose S1 came late makes its spans unaligned: incomplete, and nothing excused, even trusted (2.716329ms)
+✔ a span whose PR pane couldn't be read has a red unreadable flag, never no flags (22.569739ms)
+✔ the answer is bounded: field lists, flags and collections are listed in part within each span's share, with whole counts (1351.085813ms)
+✔ each span has its own share of the byte budget, and a list cut by it says so (18.949764ms)
+✔ an answer that fails to build, even without its lists, is cached as a failure for its state (2.727646ms)
+✔ errors.boot keeps the seeded read's reason after the ready read fails too, and promises no boot span without an S0 (7.398149ms)
+✔ a late pane gets its boot span from a re-baseline too, and a re-baseline never moves an earlier boot span (36.466688ms)
+✔ the ready event says when a pane's ready read failed; an aborted ready changes nothing; open() gets the timed signal (36.06404ms)
+✔ an answer lists at most 1,000 collections a diff, the changed ones first, with the whole count (168.4043ms)
+✔ flagsCount counts each severity, whatever is listed (1.32968ms)
+✔ a span lists its red flags first, so the cap never hides one behind amber ones (68.097198ms)
+✔ wide keys can't make the answer big: each collection's entry counts against the budget, and listing stops, said so (1481.582825ms)
+✔ an answer too big to build falls back to one without lists: its counts, its first red flags and a red unlisted flag (3.600146ms)
+✔ 10,999 padding tables can't push a real delete out of the answer: its flags lead, and users is listed in the diff and divergence (524.228773ms)
+✔ red unverified flags past 20 are folded into one, in their place, with how many and the first five names (4.250487ms)
+✔ a diff lists changed rows before collections with only an amber flag (179.644226ms)
+✔ a diff lists its flagged collections first, before ones that only changed (134.034969ms)
+✔ when both ready reads fail, the boot span is unaligned, so nothing in it is excused, and baselineAt stays unset (2.710314ms)
+✔ a span neither pane could be read for, after a snapshot, is unreadable and red, not null (26.522914ms)
+✔ a divergence lists 50 changes with the whole changesCount, and every list, divergence and flags too, stays within its span's half (22.271784ms)
+✔ an answer lists at most 50 problems a pane, with the whole count; an error's text is cut at 500 characters (2.181813ms)
+✔ the work is bounded: the session diffs are made once for each state, the boot span once for each settle, whatever the trust (2.345733ms)
+✔ a delete is listed before many column and mass-change flags, and its collection before theirs, within and past the caps (7.143421ms)
+✔ a seeded collection's flagged rows are listed before the PR's own flagged tables, in the diff and the divergence (118.441506ms)
+✔ the lists go by rank across the PR diff, the divergence and the base diff, so padding in one can't starve another's flagged entry (48.2588ms)
+✔ the budget counts bytes: an answer of non-ASCII text stays within it (70.874393ms)
+✔ the unreadable flag's reason is the PR pane's: baseline when both panes' baselines came from this snapshot, failed when only the base was read (4.5962ms)
+✔ the flags are listed before the lists; the divergence ranks counts-only changes and says when it was cut; an empty added collection ranks before unchanged ones (690.769622ms)
+✔ the PR-only summary keeps its count past 20 folded flags; one pane's failed ready read still sets baselineAt (19.67356ms)
+ℹ tests 40
+ℹ suites 0
+ℹ pass 40
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5390.266056

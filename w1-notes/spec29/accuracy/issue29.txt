@@ -1,0 +1,48 @@
+title:	Isolate the base pane where containers reach the host's loopback, and decide the process Provisioner's guarantee (blocks #8)
+state:	OPEN
+author:	critical-agent-zero
+labels:	enhancement
+comments:	0
+assignees:	
+projects:	
+milestone:	
+issue-type:	
+parent:	
+sub-issues:	
+sub-issues-completed:	
+blocked-by:	
+blocking:	
+number:	29
+--
+## Summary
+
+#28 (for #27) gives each Docker pane its own network and its own database password, so on native Linux Docker the PR pane can no longer reach the base pane's database or app. Two ways for PR code to reach the base pane remain:
+
+1. **Container runtimes that forward to the host's loopback.** On Docker Desktop (through `host.docker.internal`) and some rootless runtimes, a container can connect to ports on the host's `127.0.0.1`. There the PR pane's code can reach:
+   - **the base pane's proxy,** which serves the base app with the operator's signed-in session from the base pane's cookie jar;
+   - **the harness and its API.** In tailscale mode the identity gate trusts `Tailscale-User-Login` from anything that reaches loopback, so PR code can send any login. The README's Security section already says this.
+2. **The process Provisioner.** Both panes' processes run on the same host as the same user, so PR code can reach the base pane's database and listeners by design.
+
+## Why it matters
+
+#8 (session data diff and action log) compares the PR pane against the base pane. If PR code can act in the base pane, it can change the very baseline the diffs are measured against. The owner decided (#8, question H) that these gaps close **before #8 ships**. The trust gate stays the real boundary against untrusted PRs. This issue is about the integrity of the comparison, and about defence in depth for trusted-but-buggy PRs.
+
+## Needs a design first
+
+The options are not settled. A design comment on this issue should compare at least:
+
+- **A per-session capability for every conductor listener** (harness, its API, both pane proxies).
+  - It is a secret only the reviewer's browser holds, e.g. a random cookie per listener origin, minted when the harness opens.
+  - A request without it is refused, so server-side PR code that reaches loopback gets nothing.
+  - It must work with the pane iframes, mirroring, the cookie-jar isolation (RT-9), and tailscale serve.
+- **Listeners containers can't reach.** For example, Unix sockets behind `tailscale serve`, or binding to an address the runtime doesn't forward. Check what Docker Desktop and rootless Podman actually forward.
+- **Runtime settings.** For example, refusing to start on a runtime that forwards loopback unless the operator opts in, or overriding `host.docker.internal`, and how reliable each is.
+- **The process Provisioner.** What is realistic, e.g. separate OS users, a sandbox, or "documented, unsupported for #8's data checks". State plainly which guarantee #8 then gives per provisioner.
+
+## Acceptance criteria
+
+- [ ] With the Docker Provisioner on Docker Desktop (and the rootless runtimes the README names), code in the PR pane container can't use the base pane's proxy, the harness or its API: requests are refused. This is shown by a test through the existing fakes, plus a documented manual check.
+- [ ] Tailscale mode: a forged `Tailscale-User-Login` from PR code on loopback no longer gets through.
+- [ ] The process Provisioner's guarantee for #8 is decided and documented: isolated, or explicitly unsupported for data checks.
+- [ ] README Security and Known limits are updated to match.
+

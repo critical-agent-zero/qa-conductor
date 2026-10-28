@@ -1,0 +1,82 @@
+SURVIVED [] [] 16s | key: 31 spaces
+SURVIVED [] [] 16s | quote: percent only %22
+SURVIVED [] [] 16s | flag: double dash only
+killed ["the tag scan is linear in text dense with tags: 24"] ["6330 ms"] 22s | tag: attributes cross < (round-4 regression)
+SURVIVED [] [] 14s | flag: no start guard
+SURVIVED [] [] 15s | flag: space only
+SURVIVED [] [] 13s | mysql: mysql only
+SURVIVED [] [] 13s | mysql: -p then anything
+SURVIVED [] [] 14s | mysql: case-sensitive
+SURVIVED [] [] 15s | pem: RSA only
+SURVIVED [] [] 16s | pem: any BEGIN
+SURVIVED [] [] 17s | url: oauth case-sensitive
+SURVIVED [] [] 15s | url: empty user masked
+SURVIVED [] [] 14s | tokenLike: no gh prefix
+SURVIVED [] [] 17s | tokenLike: no github_pat
+SURVIVED [] [] 17s | tokenLike: no slack
+SURVIVED [] [] 16s | tokenLike: no sk
+SURVIVED [] [] 14s | tokenLike: no digit needed
+SURVIVED [] [] 11s | authToken: base64 for every scheme
+SURVIVED [] [] 10s | authToken: basic case-sensitive
+SURVIVED [] [] 10s | authToken: any length
+SURVIVED [] [] 10s | authToken: no shape check
+SURVIVED [] [] 8s | dsn: tcp only
+SURVIVED [] [] 7s | jwt: payload any
+SURVIVED [] [] 7s | attr: no id
+SURVIVED [] [] 9s | attr: name case-sensitive
+SURVIVED [] [] 9s | attr: value case-sensitive
+SURVIVED [] [] 8s | attr: double quotes only
+SURVIVED [] [] 7s | attr: tag needs a space-free name
+killed ["the tag scan is linear in text dense with tags: 24"] ["2590 ms"] 9s | pair: strict needs name (not key)
+SURVIVED [] [] 11s | pair: strict needs Name (not Key)
+SURVIVED [] [] 8s | pair: strict without value
+SURVIVED [] [] 9s | pair: strict name need not be text
+SURVIVED [] [] 10s | cols: shared when base dropped any
+SURVIVED [] [] 9s | order: key-lost not a loss
+SURVIVED [] [] 8s | order: unverified with columns
+SURVIVED [] [] 6s | tally: merge drops earlier items
+SURVIVED [] [] 6s | tally: merge drops new items
+SURVIVED [] [] 5s | tally: merge null-safe dropped (null kept as items)
+killed ["flagging many cleared fields is linear: 10,000 row"] ["7855 ms"] 13s | tally: quadratic spread (perf)
+---
+SURVIVED [] [] 1   quote: percent only %22
+SURVIVED [] [] 1   key: 31 spaces
+killed ["the tag   tag: attributes cross < (round-4 regression)
+SURVIVED [] [] 1   flag: double dash only
+SURVIVED [] [] 1   flag: no start guard
+SURVIVED [] [] 1   flag: space only
+SURVIVED [] [] 1   mysql: mysql only
+SURVIVED [] [] 1   mysql: -p then anything
+SURVIVED [] [] 1   mysql: case-sensitive
+SURVIVED [] [] 1   pem: RSA only
+SURVIVED [] [] 1   pem: any BEGIN
+SURVIVED [] [] 1   url: oauth case-sensitive
+SURVIVED [] [] 1   url: empty user masked
+SURVIVED [] [] 1   tokenLike: no gh prefix
+SURVIVED [] [] 1   tokenLike: no github_pat
+SURVIVED [] [] 1   tokenLike: no slack
+SURVIVED [] [] 1   tokenLike: no sk
+SURVIVED [] [] 1   tokenLike: no digit needed
+SURVIVED [] [] 1   authToken: base64 for every scheme
+SURVIVED [] [] 1   authToken: basic case-sensitive
+SURVIVED [] [] 1   authToken: any length
+SURVIVED [] [] 1   authToken: no shape check
+SURVIVED [] [] 8   dsn: tcp only
+SURVIVED [] [] 7   jwt: payload any
+SURVIVED [] [] 7   attr: no id
+SURVIVED [] [] 9   attr: name case-sensitive
+SURVIVED [] [] 9   attr: value case-sensitive
+SURVIVED [] [] 8   attr: double quotes only
+SURVIVED [] [] 7   attr: tag needs a space-free name
+killed ["the tag   pair: strict needs name (not key)
+SURVIVED [] [] 1   pair: strict needs Name (not Key)
+SURVIVED [] [] 8   pair: strict without value
+SURVIVED [] [] 9   pair: strict name need not be text
+SURVIVED [] [] 1   cols: shared when base dropped any
+SURVIVED [] [] 9   order: key-lost not a loss
+SURVIVED [] [] 8   order: unverified with columns
+SURVIVED [] [] 6   tally: merge drops earlier items
+SURVIVED [] [] 6   tally: merge drops new items
+SURVIVED [] [] 5   tally: merge null-safe dropped (null kept as items)
+killed ["flaggin   tally: quadratic spread (perf)
+total 40 survived 37 skipped 0

@@ -1,0 +1,25 @@
+fix: keys after a percent-escape and tags with a '<' in an attribute are masked again, and seeded dropped columns are named first
+
+Round 5 of #35's review:
+- A key right after a percent-escape counts (`x%3dpassword=`,
+  `value%3a…--db-token=`, a regression of round 4's %3a and %3d), and a
+  name that is a word is read past an escape's hex digits or letter
+  (`%26pin%3D`, `\npw=`).
+- A tag is read by its name, before whitespace, '/' or '>', and its
+  attributes aren't scanned, so a '<' in one no longer hides a
+  secret-named tag (a regression of round 4's `[^<>]`).
+- column-dropped names first the dropped fields the base pane's before
+  snapshot declares (`seeded`, their count), so padding columns the PR
+  added can't hide a seeded one. Diff entries carry `fieldsBefore`.
+- A base-pane collection the PR's snapshots may have left out has its
+  unverified flag with what loses rows; that group is LOSES_ROWS now.
+- The pair rule takes any name-like key, and a row shaped as a pair has
+  its value fields masked. Go DSNs up to their last '@', any network and
+  `@/`, never across a ':'; attribute values quoted either way or not; a
+  flag before a tab; PGP keys.
+- README: what masking still misses.
+- Tests for each, the review's mutant cases, and the tag timing test's
+  bound at 3 s.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

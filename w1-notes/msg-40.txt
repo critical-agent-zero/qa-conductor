@@ -1,0 +1,26 @@
+fix: an internal topology that falls back is never isolated, and the PR pane gets no DNS out
+
+Round 2 of #40's review, and the items #39's round 3 carried over.
+
+- A topology that can't be set up caps the check's result at unknown,
+  saying egress isn't restricted, and is always logged (a new `log`
+  option). The undo must remove the internal network, and refuses one
+  still there, or the boot fails.
+- On Docker, the PR pane's containers run with --dns 192.0.2.1, the
+  workaround for CVE-2024-29018; Podman's get none.
+- "Up" means read back: the fresh network is internal, and the forwarder
+  runs and says it is ready within forwarderReadyMs. Triage adds its log
+  tail.
+- The podman-docker shim's failing `info` no longer sinks the verdict
+  with the topology up.
+- The proxy must answer the probe for every target, else unknown, naming
+  the silent ones.
+- The forwarder: idle means nothing moved through a tunnel or an answer,
+  so backpressure from a slow but steady reader doesn't trip it, a
+  stalled event loop gets a grace, and the timer's listener survives a
+  re-arm. Resets rather than clean ends on the failure and idle paths;
+  whitespace in forward.to and lookalike slashes refused.
+- README: "If it can't be set up", DNS, readiness, cleanup and sweep.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

@@ -1,0 +1,19 @@
+fix: the sandbox profile shuts its ports on any address, and macOS 14 is tracked, not claimed
+
+Round 3 of #41's review:
+- The profile denied `localhost:<port>`, which an IPv4-mapped IPv6
+  address (::ffff:127.0.0.1) got past on macOS 12, to every named port.
+  It denies `*:<port>` now: those port numbers on any address, remote
+  hosts too, which the README states as the trade-off.
+- The docs test tries every named port over 127.0.0.1, ::1, localhost,
+  ::ffff:127.0.0.1, ::ffff:7f00:1, 127.1 and 0.0.0.0, QA_SANDBOX_ROUNDS
+  times (30 in CI's job), and a failure names what each odd try reached,
+  the addresses Node tried in turn, its round and place, and the ports.
+- macOS 14 isn't listed as checked: CI's macos-14 runner let a named port
+  through over localhost in 2 of 5 runs with the old form. It stays
+  tracked in #43, and the job is advisory until it runs reliably.
+- "Today" keeps round 2's hedge: the internal network is meant to close
+  the path, and Linux CI can't show it.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

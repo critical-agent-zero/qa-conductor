@@ -1,0 +1,380 @@
+[
+ {
+  "id": "A1",
+  "file": "lib/data-diff.mjs",
+  "old": "(?<![\\w.-])(?<!\\\\(?=\\\\))${QUOTE}",
+  "new": "(?<![\\w.-])${QUOTE}",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "A2",
+  "file": "lib/data-diff.mjs",
+  "old": "(?<![\\w.-])(?<!\\\\(?=\\\\))${QUOTE}",
+  "new": "(?<![\\w.\\\\-])${QUOTE}",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "A3",
+  "file": "lib/data-diff.mjs",
+  "old": "|&(?:quot|apos|#0{0,4}3[49]|#x0{0,4}2[27]);)`",
+  "new": ")`",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "A4",
+  "file": "lib/data-diff.mjs",
+  "old": "${QUOTE}?\\]?\\s{0,8}[:=]",
+  "new": "${QUOTE}?\\]?[:=]",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "B1",
+  "file": "lib/data-diff.mjs",
+  "old": "<(?:[\\w.-]{1,64}:)?([\\w.-]{1,128})(?:\\s[^>]{0,256})?>",
+  "new": "<(?:[\\w.-]{1,64}:)?([\\w.-]{1,128})>",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "B2",
+  "file": "lib/data-diff.mjs",
+  "old": "<(?:[\\w.-]{1,64}:)?([\\w.-]{1,128})(?:\\s[^>]{0,256})?>",
+  "new": "<([\\w.-]{1,128})(?:\\s[^>]{0,256})?>",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "C1",
+  "file": "lib/data-diff.mjs",
+  "old": "(?:([^\\s/:@]{0,256}):([^\\s/]{1,256})|",
+  "new": "(?:([^\\s/:@]{1,256}):([^\\s/]{1,256})|",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "C2",
+  "file": "lib/data-diff.mjs",
+  "old": "(?:([^\\s/:@]{0,256}):([^\\s/]{1,256})|",
+  "new": "(?:([^\\s/:@]{0,256}):([^\\s/@]{1,256})|",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "C3",
+  "file": "lib/data-diff.mjs",
+  "old": "|([^\\s/:@]{16,256}))@/gi",
+  "new": "|([^\\s/:@]{1,256}))@/gi",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "C4",
+  "file": "lib/data-diff.mjs",
+  "old": "|([^\\s/:@]{16,256}))@/gi",
+  "new": "|(?!))()@/gi",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "D1",
+  "file": "lib/data-diff.mjs",
+  "old": "/\\b(bearer|basic|token)\\s{1,4}",
+  "new": "/\\b(Bearer|Basic|Token)\\s{1,4}",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "D2",
+  "file": "lib/data-diff.mjs",
+  "old": "|[A-Za-z0-9._~+/=-]{16,})/gi",
+  "new": "|[A-Za-z0-9._~+/=-]{8,})/gi",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "D3",
+  "file": "lib/data-diff.mjs",
+  "old": "((?=[A-Za-z0-9._~+/=-]{0,1024}\\d)[A-Za-z0-9._~+/=-]{8,}|",
+  "new": "((?=[A-Za-z0-9._~+/=-]{0,1024}\\d)(?!)|",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "E1",
+  "file": "lib/data-diff.mjs",
+  "old": "const PAIR_NAMES = new Set(['name', 'key', 'field', 'k'])",
+  "new": "const PAIR_NAMES = new Set(['name', 'key'])",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "E2",
+  "file": "lib/data-diff.mjs",
+  "old": "const PAIR_VALUES = new Set(['value', 'val', 'v'])",
+  "new": "const PAIR_VALUES = new Set(['value'])",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "E3",
+  "file": "lib/data-diff.mjs",
+  "old": "    const lower = k.toLowerCase()\n",
+  "new": "    const lower = k\n",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "F1",
+  "file": "lib/data-diff.mjs",
+  "old": "      if (isTwice(value)) return { ...cellOfJsonText(toJson(held, where, 0)), enc: 2 }\n",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "F2",
+  "file": "lib/data-diff.mjs",
+  "old": "return isTwice(s) ? JSON.stringify(toJson(held, where, depth + 1)) : toJson(held, where, depth + 1)",
+  "new": "return toJson(held, where, depth + 1)",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "G1",
+  "file": "lib/data-diff.mjs",
+  "old": "    const cacheable = collection.length <= CACHED_NAME\n",
+  "new": "    const cacheable = true\n",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "G2",
+  "file": "lib/data-diff.mjs",
+  "old": "if (cacheable && field.length <= CACHED_NAME && fieldsCached < FIELD_CACHE)",
+  "new": "if (cacheable && fieldsCached < FIELD_CACHE)",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "H1",
+  "file": "lib/data-diff.mjs",
+  "old": "    if (!a) { put(collections, name, mayOmit(after) ? omittedChange(b, null, 'after') : changeOf('dropped', b, null, b.key)); continue }",
+  "new": "    if (!a) { put(collections, name, changeOf('dropped', b, null, b.key)); continue }",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "H2",
+  "file": "lib/data-diff.mjs",
+  "old": "    if (!b && mayOmit(before)) { put(collections, name, omittedChange(null, a, 'before')); continue }\n",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "H3",
+  "file": "lib/data-diff.mjs",
+  "old": "  return { collections, problems, omitted: total - n }",
+  "new": "  return { collections, problems, omitted: 0 }",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "H4",
+  "file": "lib/data-diff.mjs",
+  "old": "problems: ['the snapshot has no collections object'], omitted: null }",
+  "new": "problems: ['the snapshot has no collections object'], omitted: 0 }",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "H5",
+  "file": "lib/data-diff.mjs",
+  "old": "    if (b?.omitted || p?.omitted) status = 'unknown'\n",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "H6",
+  "file": "lib/data-diff.mjs",
+  "old": "  if (!d || d.omitted) return { inserted: 0, updated: 0, deleted: 0 }",
+  "new": "  if (!d) return { inserted: 0, updated: 0, deleted: 0 }",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "H7",
+  "file": "lib/data-diff.mjs",
+  "old": "    if (c.omitted) continue\n",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "H8",
+  "file": "lib/data-diff.mjs",
+  "old": "const shared = !c.omitted && !b.omitted && Boolean(b.truncated)",
+  "new": "const shared = Boolean(b.truncated)",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "H9",
+  "file": "lib/data-diff.mjs",
+  "old": "  const total = names.length\n",
+  "new": "  const total = names.filter(name => name.length <= MAX_NAME).length\n",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "I1",
+  "file": "lib/data-diff.mjs",
+  "old": "    if (b === undefined) { prOnly.push(name); continue }\n",
+  "new": "    if (b === undefined) { flags.push({ collection: name, kind: 'unverified', severity: 'red', shared: false, pr: 1, base: 0 }); continue }\n",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "I2",
+  "file": "lib/data-diff.mjs",
+  "old": "    || prOwn(x) - prOwn(y)\n",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "I3",
+  "file": "lib/data-diff.mjs",
+  "old": "    || late(x) - late(y)\n",
+  "new": "",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "I4",
+  "file": "lib/data-diff.mjs",
+  "old": "  const order = (x, y) => (x.severity === y.severity ? 0 : x.severity === 'red' ? -1 : 1)\n    ||",
+  "new": "  const order = (x, y) =>",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "I5",
+  "file": "lib/data-diff.mjs",
+  "old": "names: prOnly.slice(0, 5) })",
+  "new": "names: prOnly.slice(0, 4) })",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "J1",
+  "file": "lib/data-diff.mjs",
+  "old": "  if (named.length > MAX_KEY_FIELDS) {",
+  "new": "  if (named.length > MAX_KEY_FIELDS + 1) {",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "J2",
+  "file": "lib/data-diff.mjs",
+  "old": "  if (fields && fields.length > MAX_FIELDS) {",
+  "new": "  if (fields && fields.length > MAX_FIELDS + 1) {",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "J3",
+  "file": "lib/data-diff.mjs",
+  "old": "  let size = sizeOf(named) + sizeOf(fields)\n",
+  "new": "  let size = 0\n",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "J4",
+  "file": "lib/data-diff.mjs",
+  "old": "  const long = names.filter(name => name.length > MAX_NAME).length",
+  "new": "  const long = names.filter(name => name.length > MAX_NAME + 1).length",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "K1",
+  "file": "lib/data-diff.mjs",
+  "old": "    count = Math.max(Number.isSafeInteger(c?.count) && c.count >= 0 ? c.count : 0, rows)",
+  "new": "    count = rows",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "K2",
+  "file": "lib/data-diff.mjs",
+  "old": "      const had = new Set(b.fields)\n      const has = new Set(a.fields)\n      out.fieldsDropped = b.fields.filter(f => !has.has(f))\n      out.fieldsAdded = a.fields.filter(f => !had.has(f))",
+  "new": "      out.fieldsDropped = b.fields.filter(f => !a.fields.includes(f))\n      out.fieldsAdded = a.fields.filter(f => !b.fields.includes(f))",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "K3",
+  "file": "lib/data-diff.mjs",
+  "old": "    if (!c.truncated || c.status === 'dropped') continue\n    const b = own(baseDiff.collections, name)\n    if (b === undefined)",
+  "new": "    if (!c.truncated) continue\n    const b = own(baseDiff.collections, name)\n    if (b === undefined)",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ },
+ {
+  "id": "K4",
+  "file": "lib/data-diff.mjs",
+  "old": "&& b.countBefore === c.countBefore && b.countAfter === c.countAfter",
+  "new": "&& b.countAfter === c.countAfter",
+  "tests": [
+   "test/data-diff.test.mjs"
+  ]
+ }
+]

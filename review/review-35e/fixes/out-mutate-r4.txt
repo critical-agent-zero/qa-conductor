@@ -1,0 +1,36 @@
+killed ["mutants: entity quotes, triple-encoded JSON, long "] ["apos"] 4s | r4: scan: no &apos;
+killed ["mutants: entity quotes, triple-encoded JSON, long "] ["hex"] 5s | r4: scan: no hex entity
+killed ["mutants: entity quotes, triple-encoded JSON, long "] ["The input was expected to not match the "] 2s | r4: scan: QUOTE run cut to one
+killed ["mutants: entity quotes, triple-encoded JSON, long "] ["Expected values to be strictly equal:"] 2s | r4: enc: only short cells
+killed ["mutants: entity quotes, triple-encoded JSON, long "] ["Expected values to be strictly deep-equa"] 2s | r4: enc: enc 1 for plain too
+killed ["name and value pairs: a HAR cookie of 8 keys and a"] ["The input was expected to not match the "] 2s | r4: pair: at most 2 keys
+killed ["name and value pairs: a HAR cookie of 8 keys and a"] ["The input did not match the regular expr"] 1s | r4: pair: name need not be a string
+killed ["name and value pairs: a HAR cookie of 8 keys and a"] ["The input did not match the regular expr"] 2s | r4: pair: any number of keys
+killed ["name and value pairs: a HAR cookie of 8 keys and a"] ["Expected values to be strictly equal:"] 1s | r4: pair: null value masked
+killed ["name and value pairs: a HAR cookie of 8 keys and a"] ["The input was expected to not match the "] 1s | r4: pair: last value key wins
+killed ["mutants: entity quotes, triple-encoded JSON, long "] ["Expected values to be strictly equal:"] 1s | r4: divergence: only PR omitted unknown
+killed ["mutants: entity quotes, triple-encoded JSON, long "] ["Expected values to be strictly equal:"] 1s | r4: omitted: thrown read as 0
+killed ["mutants: entity quotes, triple-encoded JSON, long "] ["Expected values to be strictly deep-equa"] 2s | r4: order: cleared not late
+killed ["mutants: entity quotes, triple-encoded JSON, long "] ["Expected values to be strictly deep-equa"] 2s | r4: cap: key not charged
+killed ["mutants: entity quotes, triple-encoded JSON, long "] ["Expected values to be strictly deep-equa"] 2s | r4: cap: count-only charged its fields
+killed ["mutants: entity quotes, triple-encoded JSON, long "] ["Expected values to be strictly equal:"] 2s | r4: url: token alone from 8
+killed ["mutants: entity quotes, triple-encoded JSON, long "] ["Expected values to be strictly equal:"] 2s | r4: url: token alone from 15
+---
+killed ["mutants   r4: scan: no &apos;
+killed ["mutants   r4: scan: no hex entity
+killed ["mutants   r4: scan: QUOTE run cut to one
+killed ["mutants   r4: enc: only short cells
+killed ["mutants   r4: enc: enc 1 for plain too
+killed ["name an   r4: pair: at most 2 keys
+killed ["name an   r4: pair: any number of keys
+killed ["name an   r4: pair: name need not be a string
+killed ["name an   r4: pair: null value masked
+killed ["name an   r4: pair: last value key wins
+killed ["mutants   r4: omitted: thrown read as 0
+killed ["mutants   r4: divergence: only PR omitted unknown
+killed ["mutants   r4: order: cleared not late
+killed ["mutants   r4: cap: key not charged
+killed ["mutants   r4: cap: count-only charged its fields
+killed ["mutants   r4: url: token alone from 8
+killed ["mutants   r4: url: token alone from 15
+total 17 survived 0 skipped 0

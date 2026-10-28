@@ -1,0 +1,182 @@
+[
+ {
+  "id": "S1 trust ignores windows",
+  "file": "lib/data-capture.mjs",
+  "old": "{ trusted: trust === 'trusted' && aligned }",
+  "new": "{ trusted: trust === 'trusted' }",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S2 complete ignores windows",
+  "file": "lib/data-capture.mjs",
+  "old": "complete: Boolean(base && pr) && aligned,",
+  "new": "complete: Boolean(base && pr),",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S3 boot run not kept",
+  "file": "lib/data-capture.mjs",
+  "old": "      bootRun[pane] = run\n",
+  "new": "",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S4 session by boot runs",
+  "file": "lib/data-capture.mjs",
+  "old": "both(session, baseRun)",
+  "new": "both(session, bootRun)",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S5 no unreadable",
+  "file": "lib/data-capture.mjs",
+  "old": ": [unreadable()]",
+  "new": ": []",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S6 one budget",
+  "file": "lib/data-capture.mjs",
+  "old": "    const span = (base, pr, aligned) => {\n      if (!base && !pr) return null\n      // each span its own share of the budget\n      const budget = { left: Math.floor(viewBytes / 2) }\n",
+  "new": "    const budget = { left: viewBytes }\n    const span = (base, pr, aligned) => {\n      if (!base && !pr) return null\n",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S7 fields whole",
+  "file": "lib/data-capture.mjs",
+  "old": "      fieldsDropped: part(c.fieldsDropped), fieldsAdded: part(c.fieldsAdded),\n",
+  "new": "",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S8 flags whole",
+  "file": "lib/data-capture.mjs",
+  "old": "flags: listedFlags(flags, budget),",
+  "new": "flags,",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S9 amber not counted",
+  "file": "lib/data-capture.mjs",
+  "old": "amber: flags.length - red",
+  "new": "amber: 0",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S10 collections whole",
+  "file": "lib/data-capture.mjs",
+  "old": "  if (names.length <= LISTED_COLLECTIONS) return names",
+  "new": "  return names",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S11 no cut marker",
+  "file": "lib/data-capture.mjs",
+  "old": "    if (cut) value.cut = true\n",
+  "new": "",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S12 failure not cached",
+  "file": "lib/data-capture.mjs",
+  "old": "        cached = { id, error }",
+  "new": "        cached = null; throw error",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S13 errors overwritten",
+  "file": "lib/data-capture.mjs",
+  "old": "errors.boot[pane] = errors.boot[pane] ? `${errors.boot[pane]}; ${why}` : why",
+  "new": "errors.boot[pane] = why",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S14 promise without S0",
+  "file": "lib/data-capture.mjs",
+  "old": "const why = seeded[pane] ?",
+  "new": "const why = true ?",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S15 failed close untracked",
+  "file": "lib/server.mjs",
+  "old": "closingBoots.add(capture.close().catch(() => {}))",
+  "new": "capture.close().catch(() => {})",
+  "tests": [
+   "test/server.test.mjs"
+  ]
+ },
+ {
+  "id": "S16 settling ignored",
+  "file": "lib/server.mjs",
+  "old": "...ending.map(c => c.close().catch(() => {})), ...settling]",
+  "new": "...ending.map(c => c.close().catch(() => {}))]",
+  "tests": [
+   "test/server.test.mjs"
+  ]
+ },
+ {
+  "id": "S17 flags unsorted",
+  "file": "lib/data-capture.mjs",
+  "old": "  return within([...red, ...flags.filter(f => f.severity !== 'red')], LISTED_FLAGS, budget).out",
+  "new": "  return within(flags, LISTED_FLAGS, budget).out",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S18 late settle run 0",
+  "file": "lib/data-capture.mjs",
+  "old": "if (snap && !baseline[pane]) { settle(pane, snap, run, at); latest[pane] = null }",
+  "new": "if (snap && !baseline[pane]) { settle(pane, snap, 1, at); latest[pane] = null }",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S19 changed not first",
+  "file": "lib/data-capture.mjs",
+  "old": "  const keep = new Set([...names.filter(name => changed(collections[name])), ...names].slice(0, LISTED_COLLECTIONS))",
+  "new": "  const keep = new Set(names.slice(0, LISTED_COLLECTIONS))",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ },
+ {
+  "id": "S20 baselines missing",
+  "file": "lib/data-capture.mjs",
+  "old": "      baselines: { ...baseAt },\n",
+  "new": "",
+  "tests": [
+   "test/data-capture.test.mjs"
+  ]
+ }
+]

@@ -1,0 +1,43 @@
+=== A. fold: the PR adds 5 padding columns to users at boot, the click drops them and the seeded `email`
+old: 6 flags; first 10: [["users","column-dropped","red",false,"aa_tmp_0000"],["users","column-dropped","red",false,"aa_tmp_0001"],["users","column-dropped","red",false,"aa_tmp_0002"],["users","column-dropped","red",false,"aa_tmp_0003"],["users","column-dropped","red",false,"aa_tmp_0004"],["users","column-dropped","red",false,"email"]]
+  old users fieldsDropped in the diff: ["email","aa_tmp_0000","aa_tmp_0001","aa_tmp_0002","aa_tmp_0003","aa_tmp_0004"]; divergence users pr-only, email change {"kind":"field-dropped","key":null,"field":"email","status":"pr-only","base":null,"pr":null}
+new: 1 flags; first 10: [["users","column-dropped","red",false,"count=6",["aa_tmp_0000","aa_tmp_0001","aa_tmp_0002","aa_tmp_0003","aa_tmp_0004"]]]
+  new users fieldsDropped in the diff: ["email","aa_tmp_0000","aa_tmp_0001","aa_tmp_0002","aa_tmp_0003","aa_tmp_0004"]; divergence users pr-only, email change {"kind":"field-dropped","key":null,"field":"email","status":"pr-only","base":null,"pr":null}
+
+=== A2. same with 1,600 padding columns that sort after (zz_) and before (aa_) `email`
+new zz_: 1 flags; first 4: [["users","column-dropped","red",false,"count=1601",["email","zz_0000","zz_0001","zz_0002","zz_0003"]]]
+new aa_: 1 flags; first 4: [["users","column-dropped","red",false,"count=1601",["aa_0000","aa_0001","aa_0002","aa_0003","aa_0004"]]]
+
+=== B. fold and shared: base drops x, PR drops x and email (trusted)
+old: 2 flags; first 6: [["users","column-dropped","red",false,"email"],["users","column-dropped","amber",true,"x"]]
+new: 1 flags; first 6: [["users","column-dropped","red",false,"count=2",["email","x"]]]
+B2. base drops x and email, PR drops email only (trusted): shared amber expected
+old: 1 flags; first 6: [["users","column-dropped","amber",true,"email"]]
+new: 1 flags; first 6: [["users","column-dropped","amber",true,"count=1",["email"]]]
+
+=== C. order: users delete beside 1,000 PR-only collections each with a delete, and 1,000 cleared fields on accounts
+old: 1003 flags; first 6: [["users","delete","red",false],["accounts","unverified","red",false],["a0000","delete","red",false],["a0001","delete","red",false],["a0002","delete","red",false],["a0003","delete","red",false]]
+  old users delete at 0; first PR-only flag at 2
+new: 1003 flags; first 6: [["users","delete","red",false],["accounts","unverified","red",false],["a0000","delete","red",false],["a0001","delete","red",false],["a0002","delete","red",false],["a0003","delete","red",false]]
+  new users delete at 0; first PR-only flag at 2
+
+=== D. a drop of users beside one 201-character collection, in S1, Sn or both
+old long in Sn: 1 flags; first 6: [["users","unverified","red",false]]; omitted S1 0 Sn 1; divergence users unknown
+old long in S1: 1 flags; first 6: [["users","dropped","red",false]]; omitted S1 1 Sn 0; divergence users pr-only
+old long in both: 1 flags; first 6: [["users","unverified","red",false]]; omitted S1 1 Sn 1; divergence users unknown
+new long in Sn: 1 flags; first 6: [["users","dropped","red",false]]; omitted S1 0 Sn 0; divergence users pr-only
+new long in S1: 1 flags; first 6: [["users","dropped","red",false]]; omitted S1 0 Sn 0; divergence users pr-only
+new long in both: 1 flags; first 6: [["users","dropped","red",false]]; omitted S1 0 Sn 0; divergence users pr-only
+
+=== E. a wipe of users beside 11,000 empty PR tables (users ties them at 0 rows in Sn)
+old trusted=true: 2 flags; first 3: [["users","unverified","red",false],[null,"unverified","red",false,"collections=10001"]]; users at 0: ["users","unverified","red",false]; diff users {"status":"unknown","omitted":"after"}; divergence unknown; red 2
+old trusted=false: 2 flags; first 3: [["users","unverified","red",false],[null,"unverified","red",false,"collections=10001"]]; users at 0: ["users","unverified","red",false]; diff users {"status":"unknown","omitted":"after"}; divergence unknown; red 2
+new trusted=true: 2 flags; first 3: [["users","unverified","red",false],[null,"unverified","red",false,"collections=10001"]]; users at 0: ["users","unverified","red",false]; diff users {"status":"unknown","omitted":"after"}; divergence unknown; red 2
+new trusted=false: 2 flags; first 3: [["users","unverified","red",false],[null,"unverified","red",false,"collections=10001"]]; users at 0: ["users","unverified","red",false]; diff users {"status":"unknown","omitted":"after"}; divergence unknown; red 2
+
+=== F. a wipe of users beside 11,000 empty tables, plus per-seeded-collection padding (S seeded collections, each with a PR row deleted, a column dropped, 21 rows mass-deleted, key lost)
+old S=10: 42 flags; first 2: [["s000","delete","red",false],["s000","column-dropped","red",false,"pad"]]; users at 40 of 42: ["users","unverified","red",false]
+new S=10: 42 flags; first 2: [["s000","delete","red",false],["s000","key-lost","red",false]]; users at 40 of 42: ["users","unverified","red",false]
+old S=100: 402 flags; first 2: [["s000","delete","red",false],["s000","column-dropped","red",false,"pad"]]; users at 400 of 402: ["users","unverified","red",false]
+new S=100: 402 flags; first 2: [["s000","delete","red",false],["s000","key-lost","red",false]]; users at 400 of 402: ["users","unverified","red",false]
+exit 0

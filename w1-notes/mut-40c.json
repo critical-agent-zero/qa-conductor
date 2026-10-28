@@ -1,0 +1,101 @@
+[
+ {
+  "id": "N1",
+  "file": "lib/forwarder.mjs",
+  "old": "  socket.on('timeout', () => {\n    const peerNow",
+  "new": "  socket.once('timeout', () => {\n    const peerNow",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "N2",
+  "file": "lib/forwarder.mjs",
+  "old": "    if (waiting() && peerMoved) return socket.setTimeout(ms)\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "N3",
+  "file": "lib/forwarder.mjs",
+  "old": "    if (waiting() && peerMoved) return socket.setTimeout(ms)\n",
+  "new": "    if (waiting()) return socket.setTimeout(ms)\n",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "N4",
+  "file": "lib/forwarder.mjs",
+  "old": "    setTimeout(() => {\n      if (socket.destroyed) return\n      peerSeen = movedOn(peer)\n      if (`${movedOn(socket)} ${peerSeen}` !== before) return socket.setTimeout(ms)\n      cut()\n    }, graceMs).unref()",
+  "new": "    cut()",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "N5",
+  "file": "lib/forwarder.mjs",
+  "old": "      if (`${movedOn(socket)} ${peerSeen}` !== before) return socket.setTimeout(ms)\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "N6",
+  "file": "lib/forwarder.mjs",
+  "old": "{ waiting: () => Boolean(upRes?.isPaused() || res.writableNeedDrain) }",
+  "new": "{ waiting: () => false }",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "N7",
+  "file": "lib/forwarder.mjs",
+  "old": "      upstream.on('socket', socket => idleTimer(",
+  "new": "      upstream.on('nosuchevent', socket => idleTimer(",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "N8",
+  "file": "lib/forwarder.mjs",
+  "old": "        idleTimer(upstream, socket, idleMs, () => { reset(upstream); reset(socket) })\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "N9",
+  "file": "lib/forwarder.mjs",
+  "old": "        idleTimer(socket, upstream, idleMs, () => { reset(socket); reset(upstream) })\n",
+  "new": "",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "N10",
+  "file": "lib/forwarder.mjs",
+  "old": "const movedOn = socket => (socket ? `${socket.bytesRead}/${socket.bytesWritten}/${socket.writableLength}/${socket._handle?.writeQueueSize ?? ''}` : '')",
+  "new": "const movedOn = socket => (socket ? `${socket.bytesRead}` : '')",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "N11",
+  "file": "lib/forwarder.mjs",
+  "old": "      if (socket.destroyed) return\n      peerSeen",
+  "new": "      peerSeen",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ }
+]

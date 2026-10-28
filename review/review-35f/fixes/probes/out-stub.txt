@@ -1,0 +1,5 @@
+S=5 4a284f9: users diff {"status":"unknown","truncated":true,"omitted":null,"countBefore":30,"countAfter":30}; users flags [["unverified","red"]] at 10 of 11; before it: ["column-dropped/red","mass-change/red"]
+S=5 4ed6449: users diff {"status":"unknown","truncated":true,"omitted":null,"countBefore":30,"countAfter":30}; users flags [["unverified","red"]] at 10 of 11; before it: ["column-dropped/red","mass-change/red"]
+S=50 4a284f9: users diff {"status":"unknown","truncated":true,"omitted":null,"countBefore":30,"countAfter":30}; users flags [["unverified","red"]] at 100 of 101; before it: ["column-dropped/red","mass-change/red"]
+S=50 4ed6449: users diff {"status":"unknown","truncated":true,"omitted":null,"countBefore":30,"countAfter":30}; users flags [["unverified","red"]] at 100 of 101; before it: ["column-dropped/red","mass-change/red"]
+exit 0

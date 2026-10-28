@@ -1,0 +1,9 @@
+test: the sandbox docs test says where a try connected, and what localhost resolves to
+
+CI's macOS 14 runner once connected over localhost to a port the profile
+names (1 run of 3; macOS 15 and this macOS 12 never have, 25 of 25 here).
+A failure now names the address each connected try reached, and what
+localhost resolved to, so the next one says where it got through.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

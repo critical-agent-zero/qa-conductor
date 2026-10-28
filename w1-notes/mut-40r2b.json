@@ -1,0 +1,122 @@
+[
+ {
+  "id": "T1",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "        const t = await internalNetwork(signal)\n        live(signal)\n        topology = t",
+  "new": "        topology = await internalNetwork(signal)",
+  "tests": [
+   "test/provisioner-docker.test.mjs",
+   "test/docker.test.mjs"
+  ]
+ },
+ {
+  "id": "T2",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      if (err?.name === 'AbortError' || signal?.aborted) throw aborted()",
+  "new": "      if (err?.name === 'AbortError') throw err",
+  "tests": [
+   "test/provisioner-docker.test.mjs",
+   "test/docker.test.mjs"
+  ]
+ },
+ {
+  "id": "T3",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      endpoint = await docker.endpoint({ podman: /podman/i.test(runtime.version) })",
+  "new": "      endpoint = await docker.endpoint()",
+  "tests": [
+   "test/provisioner-docker.test.mjs",
+   "test/docker.test.mjs"
+  ]
+ },
+ {
+  "id": "T4",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "    if (endpoint !== 'local' && !/^(unix|npipe):\\/\\//i.test(endpoint)) {",
+  "new": "    if (!/^(unix|npipe):\\/\\//i.test(endpoint)) {",
+  "tests": [
+   "test/provisioner-docker.test.mjs",
+   "test/docker.test.mjs"
+  ]
+ },
+ {
+  "id": "T5",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "hosts: /podman/i.test(runtime?.version ?? '') ? [] : null }",
+  "new": "hosts: /podman/i.test(runtime?.version ?? 'podman') ? [] : null }",
+  "tests": [
+   "test/provisioner-docker.test.mjs",
+   "test/docker.test.mjs"
+  ]
+ },
+ {
+  "id": "T6",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      if (Date.now() >= end) throw new Error(`the forwarder ${FORWARDER} wasn't ready within ${forwarderReadyMs} ms`)",
+  "new": "      if (true) throw new Error(`the forwarder ${FORWARDER} wasn't ready within ${forwarderReadyMs} ms`)",
+  "tests": [
+   "test/provisioner-docker.test.mjs",
+   "test/docker.test.mjs"
+  ]
+ },
+ {
+  "id": "T7",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "    for (const end = Date.now() + forwarderReadyMs; ;) {\n      live(signal)\n",
+  "new": "    for (const end = Date.now() + forwarderReadyMs; ;) {\n",
+  "tests": [
+   "test/provisioner-docker.test.mjs",
+   "test/docker.test.mjs"
+  ]
+ },
+ {
+  "id": "T8",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      log.error(`[qa] the PR pane's internal network couldn't be set up",
+  "new": "      log.log(`[qa] the PR pane's internal network couldn't be set up",
+  "tests": [
+   "test/provisioner-docker.test.mjs",
+   "test/docker.test.mjs"
+  ]
+ },
+ {
+  "id": "E1",
+  "file": "lib/docker.mjs",
+  "old": "      if (env.CONTAINER_HOST) return env.CONTAINER_HOST\n",
+  "new": "",
+  "tests": [
+   "test/provisioner-docker.test.mjs",
+   "test/docker.test.mjs"
+  ]
+ },
+ {
+  "id": "E2",
+  "file": "lib/docker.mjs",
+  "old": "      const connection = named ? listed.find(c => c?.Name === named) : listed.find(c => c?.Default === true)",
+  "new": "      const connection = listed.find(c => c?.Default === true)",
+  "tests": [
+   "test/provisioner-docker.test.mjs",
+   "test/docker.test.mjs"
+  ]
+ },
+ {
+  "id": "E3",
+  "file": "lib/docker.mjs",
+  "old": "      if (!podman || /^[a-z][a-z0-9+.-]*:\\/\\//i.test(context)) return context",
+  "new": "      if (!podman) return context",
+  "tests": [
+   "test/provisioner-docker.test.mjs",
+   "test/docker.test.mjs"
+  ]
+ },
+ {
+  "id": "E4",
+  "file": "lib/docker.mjs",
+  "old": "      return connection ? String(connection.URI ?? '') : 'local'",
+  "new": "      return connection ? String(connection.URI ?? '') : 'unix://'",
+  "tests": [
+   "test/provisioner-docker.test.mjs",
+   "test/docker.test.mjs"
+  ]
+ }
+]

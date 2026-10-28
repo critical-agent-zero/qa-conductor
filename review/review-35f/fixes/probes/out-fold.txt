@@ -1,0 +1,7 @@
+(a) trusted=true: flags [{"collection":"users","kind":"column-dropped","severity":"red","shared":false,"pr":6,"base":0,"count":6,"seeded":1,"fields":["email","a0","a1","a2","a3"]}]; any flag names email: true
+(a) trusted=false: flags [{"collection":"users","kind":"column-dropped","severity":"red","shared":false,"pr":6,"base":0,"count":6,"seeded":1,"fields":["email","a0","a1","a2","a3"]}]; any flag names email: true
+(a) divergence users pr-only; field changes [["a0","pr-only"],["a1","pr-only"],["a2","pr-only"],["a3","pr-only"],["a4","pr-only"],["email","pr-only"]]
+(a) at 7193877: [["column-dropped","a0","red"],["column-dropped","a1","red"],["column-dropped","a2","red"],["column-dropped","a3","red"],["column-dropped","a4","red"],["column-dropped","email","red"]]
+(b) base dropped legacy, PR dropped email, trusted: [{"collection":"users","kind":"column-dropped","severity":"red","shared":false,"pr":1,"base":1,"count":1,"seeded":1,"fields":["email"]}]
+(c) base cleared row 3, PR rows 1-3: [{"collection":"t","kind":"cleared","severity":"amber","shared":false,"pr":3,"base":1,"field":"role"}]
+exit 0

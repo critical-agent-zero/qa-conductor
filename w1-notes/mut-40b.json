@@ -1,0 +1,56 @@
+[
+ {
+  "id": "D2c",
+  "file": "lib/forwarder.mjs",
+  "old": "upstream.on('close', () => { clearTimeout(connecting); if (open) socket.destroySoon() })",
+  "new": "upstream.on('close', () => { clearTimeout(connecting) })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "D2b",
+  "file": "lib/forwarder.mjs",
+  "old": "upstream.on('close', () => { clearTimeout(connecting); if (open) socket.destroySoon() })",
+  "new": "upstream.on('close', () => { clearTimeout(connecting); if (open) socket.end() })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "H5",
+  "file": "lib/forwarder.mjs",
+  "old": "res.on('close', () => { if (!res.writableFinished) upstream.destroy() })",
+  "new": "res.on('close', () => { if (!res.headersSent) upstream.destroy() })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "F5",
+  "file": "lib/forwarder.mjs",
+  "old": "upRes.on('close', () => { if (!upRes.complete) reset(res.socket) })",
+  "new": "upRes.on('close', () => { if (!upRes.complete) res.destroy() })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "F10",
+  "file": "lib/forwarder.mjs",
+  "old": "socket.on('error', () => reset(upstream))",
+  "new": "socket.on('error', () => upstream?.destroy())",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "I1",
+  "file": "lib/forwarder.mjs",
+  "old": "idleTimer(socket, upstream, idleMs, () => { reset(socket); reset(upstream) })",
+  "new": "socket.setTimeout(idleMs, () => { reset(socket); reset(upstream) })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ }
+]

@@ -1,0 +1,5 @@
+4a284f9 S=3: users {"st":"unknown","tr":true,"om":null}; its flags [["unverified","red"]] at 9 of 10
+4ed6449 S=3: users {"st":"unknown","tr":true,"om":null}; its flags [["unverified","red"]] at 9 of 10
+4a284f9 S=50: users {"st":"unknown","tr":true,"om":"before"}; its flags [["unverified","red"]] at 148 of 149
+4ed6449 S=50: users {"st":"unknown","tr":true,"om":"before"}; its flags [["unverified","red"]] at 50 of 149
+/Users/mc/Documents/GitHub/homefree/.claude/worktrees/qa-conductor-stage05/.worktrees/qa-team/run/review-35f/regress/to.sh: line 12: 18665 Terminated: 15          ( sleep "$secs"; kill -TERM -"$pid" 2> /dev/null; sleep 3; kill -KILL -"$pid" 2> /dev/null )

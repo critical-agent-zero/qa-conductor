@@ -1,0 +1,39 @@
+**Round 2, item by item, plus owner decision B (CI on macOS 14 and 15): all in `1aa07c5`.** #41's own commits since round 1 are `e329fb2`, `98fcf40` and `1aa07c5`; the merges bring in #40's head, `5d2df65`. `git diff --name-status 5d2df65..1aa07c5` lists `.github/workflows/ci.yml`, `CHANGELOG.md`, `README.md`, `test/docs.test.mjs` and `test/package.test.mjs`.
+
+**Owner decision B: `sandbox-exec` on macOS 14 and 15, in CI.**
+- A `macos-sandbox` job runs `test/docs.test.mjs` on GitHub's `macos-14` and `macos-15` runners, with `QA_REQUIRE_SANDBOX=1`. So the profile test fails rather than skips there, and a last step fails the job if it was skipped or didn't run. The job is pinned in `test/package.test.mjs`.
+- The README's "Checked" names the job, and "Today" says CI checks the internal network on Linux.
+- **#43 is narrowed** (title and body) to what is left by hand: the internal network on Docker Desktop and on Podman machine. It says macOS 14 and 15 are covered by `macos-sandbox`, and Linux Docker Engine and Podman by #40's `docker-integration`. Its DNS rows now match #40's round 3: Podman's PR containers get `--dns 192.0.2.1` too. #43 stays open.
+- **What CI found:**
+  - Running the sandbox probe at the test file's top level was cut off by `--test-force-exit` on CI, so the probe now runs inside the test.
+  - **One run on `macos-14` (on `eba87d3`) connected over `localhost` to a port the profile names (`BASE_APP`), where `127.0.0.1` and `::1` to the same port got `EPERM`.**
+    - That is 1 run of 3 on `macos-14`. `macos-15` has passed every run, and this Mac (12.7.6) passed 25 of 25.
+    - I can't yet tell a hole in the profile from a quirk of the runner. So `1aa07c5` makes a failure name the address each connected try reached, and what `localhost` resolves to.
+    - I'm re-running the job on the fork to catch it with that. Until then, the README's macOS 14 claim rests on the runs that passed. I'll post what it shows.
+
+**1. #43's macOS 14/15 commands didn't run in zsh.** Fixed in #43's body earlier, and kept in its narrowed form:
+- the parameters are an array, `S=(-D … -f …)`, used as `sandbox-exec "${S[@]}" …`;
+- the listeners moved to 3190 and 3199, so a conductor on its defaults can keep running;
+- it says the 12.7.6 run used zsh 5.8.1, and why the first version's flat `$S` only worked in bash.
+
+**Low, #43's row 1b.** Fixed in #43:
+- `; echo $?` on the curl rows;
+- only curl errors 6, 7 or 28 pass, and any answer from the conductor is a fail;
+- a by-address row (1c: `192.168.65.254` on Docker Desktop, `192.168.127.254` on Podman machine);
+- 1g notes the `curl: (56)` line on stderr.
+
+**Low, the tag check.** Fixed. The README's check prints the headers and the body, and reads both:
+- `X-QA-Refusal: identity` and `403: no Tailscale identity: …`: the node is tagged;
+- `X-QA-Refusal: identity` and `403: <login> is not in QA_ALLOWED_LOGINS`: untagged, with its owner not an allowed login. The header alone can't tell this from a tagged node;
+- `X-QA-Refusal: capability` and a JSON body with `"refusal":"capability"`: untagged, with the owner's login past the gate.
+
+**Low, a nested Seatbelt sandbox failed the test.** Fixed.
+- The test probes with `sandbox-exec -p '(version 1)(allow default)' /usr/bin/true`, and skips only on exit 71 with `sandbox_apply: Operation not permitted`, or where there is no `sandbox-exec`. Under `QA_REQUIRE_SANDBOX=1` it fails instead, as CI's job asks.
+- The README says `sandbox-exec` can't nest: a conductor already under a sandbox can't start the PR pane under the profile.
+
+**Nits:**
+- **The docs test's coverage:** each of the five named ports listens on `127.0.0.1` and `::1`, and is tried over `127.0.0.1`, `::1` and `localhost`. A sixth port must connect over all three. The profile's `(param …)` names must equal the names the README's wiring passes (`conductorPorts`, `basePorts`) and the names its check's `-D` flags give.
+- **The profile directory's owner:** the README adds `sudo chown -R root:wheel`, `chmod 755` and `chmod 644`, since `mkdir -p` leaves an existing directory as it was, and an `ls -ld` to check.
+- **#8's future egress proxy:** noted on #8 (comment 6342512649). It should take its allowlist from `internal.egress`, so there stays one list.
+
+**Tests:** 812 passed and 0 failed on Node 24 and on Node 22 (`node --test --test-force-exit`); the 3 integration tests skip without `QA_DOCKER_IT=1`. CI on `1aa07c5` is green: `test (22)`, `test (24)`, `macos-sandbox` on `macos-14` and `macos-15`, and `docker-integration` on Docker Engine and Podman.

@@ -1,0 +1,21 @@
+json_depth_1       head ok    4ed6449 ok    mutants showing it: -
+json_depth_2       head ok    4ed6449 ok    mutants showing it: json_depth-1
+json_depth_hdrs    head ok    4ed6449 ok    mutants showing it: -
+url_case           head ok    4ed6449 ok    mutants showing it: url_case
+url_case2          head ok    4ed6449 ok    mutants showing it: -
+url_scheme_plus    head ok    4ed6449 ok    mutants showing it: url_scheme-letters
+url_scheme_plus2   head ok    4ed6449 ok    mutants showing it: url_scheme-letters
+url_scheme_digit   head ok    4ed6449 ok    mutants showing it: url_scheme-letters
+dsn_gt             head ok    4ed6449 ok    mutants showing it: dsn_pw-no-gt
+dsn_lt             head ok    4ed6449 ok    mutants showing it: -
+dsn_long           head ok    4ed6449 ok    mutants showing it: dsn_pw-64
+dsn_user_dash      head ok    4ed6449 ok    mutants showing it: dsn_user-word
+dsn_user_dot       head ok    4ed6449 ok    mutants showing it: dsn_user-word
+jwt_dash_sig       head ok    4ed6449 ok    mutants showing it: jwt_no-dash
+jwt_short_seg      head ok    4ed6449 ok    mutants showing it: jwt_8
+flag_upper         head ok    4ed6449 ok    mutants showing it: flag_case
+flag_upper2        head ok    4ed6449 ok    mutants showing it: -
+pem_openssh        head ok    4ed6449 ok    mutants showing it: -
+pem_ec             head ok    4ed6449 ok    mutants showing it: -
+tag_long_attrs     head ok    4ed6449 ok    mutants showing it: -
+exit 0

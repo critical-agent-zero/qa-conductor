@@ -1,0 +1,19 @@
+     1  A1/P3 scheme rescan                                                    masked at [4a284f9]
+     1  A1/P3 scheme rescan                                                    masked at [4a284f9,4ed6449]
+ 10716  E1 tag over 1024 raw (JWT/DSN in a sibling attribute)                  masked at [4a284f9,4ed6449]
+ 14682  E1 tag over 1024 raw (JWT/DSN in a sibling attribute)                  masked at [4ed6449]
+     1  E2/E3 element vs DSN order                                             masked at [2ec0bba,7193877]
+    13  E2/E3 element vs DSN order                                             masked at [4a284f9]
+    37  E2/E3 element vs DSN order                                             masked at [4a284f9,4ed6449]
+    61  E2/E3 element vs DSN order                                             masked at [4ed6449]
+     4  P1 empty name-like attribute takes the next name (since 4ed6449)       masked at [4a284f9]
+    33  P2 Basic base64-like value swallows the next scheme word (since 4a284f9) masked at [7193877]
+     8  P4 escape hex digit read as a key letter                               masked at [2ec0bba,7193877]
+  1138  P5 short scheme value (by design since 7193877)                        masked at [2ec0bba]
+     1  other                                                                  masked at [4a284f9]
+-- ('A1/P3 scheme rescan', '4a284f9') '58MBVbBEARER x/token //bearer HX4coiQx:QY6uGvZ#TpMf6:t9GkzNDbk3MLDQ]9Q6hPRQDPCH5qvjHeQd<V3ijLJ"4ReiNJ"@tcp(h)style="width:100%"'
+-- ('A1/P3 scheme rescan', '4a284f9,4ed6449') '@unix(/s)value=Bearer //bearer GEpFU3k7--token 5mJjspostgres://app:'
+-- ('P1 empty name-like attribute takes the next name (since 4ed6449)', '4a284f9') '<add key="DbPassw;ord" value="7vWbw" /> <property name= name="password" value="F4QWXsg@zjEX8i@6SwLLjpb"/>'
+-- ('P1 empty name-like attribute takes the next name (since 4ed6449)', '4a284f9') '<propertyperty name= name="password" value="eEGWJ6nV&gt;JT9Tu&lt;dq5?hH"/>"<add key="ApiToken" value="-rRhB2ZE\\&quot;XU"sUp7Xr`zN6ock" />'
+-- ('P1 empty name-like attribute takes the next name (since 4ed6449)', '4a284f9') 'deploy:Yo2LZP{gMbcTaNf@cloud}sql(localhost)/app]<add  KEY=KEY="ApToken" value="ekJWG2@x8LbrGJp@LT6Zqs" />;<add KEY="ClientSecret" VALUE="it7ZY" />'
+-- ('other', '4a284f9') 'spring.dat@mq.locaasource.pa)sswo\\"rd=+aXwW&3U NnkbHW$=BROKER=snowflake://ci-bot:EmqEV6gQ@dBR7wQ{mvx3LFLu.8mqfX(@mq.local/app"}{\\"password\\": \\"QGex5@o9ateVU@ouMtKdpe*\\"}'

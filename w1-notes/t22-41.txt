@@ -1,0 +1,172 @@
+TAP version 13
+# Subtest: the README's entry points are exactly package.json's exports and bin, and each row lists exactly the names its entry point exports
+ok 1 - the README's entry points are exactly package.json's exports and bin, and each row lists exactly the names its entry point exports
+  ---
+  duration_ms: 204.175815
+  type: 'test'
+  ...
+# Subtest: every env file key the published code reads has a Configuration row
+ok 2 - every env file key the published code reads has a Configuration row
+  ---
+  duration_ms: 5.789177
+  type: 'test'
+  ...
+# Subtest: every import in the README's examples names something its entry point exports
+ok 3 - every import in the README's examples names something its entry point exports
+  ---
+  duration_ms: 2.128655
+  type: 'test'
+  ...
+# Subtest: the README's sample .env.qa files load: the local one ungated, the tailnet one gated
+ok 4 - the README's sample .env.qa files load: the local one ungated, the tailnet one gated
+  ---
+  duration_ms: 3.91815
+  type: 'test'
+  ...
+# Subtest: every relative link in the README, CHANGELOG, CONTRIBUTING.md and SECURITY.md reaches a file, and every anchor a heading
+ok 5 - every relative link in the README, CHANGELOG, CONTRIBUTING.md and SECURITY.md reaches a file, and every anchor a heading
+  ---
+  duration_ms: 999.726983
+  type: 'test'
+  ...
+# Subtest: the README's Contents link every second-level heading after it, in order
+ok 6 - the README's Contents link every second-level heading after it, in order
+  ---
+  duration_ms: 1.589872
+  type: 'test'
+  ...
+# Subtest: the README's sandbox-exec profile shuts the ports it names, over IPv4, IPv6, localhost and IPv4-mapped IPv6, and no other; a parameter left out keeps it from loading
+ok 7 - the README's sandbox-exec profile shuts the ports it names, over IPv4, IPv6, localhost and IPv4-mapped IPv6, and no other; a parameter left out keeps it from loading
+  ---
+  duration_ms: 1539.471835
+  type: 'test'
+  ...
+# Subtest: the hygiene check catches real tailnets, tailnet addresses, home paths and the private app's name
+ok 8 - the hygiene check catches real tailnets, tailnet addresses, home paths and the private app's name
+  ---
+  duration_ms: 19.149694
+  type: 'test'
+  ...
+# Subtest: no tracked file names a real tailnet, a tailnet address, a home path or the private app
+ok 9 - no tracked file names a real tailnet, a tailnet address, a home path or the private app
+  ---
+  duration_ms: 525.401726
+  type: 'test'
+  ...
+# Subtest: the package is publishable: not private, public access, provenance from this repository
+ok 10 - the package is publishable: not private, public access, provenance from this repository
+  ---
+  duration_ms: 1.642946
+  type: 'test'
+  ...
+# Subtest: the npm page names its author, links back to the repository, and has a description that fits a search result
+ok 11 - the npm page names its author, links back to the repository, and has a description that fits a search result
+  ---
+  duration_ms: 1.741011
+  type: 'test'
+  ...
+# Subtest: a release names one version: package.json, the CHANGELOG's newest release and the README's git-tag pin
+ok 12 - a release names one version: package.json, the CHANGELOG's newest release and the README's git-tag pin
+  ---
+  duration_ms: 172.578991
+  type: 'test'
+  ...
+# Subtest: every CHANGELOG heading links to its changes, and the CHANGELOG defines no other link
+ok 13 - every CHANGELOG heading links to its changes, and the CHANGELOG defines no other link
+  ---
+  duration_ms: 0.97762
+  type: 'test'
+  ...
+# Subtest: every exports and bin target exists and is inside a files entry
+ok 14 - every exports and bin target exists and is inside a files entry
+  ---
+  duration_ms: 4.028561
+  type: 'test'
+  ...
+# Subtest: the bin is the expose CLI, run by node from npx and by npm run expose
+ok 15 - the bin is the expose CLI, run by node from npx and by npm run expose
+  ---
+  duration_ms: 0.520784
+  type: 'test'
+  ...
+# Subtest: npm pack --dry-run packs lib/, public/ and bin/, and no test/, demo/, qa/, docs/ or .github files
+ok 16 - npm pack --dry-run packs lib/, public/ and bin/, and no test/, demo/, qa/, docs/ or .github files
+  ---
+  duration_ms: 3272.576924
+  type: 'test'
+  ...
+# Subtest: CONTRIBUTING's approver check finds a commit main itself was, and refuses one that tags or refs named main point at
+ok 17 - CONTRIBUTING's approver check finds a commit main itself was, and refuses one that tags or refs named main point at
+  ---
+  duration_ms: 10534.559962
+  type: 'test'
+  ...
+# Subtest: the release steps' tarball check packs into a private directory, stops at the first failure and never runs npx
+ok 18 - the release steps' tarball check packs into a private directory, stops at the first failure and never runs npx
+  ---
+  duration_ms: 1.338634
+  type: 'test'
+  ...
+# Subtest: the release steps' tarball check loads every entry point and runs the bin, fails on a tarball without either, and never asks the registry
+ok 19 - the release steps' tarball check loads every entry point and runs the bin, fails on a tarball without either, and never asks the registry
+  ---
+  duration_ms: 15872.293541
+  type: 'test'
+  ...
+# Subtest: nothing in the package runs with the publish token, or sends it elsewhere
+ok 20 - nothing in the package runs with the publish token, or sends it elsewhere
+  ---
+  duration_ms: 0.488027
+  type: 'test'
+  ...
+# Subtest: the publish workflow stages the tag's version and never publishes directly
+ok 21 - the publish workflow stages the tag's version and never publishes directly
+  ---
+  duration_ms: 5.884499
+  type: 'test'
+  ...
+# Subtest: the workflow check refuses a publish, a skippable gate, a token or id-token outside the stage, or repository code in the publish job
+ok 22 - the workflow check refuses a publish, a skippable gate, a token or id-token outside the stage, or repository code in the publish job
+  ---
+  duration_ms: 47.298186
+  type: 'test'
+  ...
+# Subtest: the workflow's tag check passes only for v<package.json version>
+ok 23 - the workflow's tag check passes only for v<package.json version>
+  ---
+  duration_ms: 1227.02563
+  type: 'test'
+  ...
+# Subtest: the publish job's on-main check passes a commit that was main itself, and stops any other with an error naming the tag
+ok 24 - the publish job's on-main check passes a commit that was main itself, and stops any other with an error naming the tag
+  ---
+  duration_ms: 5192.498391
+  type: 'test'
+  ...
+# Subtest: the publish job's publishConfig check stages only a tarball whose publishConfig is exactly package.json's
+ok 25 - the publish job's publishConfig check stages only a tarball whose publishConfig is exactly package.json's
+  ---
+  duration_ms: 12291.12127
+  type: 'test'
+  ...
+# Subtest: CI's Node 22 leg runs the package tests again with the npm the publish job stages with
+ok 26 - CI's Node 22 leg runs the package tests again with the npm the publish job stages with
+  ---
+  duration_ms: 1.169433
+  type: 'test'
+  ...
+# Subtest: the publish job's tarball check passes only a release directory that holds the tag's tarball and nothing else
+ok 27 - the publish job's tarball check passes only a release directory that holds the tag's tarball and nothing else
+  ---
+  duration_ms: 166.627724
+  type: 'test'
+  ...
+1..27
+# tests 27
+# suites 0
+# pass 27
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 49694.42048

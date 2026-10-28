@@ -1,0 +1,326 @@
+[
+ {
+  "id": "P1",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "verdict: out.verdict === 'isolated' ? 'unknown' : out.verdict,",
+  "new": "verdict: out.verdict,",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P2",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "if (inside && topology && !topology.up) {",
+  "new": "if (false) {",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P3",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      log.error(`[qa] the PR pane's internal network couldn't be set up (${failure}): it runs on an ordinary network, and its egress isn't restricted`)\n",
+  "new": "",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P4",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "return { up: true, dns: /podman/i.test(runtime?.version ?? '') ? null : NO_DNS }",
+  "new": "return { up: true, dns: NO_DNS }",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P5",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "return { up: true, dns: /podman/i.test(runtime?.version ?? '') ? null : NO_DNS }",
+  "new": "return { up: true, dns: null }",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P6",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "const dnsFor = role => (role === 'pr' && internalUp() ? topology.dns : null)",
+  "new": "const dnsFor = role => (internalUp() ? topology.dns : null)",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P7",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "{ timeoutMs: probeTimeoutMs, signal, dns: dnsFor('pr') }",
+  "new": "{ timeoutMs: probeTimeoutMs, signal }",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P8",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "await docker.runPg(pg, net, { password, dns: dnsFor(paneRef.role) })",
+  "new": "await docker.runPg(pg, net, { password })",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P9",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "{ name: migrateName(paneRef.role), dns: dnsFor(paneRef.role) }",
+  "new": "{ name: migrateName(paneRef.role) }",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P10",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "reserved[name].port, { dns: dnsFor(paneRef.role) })",
+  "new": "reserved[name].port)",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P11",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      if (!(await docker.networkInternal(net))) throw new Error(`${net} was created but isn't internal`)\n",
+  "new": "",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P12",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      await forwarderReady(signal)\n",
+  "new": "",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P13",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "if (!(await docker.containerRunning(FORWARDER))) throw new Error(`the forwarder ${FORWARDER} isn't running`)",
+  "new": "",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P14",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "if (Date.now() >= end) throw new Error(`the forwarder ${FORWARDER} wasn't ready within ${forwarderReadyMs} ms`)",
+  "new": "if (Date.now() >= end) return",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P15",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "if (paneRef.role !== 'pr' || !internalUp()) return tail",
+  "new": "return tail",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P16",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "if (paneRef.role !== 'pr' || !internalUp()) return tail",
+  "new": "if (!internalUp()) return tail",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P17",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "if (runtime.osError && !/podman/i.test(runtime.version)) return",
+  "new": "if (runtime.osError) return",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P18",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      if (silent.length) {\n",
+  "new": "      if (false) {\n",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P19",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "if (silent.length === asked.length) return",
+  "new": "if (silent.length === asked.length && false) return",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P20",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "if ((kind === 'proxied' || kind === 'refused') && where) answered.add(where)",
+  "new": "if (kind === 'proxied' && where) answered.add(where)",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P21",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "      try {\n        await docker.rmNetwork(net)\n      } catch (rmErr) {\n        throw new Error(`the PR pane's internal network couldn't be set up (${failure}), nor removed: ${errorLine(rmErr)}`)\n      }",
+  "new": "      await docker.rmNetwork(net).catch(() => {})",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P22",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "        if (await docker.networkInternal(net)) throw new Error(`the PR pane's internal network couldn't be set up (${failure}), and a network ${net} is still there, and internal`)\n",
+  "new": "",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "P23",
+  "file": "lib/adapters/provisioner-docker.mjs",
+  "old": "const withForwarder = paneRef.role === 'pr' && inside !== null",
+  "new": "const withForwarder = inside !== null",
+  "tests": [
+   "test/provisioner-docker.test.mjs"
+  ]
+ },
+ {
+  "id": "D1",
+  "file": "lib/docker.mjs",
+  "old": "const dnsOf = dns => (dns ? ['--dns', dns] : [])",
+  "new": "const dnsOf = dns => []",
+  "tests": [
+   "test/docker.test.mjs"
+  ]
+ },
+ {
+  "id": "D2",
+  "file": "lib/docker.mjs",
+  "old": "return (await run(['inspect', '--format', '{{.State.Running}}', name])).trim() === 'true'",
+  "new": "return true",
+  "tests": [
+   "test/docker.test.mjs"
+  ]
+ },
+ {
+  "id": "F1",
+  "file": "lib/forwarder.mjs",
+  "old": "if (socket.isPaused() || peer?.writableNeedDrain) return socket.setTimeout(ms)",
+  "new": "if (false) return socket.setTimeout(ms)",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "F2",
+  "file": "lib/forwarder.mjs",
+  "old": "if (upRes?.isPaused() || res.writableNeedDrain) return upstream.setTimeout(idleMs)",
+  "new": "if (false) return upstream.setTimeout(idleMs)",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "F3",
+  "file": "lib/forwarder.mjs",
+  "old": "      client.on('error', () => reset(upstream))\n      upstream.on('error', () => reset(client))",
+  "new": "      client.on('error', () => upstream.destroy())\n      upstream.on('error', () => client.destroy())",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "F4",
+  "file": "lib/forwarder.mjs",
+  "old": "if (res.headersSent) return reset(res.socket)",
+  "new": "if (res.headersSent) return res.destroy()",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "F5",
+  "file": "lib/forwarder.mjs",
+  "old": "upRes.on('close', () => { if (!upRes.complete) reset(res.socket) })",
+  "new": "upRes.on('close', () => { if (!upRes.complete) res.destroy() })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "F6",
+  "file": "lib/forwarder.mjs",
+  "old": "idleTimer(upstream, socket, idleMs, () => { reset(upstream); reset(socket) })",
+  "new": "idleTimer(upstream, socket, idleMs, () => { upstream.destroy(); socket.destroy() })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "F7",
+  "file": "lib/forwarder.mjs",
+  "old": "else if (open) reset(socket) })",
+  "new": "else if (open) socket.destroy() })",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "F8",
+  "file": "lib/forwarder.mjs",
+  "old": "if (!to.host || /\\s/.test(String(forward.to)) ||",
+  "new": "if (!to.host ||",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "F9",
+  "file": "lib/forwarder.mjs",
+  "old": "const NOT_A_HOST = /[@/?#\\\\%\\s\\u2044\\u2215\\u29f5]/",
+  "new": "const NOT_A_HOST = /[@/?#\\\\%\\s]/",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "F10",
+  "file": "lib/forwarder.mjs",
+  "old": "socket.on('error', () => reset(upstream))",
+  "new": "socket.on('error', () => upstream?.destroy())",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ },
+ {
+  "id": "F11",
+  "file": "lib/forwarder.mjs",
+  "old": "socket.on('close', () => upstream?.destroySoon())",
+  "new": "socket.on('close', () => {})",
+  "tests": [
+   "test/forwarder.test.mjs"
+  ]
+ }
+]

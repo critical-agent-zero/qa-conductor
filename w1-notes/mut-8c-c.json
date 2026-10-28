@@ -1,0 +1,1 @@
+[{"id": "C11 no abort on close", "file": "lib/data-capture.mjs", "old": "    life.abort()\n", "new": "", "tests": ["test/data-capture.test.mjs", "test/server.test.mjs"]}]

@@ -1,0 +1,11 @@
+[
+ {
+  "id": "T12 tie higher seq",
+  "file": "public/harness.js",
+  "old": "a.at - b.at || a.seq - b.seq)\n  const groups",
+  "new": "a.at - b.at || b.seq - a.seq)\n  const groups",
+  "tests": [
+   "test/harness.test.mjs"
+  ]
+ }
+]

@@ -1,0 +1,32 @@
+fix: tags stop at the next '<', dropped columns are one flag, pairs of any size are masked, and more secret shapes in text
+
+Round 4 of #35's review, under the owner's decision W28=B (slowdowns
+and memory growth from hostile PR data are documented, not engineered
+away; only what shows a secret or hides a destructive change is fixed):
+- TAG_IN_TEXT's attributes stop at the next '<' (a regression from round
+  3: text dense with `<a ` backtracked about 256 characters at every '<').
+- column-dropped is one flag a collection, with `count` and the first
+  five `fields`, so many dropped columns can't push a delete out of a
+  capped list. Within a severity and the base pane's collections, what
+  loses data (delete, emptied, dropped, key-lost) comes before
+  column-dropped and mass-change, then unverified and cleared.
+- tally() merges in place: a spread copy made flagging many cleared
+  fields quadratic (#36's round 4).
+- The pair rule: `name` or `key` with `value` (lower case or capitalized)
+  is a pair whatever the object holds, as a HAR cookie or an SSM
+  Parameter; the looser spellings only up to 6 keys. Every value key is
+  masked.
+- Names over 200 characters don't count in `omitted`, so a certain drop
+  beside one stays a drop.
+- Masking: entities in any case; a backtick, percent-encoded quotes and
+  separators, and up to 32 spaces; secret-named command-line flags, a
+  MySQL client's -p and a PEM private key; a token as a URL's user (and
+  any user beside an empty password or x-oauth-basic); a base64 Basic
+  value; a Go DSN's password; a JWT; the value of an element named as a
+  secret; pw, psk and auth as names.
+- README: what masking misses, and a known limit, "Hostile PR data and
+  the conductor's responsiveness".
+- Tests for each, and for the review's surviving mutants.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy

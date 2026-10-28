@@ -1,0 +1,11 @@
+wip: #36 round 4 under W28=B (note to self; fold before any PR push)
+
+On c7059bb (merge of #35's 4a284f9 into 7055c24). Done: caching and
+maxCells removed; kept rank by first flag across lists, bytes budget,
+reason nit, tests (two probe shapes, 1,000 dropped tables, fallback
+first 20); README/CHANGELOG (time not bounded, Known limits). Capture
+tests 40/40; 12 mutants killed. Left: full suites 22/24, commit, push,
+reply, body (judgment call E worst-case time).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01MkcLhvB2oguJrgFNRVqAxy
